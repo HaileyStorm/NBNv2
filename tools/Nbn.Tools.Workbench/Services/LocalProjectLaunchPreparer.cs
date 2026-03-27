@@ -8,11 +8,20 @@ using System.Threading.Tasks;
 
 namespace Nbn.Tools.Workbench.Services;
 
+/// <summary>
+/// Resolves the executable and start info used for explicit Workbench local-launch commands.
+/// </summary>
 public interface ILocalProjectLaunchPreparer
 {
+    /// <summary>
+    /// Prepares a launch plan for a local source project or an installed runtime command.
+    /// </summary>
     Task<LocalProjectLaunchPreparation> PrepareAsync(string? projectPath, string exeName, string runtimeArgs, string label);
 }
 
+/// <summary>
+/// Builds local-launch start info for Workbench-managed runtime and tool processes.
+/// </summary>
 public sealed class LocalProjectLaunchPreparer : ILocalProjectLaunchPreparer
 {
     private readonly Func<ProcessStartInfo, Task<LocalProjectBuildResult>> _buildRunner;
@@ -44,6 +53,7 @@ public sealed class LocalProjectLaunchPreparer : ILocalProjectLaunchPreparer
         _pathExtProvider = pathExtProvider ?? (() => Environment.GetEnvironmentVariable("PATHEXT"));
     }
 
+    /// <inheritdoc />
     public async Task<LocalProjectLaunchPreparation> PrepareAsync(
         string? projectPath,
         string exeName,
@@ -78,7 +88,7 @@ public sealed class LocalProjectLaunchPreparer : ILocalProjectLaunchPreparer
         }
 
         var exePath = _executableResolver(projectPath ?? string.Empty, exeName);
-        if (!string.IsNullOrWhiteSpace(exePath) && File.Exists(exePath))
+        if (!string.IsNullOrWhiteSpace(exePath) && _fileExists(exePath))
         {
             return new LocalProjectLaunchPreparation(
                 true,
@@ -397,6 +407,12 @@ public sealed class LocalProjectLaunchPreparer : ILocalProjectLaunchPreparer
     }
 }
 
+/// <summary>
+/// Describes the launch command prepared for a Workbench local-run request.
+/// </summary>
 public sealed record LocalProjectLaunchPreparation(bool Success, ProcessStartInfo? StartInfo, string Message);
 
+/// <summary>
+/// Describes the result of the pre-launch build step for a local source project.
+/// </summary>
 public sealed record LocalProjectBuildResult(bool Success, string Message);

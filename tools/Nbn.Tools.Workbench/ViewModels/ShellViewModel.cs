@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -8,8 +10,14 @@ using Nbn.Tools.Workbench.Services;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
+/// <summary>
+/// Hosts the Workbench panels and coordinates client reconnect state across the operator surfaces.
+/// </summary>
 public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncDisposable
 {
+    private static readonly TimeSpan InitialConnectRetryDelay = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan ConnectRetryDelayStep = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan MaxConnectRetryDelay = TimeSpan.FromSeconds(5);
     private readonly UiDispatcher _dispatcher = new();
     private readonly WorkbenchClient _client;
     private readonly IWorkbenchArtifactPublisher _artifactPublisher;
@@ -162,12 +170,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             Connections.ObsStatus = "Connecting...";
             Connections.HiveMindStatus = "Connecting...";
 
-            _ = ConnectSettingsWithRetryAsync(token);
-            _ = ConnectIoWithRetryAsync(token);
-
-            _ = ConnectObservabilityWithRetryAsync(token);
-
-            _ = ConnectHiveMindWithRetryAsync(token);
+            StartConnectionLoops(token);
         }
         catch (Exception ex)
         {
@@ -220,13 +223,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public void OnIoStatus(string status, bool connected)
     {
-        _dispatcher.Post(() =>
+        PostConnectionStatus(() =>
         {
-            if (!IsConnectionActive)
-            {
-                return;
-            }
-
             Connections.IoStatus = NormalizeStatus(status, connected);
             Connections.IoConnected = connected;
             if (connected)
@@ -238,13 +236,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public void OnObsStatus(string status, bool connected)
     {
-        _dispatcher.Post(() =>
+        PostConnectionStatus(() =>
         {
-            if (!IsConnectionActive)
-            {
-                return;
-            }
-
             Connections.ObsStatus = NormalizeStatus(status, connected);
             Connections.ObsConnected = connected;
         });
@@ -252,13 +245,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public void OnSettingsStatus(string status, bool connected)
     {
-        _dispatcher.Post(() =>
+        PostConnectionStatus(() =>
         {
-            if (!IsConnectionActive)
-            {
-                return;
-            }
-
             Connections.SettingsStatus = NormalizeStatus(status, connected);
             Connections.SettingsConnected = connected;
         });
@@ -266,13 +254,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     public void OnHiveMindStatus(string status, bool connected)
     {
-        _dispatcher.Post(() =>
+        PostConnectionStatus(() =>
         {
-            if (!IsConnectionActive)
-            {
-                return;
-            }
-
             Connections.HiveMindStatus = NormalizeStatus(status, connected);
             Connections.HiveMindConnected = connected;
         });
@@ -345,107 +328,77 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private static bool TryParsePort(string value, out int port)
         => int.TryParse(value, out port) && port > 0 && port < 65536;
 
+    private static (bool IsValid, int Port) TryResolvePort(string value)
+        => (TryParsePort(value, out var port), port);
+
+    private void StartConnectionLoops(CancellationToken token)
+    {
+        _ = ConnectSettingsWithRetryAsync(token);
+        _ = ConnectIoWithRetryAsync(token);
+        _ = ConnectObservabilityWithRetryAsync(token);
+        _ = ConnectHiveMindWithRetryAsync(token);
+    }
+
     private async Task ConnectIoWithRetryAsync(CancellationToken token)
     {
-        var attempt = 0;
-
-        while (!token.IsCancellationRequested)
-        {
-            attempt++;
-            if (!TryParsePort(Connections.IoPortText, out var ioPort))
+        await RetryConnectAsync(
+            tryResolvePort: () => TryResolvePort(Connections.IoPortText),
+            onInvalidPort: () =>
             {
                 Connections.IoStatus = "IO port invalid.";
                 Connections.IoConnected = false;
-                return;
-            }
-
-            var ack = await _client.ConnectIoAsync(
+            },
+            connectAsync: port => _client.ConnectIoAsync(
                 Connections.IoHost,
-                ioPort,
+                port,
                 Connections.IoGateway,
-                Connections.ClientName);
-            if (ack is not null)
+                Connections.ClientName),
+            isConnected: ack => ack is not null,
+            onConnectedAsync: (port, _) =>
             {
-                WorkbenchLog.Info($"IO connected to {Connections.IoHost}:{ioPort}/{Connections.IoGateway}");
-                return;
-            }
-
-            try
-            {
-                await Task.Delay(Math.Min(5000, 750 + attempt * 250), token);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-        }
+                WorkbenchLog.Info($"IO connected to {Connections.IoHost}:{port}/{Connections.IoGateway}");
+                return Task.CompletedTask;
+            },
+            token).ConfigureAwait(false);
     }
 
     private async Task ConnectSettingsWithRetryAsync(CancellationToken token)
     {
-        var attempt = 0;
-
-        while (!token.IsCancellationRequested)
-        {
-            attempt++;
-            var settingsPort = ParsePortOrDefault(Connections.SettingsPortText, 12010);
-            var connected = await _client.ConnectSettingsAsync(
-                    Connections.SettingsHost,
-                    settingsPort,
-                    Connections.SettingsName,
-                    verify: true)
-                .ConfigureAwait(false);
-
-            if (connected)
+        await RetryConnectAsync(
+            tryResolvePort: () => (true, ParsePortOrDefault(Connections.SettingsPortText, 12010)),
+            onInvalidPort: static () => { },
+            connectAsync: port => _client.ConnectSettingsAsync(
+                Connections.SettingsHost,
+                port,
+                Connections.SettingsName,
+                verify: true),
+            isConnected: connected => connected,
+            onConnectedAsync: async (port, _) =>
             {
-                if (!token.IsCancellationRequested)
-                {
-                    await Orchestrator.RefreshSettingsAsync().ConfigureAwait(false);
-                    await SyncWorkbenchSettingsFromSettingsMonitorAsync().ConfigureAwait(false);
-                }
-
-                WorkbenchLog.Info($"Settings connected to {Connections.SettingsHost}:{settingsPort}/{Connections.SettingsName}");
-                return;
-            }
-
-            try
-            {
-                await Task.Delay(Math.Min(5000, 750 + attempt * 250), token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-        }
+                await Orchestrator.RefreshSettingsAsync().ConfigureAwait(false);
+                await SyncWorkbenchSettingsFromSettingsMonitorAsync().ConfigureAwait(false);
+                WorkbenchLog.Info($"Settings connected to {Connections.SettingsHost}:{port}/{Connections.SettingsName}");
+            },
+            token).ConfigureAwait(false);
     }
 
     private async Task ConnectHiveMindWithRetryAsync(CancellationToken token)
     {
-        var attempt = 0;
-
-        while (!token.IsCancellationRequested)
-        {
-            if (!TryParsePort(Connections.HiveMindPortText, out var hivePort))
+        await RetryConnectAsync(
+            tryResolvePort: () => TryResolvePort(Connections.HiveMindPortText),
+            onInvalidPort: () =>
             {
                 Connections.HiveMindStatus = "HiveMind port invalid.";
                 Connections.HiveMindConnected = false;
-                return;
-            }
-
-            attempt++;
-            var status = await _client.ConnectHiveMindAsync(
-                    Connections.HiveMindHost,
-                    hivePort,
-                    Connections.HiveMindName)
-                .ConfigureAwait(false);
-
-            if (status is not null)
+            },
+            connectAsync: port => _client.ConnectHiveMindAsync(
+                Connections.HiveMindHost,
+                port,
+                Connections.HiveMindName),
+            isConnected: status => status is not null,
+            onConnectedAsync: (port, status) =>
             {
-                if (token.IsCancellationRequested)
-                {
-                    return;
-                }
-
+                var connectedStatus = status!;
                 _dispatcher.Post(() =>
                 {
                     if (!IsConnectionActive)
@@ -453,68 +406,42 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                         return;
                     }
 
-                    Viz.ApplyHiveMindTickStatus(status.TargetTickHz, status.HasTickRateOverride, status.TickRateOverrideHz);
+                    Viz.ApplyHiveMindTickStatus(
+                        connectedStatus.TargetTickHz,
+                        connectedStatus.HasTickRateOverride,
+                        connectedStatus.TickRateOverrideHz);
                 });
                 UpdateObservabilitySubscriptions();
-                WorkbenchLog.Info($"HiveMind connected to {Connections.HiveMindHost}:{hivePort}/{Connections.HiveMindName}");
-                return;
-            }
-
-            try
-            {
-                await Task.Delay(Math.Min(5000, 750 + attempt * 250), token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-        }
+                WorkbenchLog.Info($"HiveMind connected to {Connections.HiveMindHost}:{port}/{Connections.HiveMindName}");
+                return Task.CompletedTask;
+            },
+            token).ConfigureAwait(false);
     }
 
     private async Task ConnectObservabilityWithRetryAsync(CancellationToken token)
     {
-        var attempt = 0;
-
-        while (!token.IsCancellationRequested)
-        {
-            if (!TryParsePort(Connections.ObsPortText, out var obsPort))
+        await RetryConnectAsync(
+            tryResolvePort: () => TryResolvePort(Connections.ObsPortText),
+            onInvalidPort: () =>
             {
                 Connections.ObsStatus = "Obs port invalid.";
                 Connections.ObsConnected = false;
-                return;
-            }
-
-            attempt++;
-            var connected = await _client.ConnectObservabilityAsync(
+            },
+            connectAsync: port => _client.ConnectObservabilityAsync(
                 Connections.ObsHost,
-                obsPort,
+                port,
                 Connections.DebugHub,
                 Connections.VizHub,
                 Debug.SelectedSeverity.Severity,
-                Debug.ContextRegex).ConfigureAwait(false);
-
-            if (connected)
+                Debug.ContextRegex),
+            isConnected: connected => connected,
+            onConnectedAsync: (port, _) =>
             {
                 UpdateObservabilitySubscriptions();
-
-                if (token.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                WorkbenchLog.Info($"Observability subscribed to {Connections.ObsHost}:{obsPort}");
-                return;
-            }
-
-            try
-            {
-                await Task.Delay(Math.Min(5000, 750 + attempt * 250), token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-        }
+                WorkbenchLog.Info($"Observability subscribed to {Connections.ObsHost}:{port}");
+                return Task.CompletedTask;
+            },
+            token).ConfigureAwait(false);
     }
 
     private void SetDisconnectedStatuses()
@@ -534,98 +461,18 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     private async Task SyncWorkbenchSettingsFromSettingsMonitorAsync()
     {
-        foreach (var key in DebugSettingsKeys.AllKeys)
-        {
-            var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
-            if (setting is null)
-            {
-                continue;
-            }
-
-            _dispatcher.Post(() =>
-                Debug.ApplySetting(new SettingItem(
-                    key,
-                    setting.Value ?? string.Empty,
-                    setting.UpdatedMs.ToString())));
-        }
-
-        foreach (var key in CostEnergySettingsKeys.AllKeys
-                     .Concat(PlasticitySettingsKeys.AllKeys)
-                     .Concat(IoCoordinatorSettingsKeys.AllKeys))
-        {
-            var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
-            if (setting is null)
-            {
-                continue;
-            }
-
-            _dispatcher.Post(() =>
-                Io.ApplySetting(new SettingItem(
-                    key,
-                    setting.Value ?? string.Empty,
-                    setting.UpdatedMs.ToString())));
-        }
-
-        foreach (var key in TickSettingsKeys.AllKeys.Concat(VisualizationSettingsKeys.AllKeys))
-        {
-            var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
-            if (setting is null)
-            {
-                continue;
-            }
-
-            _dispatcher.Post(() =>
-                Viz.ApplySetting(new SettingItem(
-                    key,
-                    setting.Value ?? string.Empty,
-                    setting.UpdatedMs.ToString())));
-        }
-
-        foreach (var key in ReproductionSettingsKeys.AllKeys)
-        {
-            var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
-            if (setting is null)
-            {
-                continue;
-            }
-
-            _dispatcher.Post(() =>
-                Repro.ApplySetting(new SettingItem(
-                    key,
-                    setting.Value ?? string.Empty,
-                    setting.UpdatedMs.ToString())));
-        }
-
-        foreach (var key in SpeciationSettingsKeys.AllKeys)
-        {
-            var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
-            if (setting is null)
-            {
-                continue;
-            }
-
-            _dispatcher.Post(() =>
-                Speciation.ApplySetting(new SettingItem(
-                    key,
-                    setting.Value ?? string.Empty,
-                    setting.UpdatedMs.ToString())));
-        }
-
-        foreach (var key in ServiceEndpointSettings.AllKeys)
-        {
-            var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
-            if (setting is null)
-            {
-                continue;
-            }
-
-            _dispatcher.Post(() =>
-                Orchestrator.UpdateSetting(new SettingItem(
-                    key,
-                    setting.Value ?? string.Empty,
-                    setting.UpdatedMs.ToString())));
-        }
-
+        await ApplySettingsSnapshotAsync(DebugSettingsKeys.AllKeys, item => _ = Debug.ApplySetting(item)).ConfigureAwait(false);
+        await ApplySettingsSnapshotAsync(
+            CostEnergySettingsKeys.AllKeys
+                .Concat(PlasticitySettingsKeys.AllKeys)
+                .Concat(IoCoordinatorSettingsKeys.AllKeys),
+            item => _ = Io.ApplySetting(item)).ConfigureAwait(false);
+        await ApplySettingsSnapshotAsync(
+            TickSettingsKeys.AllKeys.Concat(VisualizationSettingsKeys.AllKeys),
+            item => _ = Viz.ApplySetting(item)).ConfigureAwait(false);
+        await ApplySettingsSnapshotAsync(ReproductionSettingsKeys.AllKeys, item => _ = Repro.ApplySetting(item)).ConfigureAwait(false);
+        await ApplySettingsSnapshotAsync(SpeciationSettingsKeys.AllKeys, item => _ = Speciation.ApplySetting(item)).ConfigureAwait(false);
+        await ApplySettingsSnapshotAsync(ServiceEndpointSettings.AllKeys, Orchestrator.UpdateSetting).ConfigureAwait(false);
         _dispatcher.Post(UpdateObservabilitySubscriptions);
     }
 
@@ -662,6 +509,99 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         _client.SetDebugSubscription(shouldSubscribeDebug, debugFilter);
         _client.SetVizSubscription(shouldSubscribeViz);
         _client.SetActiveVisualizationBrain(vizBrainId, vizFocusRegionId);
+    }
+
+    private void PostConnectionStatus(Action update)
+    {
+        _dispatcher.Post(() =>
+        {
+            if (!IsConnectionActive)
+            {
+                return;
+            }
+
+            update();
+        });
+    }
+
+    private async Task RetryConnectAsync<TResult>(
+        Func<(bool IsValid, int Port)> tryResolvePort,
+        Action onInvalidPort,
+        Func<int, Task<TResult>> connectAsync,
+        Func<TResult, bool> isConnected,
+        Func<int, TResult, Task>? onConnectedAsync,
+        CancellationToken token)
+    {
+        var attempt = 0;
+
+        while (!token.IsCancellationRequested)
+        {
+            var (isValid, port) = tryResolvePort();
+            if (!isValid)
+            {
+                onInvalidPort();
+                return;
+            }
+
+            attempt++;
+            var result = await connectAsync(port).ConfigureAwait(false);
+            if (isConnected(result))
+            {
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                if (onConnectedAsync is not null)
+                {
+                    await onConnectedAsync(port, result).ConfigureAwait(false);
+                }
+
+                return;
+            }
+
+            if (!await DelayConnectRetryAsync(attempt, token).ConfigureAwait(false))
+            {
+                return;
+            }
+        }
+    }
+
+    private async Task ApplySettingsSnapshotAsync(IEnumerable<string> keys, Action<SettingItem> applySetting)
+    {
+        foreach (var key in keys)
+        {
+            var setting = await _client.GetSettingAsync(key).ConfigureAwait(false);
+            if (setting is null)
+            {
+                continue;
+            }
+
+            var item = new SettingItem(
+                key,
+                setting.Value ?? string.Empty,
+                setting.UpdatedMs.ToString());
+            _dispatcher.Post(() => applySetting(item));
+        }
+    }
+
+    private static async Task<bool> DelayConnectRetryAsync(int attempt, CancellationToken token)
+    {
+        var delay = InitialConnectRetryDelay + TimeSpan.FromMilliseconds(ConnectRetryDelayStep.TotalMilliseconds * attempt);
+        if (delay > MaxConnectRetryDelay)
+        {
+            delay = MaxConnectRetryDelay;
+        }
+
+        try
+        {
+            await Task.Delay(delay, token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
     }
 
     private static string NormalizeStatus(string status, bool connected)

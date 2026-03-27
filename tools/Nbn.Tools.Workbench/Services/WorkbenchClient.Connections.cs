@@ -19,6 +19,9 @@ namespace Nbn.Tools.Workbench.Services;
 
 public partial class WorkbenchClient
 {
+    /// <summary>
+    /// Starts or restarts the local receiver actor system when the bind or advertised endpoint changes.
+    /// </summary>
     public async Task EnsureStartedAsync(string bindHost, int port, string? advertisedHost = null, int? advertisedPort = null)
     {
         await _gate.WaitAsync().ConfigureAwait(false);
@@ -62,6 +65,9 @@ public partial class WorkbenchClient
         }
     }
 
+    /// <summary>
+    /// Connects the Workbench receiver to the configured IO gateway endpoint.
+    /// </summary>
     public async Task<ConnectAck?> ConnectIoAsync(string host, int port, string gatewayName, string clientName)
     {
         if (_root is null)
@@ -90,6 +96,9 @@ public partial class WorkbenchClient
         }
     }
 
+    /// <summary>
+    /// Drops the current IO gateway connection and clears the receiver routing target.
+    /// </summary>
     public void DisconnectIo()
     {
         _ioGatewayPid = null;
@@ -101,6 +110,9 @@ public partial class WorkbenchClient
         _sink.OnIoStatus("Disconnected", false);
     }
 
+    /// <summary>
+    /// Subscribes the Workbench receiver to SettingsMonitor updates and optionally verifies reachability.
+    /// </summary>
     public async Task<bool> ConnectSettingsAsync(string host, int port, string actorName, bool verify = false)
     {
         if (_root is null || _receiverPid is null)
@@ -134,6 +146,9 @@ public partial class WorkbenchClient
         }
     }
 
+    /// <summary>
+    /// Connects to HiveMind and restores the active visualization scope if one was already selected.
+    /// </summary>
     public virtual async Task<Nbn.Proto.Control.HiveMindStatus?> ConnectHiveMindAsync(string host, int port, string actorName)
     {
         if (_root is null)
@@ -164,6 +179,9 @@ public partial class WorkbenchClient
         }
     }
 
+    /// <summary>
+    /// Clears the current HiveMind connection and disables any active visualization subscription state.
+    /// </summary>
     public void DisconnectHiveMind()
     {
         if (_root is not null && _hiveMindPid is not null && _vizBrainEnabled.HasValue)
@@ -177,6 +195,9 @@ public partial class WorkbenchClient
         _sink.OnHiveMindStatus("Disconnected", false);
     }
 
+    /// <summary>
+    /// Records the observability endpoint and reports whether its TCP port is currently reachable.
+    /// </summary>
     public async Task<bool> ConnectObservabilityAsync(string host, int port, string debugHub, string vizHub, Nbn.Proto.Severity minSeverity, string contextRegex)
     {
         if (_root is null || _receiverPid is null)
@@ -202,6 +223,9 @@ public partial class WorkbenchClient
         return reachable;
     }
 
+    /// <summary>
+    /// Updates the remote debug subscription according to the current Workbench filter.
+    /// </summary>
     public void SetDebugSubscription(bool enabled, DebugSubscriptionFilter filter)
     {
         if (_root is null || _receiverPid is null || _debugHubPid is null)
@@ -236,6 +260,9 @@ public partial class WorkbenchClient
         }
     }
 
+    /// <summary>
+    /// Enables or disables the visualization event stream subscription.
+    /// </summary>
     public void SetVizSubscription(bool enabled)
     {
         if (_root is null || _receiverPid is null || _vizHubPid is null)
@@ -273,6 +300,9 @@ public partial class WorkbenchClient
         }
     }
 
+    /// <summary>
+    /// Updates the brain and optional region whose visualization should be streamed to this client.
+    /// </summary>
     public void SetActiveVisualizationBrain(Guid? brainId, uint? focusRegionId)
     {
         if (_vizBrainEnabled == brainId && _vizFocusRegionId == focusRegionId)
@@ -308,6 +338,9 @@ public partial class WorkbenchClient
         }
     }
 
+    /// <summary>
+    /// Unsubscribes from observability event streams and clears the local subscription state.
+    /// </summary>
     public void DisconnectObservability(string? contextRegex = null)
     {
         if (_root is null || _receiverPid is null)
@@ -331,6 +364,9 @@ public partial class WorkbenchClient
         _sink.OnObsStatus("Disconnected", false);
     }
 
+    /// <summary>
+    /// Re-applies the debug subscription filter when debug streaming is currently enabled.
+    /// </summary>
     public Task RefreshDebugFilterAsync(DebugSubscriptionFilter filter)
     {
         if (_root is null || _receiverPid is null || _debugHubPid is null || !_debugSubscribed)
@@ -386,6 +422,9 @@ public partial class WorkbenchClient
         }
     }
 
+    /// <summary>
+    /// Stops the local receiver actor system and releases the client gate.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         await StopAsync().ConfigureAwait(false);

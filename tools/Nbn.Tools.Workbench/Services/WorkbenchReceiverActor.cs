@@ -12,6 +12,9 @@ using Proto;
 
 namespace Nbn.Tools.Workbench.Services;
 
+/// <summary>
+/// Bridges Workbench UI commands and runtime event streams through the local receiver actor.
+/// </summary>
 public sealed class WorkbenchReceiverActor : IActor
 {
     private static readonly TimeSpan CommandAckTimeout = TimeSpan.FromSeconds(10);
@@ -34,28 +37,28 @@ public sealed class WorkbenchReceiverActor : IActor
                 _ioGateway = setIo.Pid;
                 return Task.CompletedTask;
             case SubscribeOutputsCommand subscribe:
-                SendToIoRequest(context, new SubscribeOutputs
+                SendToIo(context, new SubscribeOutputs
                 {
                     BrainId = subscribe.BrainId.ToProtoUuid(),
                     SubscriberActor = PidLabel(context.Self, context.System.Address)
                 });
                 return Task.CompletedTask;
             case UnsubscribeOutputsCommand unsubscribe:
-                SendToIoRequest(context, new UnsubscribeOutputs
+                SendToIo(context, new UnsubscribeOutputs
                 {
                     BrainId = unsubscribe.BrainId.ToProtoUuid(),
                     SubscriberActor = PidLabel(context.Self, context.System.Address)
                 });
                 return Task.CompletedTask;
             case SubscribeOutputsVectorCommand subscribeVector:
-                SendToIoRequest(context, new SubscribeOutputsVector
+                SendToIo(context, new SubscribeOutputsVector
                 {
                     BrainId = subscribeVector.BrainId.ToProtoUuid(),
                     SubscriberActor = PidLabel(context.Self, context.System.Address)
                 });
                 return Task.CompletedTask;
             case UnsubscribeOutputsVectorCommand unsubscribeVector:
-                SendToIoRequest(context, new UnsubscribeOutputsVector
+                SendToIo(context, new UnsubscribeOutputsVector
                 {
                     BrainId = unsubscribeVector.BrainId.ToProtoUuid(),
                     SubscriberActor = PidLabel(context.Self, context.System.Address)
@@ -262,16 +265,6 @@ public sealed class WorkbenchReceiverActor : IActor
 
         WorkbenchLog.Info(
             $"ReceiverInputForward brain={brainId:D} detail={detail} io={PidLabel(_ioGateway ?? context.Self, context.System.Address)} sender={PidLabel(context.Self, context.System.Address)}");
-    }
-
-    private void SendToIoRequest(IContext context, object message)
-    {
-        if (_ioGateway is null)
-        {
-            return;
-        }
-
-        context.Send(_ioGateway, message);
     }
 
     private void HandleOutput(OutputEvent output)

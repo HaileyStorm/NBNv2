@@ -4,8 +4,14 @@ using Avalonia.Threading;
 
 namespace Nbn.Tools.Workbench.Services;
 
+/// <summary>
+/// Dispatches UI work while preserving deterministic inline execution for headless Workbench usage.
+/// </summary>
 public sealed class UiDispatcher
 {
+    /// <summary>
+    /// Executes an action on the Avalonia UI thread, or inline when the UI loop is unavailable.
+    /// </summary>
     public void Post(Action action)
     {
         ArgumentNullException.ThrowIfNull(action);

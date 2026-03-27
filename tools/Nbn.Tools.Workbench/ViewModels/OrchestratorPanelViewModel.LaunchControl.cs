@@ -45,19 +45,13 @@ public sealed partial class OrchestratorPanelViewModel
         var args = includeDbArg
             ? $"--db \"{resolvedDbPath}\" {networkArgs}"
             : networkArgs;
-        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.SettingsMonitor", args, "SettingsMonitor").ConfigureAwait(false);
-        if (!launch.Success || launch.StartInfo is null)
-        {
-            SettingsLaunchStatus = launch.Message;
-            return;
-        }
-
-        var startInfo = launch.StartInfo;
-        var result = await _settingsRunner.StartAsync(startInfo, waitForExit: false, label: "SettingsMonitor");
-        SettingsLaunchStatus = result.Success
-            ? await AppendFirewallAttentionAsync("SettingsMonitor", port, result.Message).ConfigureAwait(false)
-            : result.Message;
-        await TriggerReconnectAsync().ConfigureAwait(false);
+        SettingsLaunchStatus = await StartLocalServiceAsync(
+            projectPath,
+            "Nbn.Runtime.SettingsMonitor",
+            args,
+            "SettingsMonitor",
+            port,
+            _settingsRunner).ConfigureAwait(false);
     }
 
     private async Task StartHiveMindAsync()
@@ -73,20 +67,14 @@ public sealed partial class OrchestratorPanelViewModel
         var args = $"{BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.HiveMindHost, port)} --settings-db \"{settingsDbPath}\""
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + $" --tick-hz {LocalDefaultTickHz:0.###} --min-tick-hz {LocalDefaultMinTickHz:0.###}";
-        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.HiveMind", args, "HiveMind").ConfigureAwait(false);
-        if (!launch.Success || launch.StartInfo is null)
-        {
-            HiveMindLaunchStatus = launch.Message;
-            return;
-        }
-
-        var startInfo = launch.StartInfo;
-        ApplyRuntimeDiagnosticsEnvironment(startInfo);
-        var result = await _hiveMindRunner.StartAsync(startInfo, waitForExit: false, label: "HiveMind");
-        HiveMindLaunchStatus = result.Success
-            ? await AppendFirewallAttentionAsync("HiveMind", port, result.Message).ConfigureAwait(false)
-            : result.Message;
-        await TriggerReconnectAsync().ConfigureAwait(false);
+        HiveMindLaunchStatus = await StartLocalServiceAsync(
+            projectPath,
+            "Nbn.Runtime.HiveMind",
+            args,
+            "HiveMind",
+            port,
+            _hiveMindRunner,
+            includeRuntimeDiagnostics: true).ConfigureAwait(false);
     }
 
     private async Task StartIoAsync()
@@ -100,20 +88,14 @@ public sealed partial class OrchestratorPanelViewModel
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.IO");
         var args = BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.IoHost, port)
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
-        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.IO", args, "IoGateway").ConfigureAwait(false);
-        if (!launch.Success || launch.StartInfo is null)
-        {
-            IoLaunchStatus = launch.Message;
-            return;
-        }
-
-        var startInfo = launch.StartInfo;
-        ApplyRuntimeDiagnosticsEnvironment(startInfo);
-        var result = await _ioRunner.StartAsync(startInfo, waitForExit: false, label: "IoGateway");
-        IoLaunchStatus = result.Success
-            ? await AppendFirewallAttentionAsync("IoGateway", port, result.Message).ConfigureAwait(false)
-            : result.Message;
-        await TriggerReconnectAsync().ConfigureAwait(false);
+        IoLaunchStatus = await StartLocalServiceAsync(
+            projectPath,
+            "Nbn.Runtime.IO",
+            args,
+            "IoGateway",
+            port,
+            _ioRunner,
+            includeRuntimeDiagnostics: true).ConfigureAwait(false);
     }
 
     private async Task StartReproAsync()
@@ -128,20 +110,14 @@ public sealed partial class OrchestratorPanelViewModel
         var args = BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.ReproHost, reproPort)
                  + $" --manager-name {Connections.ReproManager}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}";
-        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.Reproduction", args, "Reproduction").ConfigureAwait(false);
-        if (!launch.Success || launch.StartInfo is null)
-        {
-            ReproLaunchStatus = launch.Message;
-            return;
-        }
-
-        var startInfo = launch.StartInfo;
-        ApplyRuntimeDiagnosticsEnvironment(startInfo);
-        var result = await _reproRunner.StartAsync(startInfo, waitForExit: false, label: "Reproduction");
-        ReproLaunchStatus = result.Success
-            ? await AppendFirewallAttentionAsync("Reproduction", reproPort, result.Message).ConfigureAwait(false)
-            : result.Message;
-        await TriggerReconnectAsync().ConfigureAwait(false);
+        ReproLaunchStatus = await StartLocalServiceAsync(
+            projectPath,
+            "Nbn.Runtime.Reproduction",
+            args,
+            "Reproduction",
+            reproPort,
+            _reproRunner,
+            includeRuntimeDiagnostics: true).ConfigureAwait(false);
     }
 
     private async Task StartSpeciationAsync()
@@ -162,22 +138,15 @@ public sealed partial class OrchestratorPanelViewModel
         var args = BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.SpeciationHost, speciationPort)
                  + $" --manager-name {Connections.SpeciationManager}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
-        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.Speciation", args, "Speciation").ConfigureAwait(false);
-        if (!launch.Success || launch.StartInfo is null)
-        {
-            SpeciationLaunchStatus = launch.Message;
-            StatusMessage = $"Speciation launch: {launch.Message}";
-            return;
-        }
-
-        var startInfo = launch.StartInfo;
-        ApplyRuntimeDiagnosticsEnvironment(startInfo);
-        var result = await _speciationRunner.StartAsync(startInfo, waitForExit: false, label: "Speciation");
-        SpeciationLaunchStatus = result.Success
-            ? await AppendFirewallAttentionAsync("Speciation", speciationPort, result.Message).ConfigureAwait(false)
-            : result.Message;
+        SpeciationLaunchStatus = await StartLocalServiceAsync(
+            projectPath,
+            "Nbn.Runtime.Speciation",
+            args,
+            "Speciation",
+            speciationPort,
+            _speciationRunner,
+            includeRuntimeDiagnostics: true).ConfigureAwait(false);
         StatusMessage = $"Speciation launch: {SpeciationLaunchStatus}";
-        await TriggerReconnectAsync().ConfigureAwait(false);
     }
 
     private async Task StartWorkerAsync()
@@ -228,21 +197,15 @@ public sealed partial class OrchestratorPanelViewModel
                  + $" --gpu-compute-pct {workerGpuLimitPercent}"
                  + $" --gpu-vram-pct {workerVramLimitPercent}"
                  + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
-        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.WorkerNode", args, "WorkerNode").ConfigureAwait(false);
-        if (!launch.Success || launch.StartInfo is null)
-        {
-            WorkerLaunchStatus = launch.Message;
-            return;
-        }
-
-        var startInfo = launch.StartInfo;
-        ApplyRuntimeDiagnosticsEnvironment(startInfo);
-        ApplyObservabilityEnvironment(startInfo);
-        var result = await _workerRunner.StartAsync(startInfo, waitForExit: false, label: "WorkerNode");
-        WorkerLaunchStatus = result.Success
-            ? await AppendFirewallAttentionAsync("WorkerNode", workerPort, result.Message).ConfigureAwait(false)
-            : result.Message;
-        await TriggerReconnectAsync().ConfigureAwait(false);
+        WorkerLaunchStatus = await StartLocalServiceAsync(
+            projectPath,
+            "Nbn.Runtime.WorkerNode",
+            args,
+            "WorkerNode",
+            workerPort,
+            _workerRunner,
+            includeRuntimeDiagnostics: true,
+            includeObservabilityEnvironment: true).ConfigureAwait(false);
     }
 
     private async Task StartObsAsync()
@@ -257,20 +220,53 @@ public sealed partial class OrchestratorPanelViewModel
         var args = BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.ObsHost, port)
                  + $" --settings-host {Connections.SettingsHost} --settings-port {Connections.SettingsPortText} --settings-name {Connections.SettingsName}"
                  + " --enable-debug --enable-viz";
-        var launch = await _launchPreparer.PrepareAsync(projectPath, "Nbn.Runtime.Observability", args, "Observability").ConfigureAwait(false);
+        ObsLaunchStatus = await StartLocalServiceAsync(
+            projectPath,
+            "Nbn.Runtime.Observability",
+            args,
+            "Observability",
+            port,
+            _obsRunner,
+            includeRuntimeDiagnostics: true).ConfigureAwait(false);
+    }
+
+    private async Task<string> StartLocalServiceAsync(
+        string? projectPath,
+        string executableName,
+        string runtimeArgs,
+        string launchLabel,
+        int port,
+        LocalServiceRunner runner,
+        bool includeRuntimeDiagnostics = false,
+        bool includeObservabilityEnvironment = false)
+    {
+        var launch = await _launchPreparer.PrepareAsync(projectPath, executableName, runtimeArgs, launchLabel).ConfigureAwait(false);
         if (!launch.Success || launch.StartInfo is null)
         {
-            ObsLaunchStatus = launch.Message;
-            return;
+            return launch.Message;
         }
 
         var startInfo = launch.StartInfo;
-        ApplyRuntimeDiagnosticsEnvironment(startInfo);
-        var result = await _obsRunner.StartAsync(startInfo, waitForExit: false, label: "Observability");
-        ObsLaunchStatus = result.Success
-            ? await AppendFirewallAttentionAsync("Observability", port, result.Message).ConfigureAwait(false)
-            : result.Message;
+        if (includeRuntimeDiagnostics)
+        {
+            ApplyRuntimeDiagnosticsEnvironment(startInfo);
+        }
+
+        if (includeObservabilityEnvironment)
+        {
+            ApplyObservabilityEnvironment(startInfo);
+        }
+
+        var result = await runner.StartAsync(startInfo, waitForExit: false, label: launchLabel).ConfigureAwait(false);
+        if (!result.Success)
+        {
+            await TriggerReconnectAsync().ConfigureAwait(false);
+            return result.Message;
+        }
+
+        var launchStatus = await AppendFirewallAttentionAsync(launchLabel, port, result.Message).ConfigureAwait(false);
         await TriggerReconnectAsync().ConfigureAwait(false);
+        return launchStatus;
     }
 
     private static string BuildLocalServiceNetworkArgs(string? explicitAdvertiseHost, string? configuredHost, int port)

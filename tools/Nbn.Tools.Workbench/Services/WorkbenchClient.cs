@@ -17,6 +17,9 @@ using Proto.Remote.GrpcNet;
 
 namespace Nbn.Tools.Workbench.Services;
 
+/// <summary>
+/// Owns the Workbench actor-system client used to connect to runtime services and forward runtime events to the UI.
+/// </summary>
 public partial class WorkbenchClient : IAsyncDisposable
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
@@ -45,14 +48,26 @@ public partial class WorkbenchClient : IAsyncDisposable
     private string? _advertisedHost;
     private int? _advertisedPort;
 
+    /// <summary>
+    /// Creates a Workbench client that reports status and runtime events to the supplied sink.
+    /// </summary>
     public WorkbenchClient(IWorkbenchEventSink sink)
     {
         _sink = sink;
     }
 
+    /// <summary>
+    /// Gets whether the local Workbench actor system is running.
+    /// </summary>
     public bool IsRunning => _system is not null;
 
+    /// <summary>
+    /// Gets the current receiver actor label used for runtime callbacks.
+    /// </summary>
     public string ReceiverLabel => _receiverPid is null ? "offline" : PidLabel(_receiverPid);
 }
 
+/// <summary>
+/// Reports the outcome of a direct TCP reachability probe.
+/// </summary>
 public sealed record TcpEndpointProbeResult(bool Reachable, string Detail);

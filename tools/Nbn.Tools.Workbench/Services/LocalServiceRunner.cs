@@ -6,6 +6,9 @@ using System.Text;
 
 namespace Nbn.Tools.Workbench.Services;
 
+/// <summary>
+/// Starts and stops locally launched runtime or tooling processes for the Workbench orchestrator.
+/// </summary>
 public sealed class LocalServiceRunner
 {
     private const int StartupProbeDelayMs = 400;
@@ -16,6 +19,9 @@ public sealed class LocalServiceRunner
 
     public bool IsRunning => _process is { HasExited: false };
 
+    /// <summary>
+    /// Starts a local process, optionally waiting for completion, and records startup failures with launch logs.
+    /// </summary>
     public async Task<ServiceStartResult> StartAsync(ProcessStartInfo startInfo, bool waitForExit, string? label = null)
     {
         lock (_gate)
@@ -177,6 +183,9 @@ public sealed class LocalServiceRunner
         return null;
     }
 
+    /// <summary>
+    /// Stops the currently running local process, if any, and reports the resulting status text.
+    /// </summary>
     public Task<string> StopAsync()
     {
         Process? process;
@@ -235,4 +244,7 @@ public sealed class LocalServiceRunner
     }
 }
 
+/// <summary>
+/// Describes whether a local process reached a usable running state.
+/// </summary>
 public sealed record ServiceStartResult(bool Success, string Message);

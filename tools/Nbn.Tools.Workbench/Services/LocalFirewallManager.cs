@@ -9,11 +9,20 @@ using System.Threading.Tasks;
 
 namespace Nbn.Tools.Workbench.Services;
 
+/// <summary>
+/// Best-effort helper for opening local inbound firewall access for explicitly launched runtime ports.
+/// </summary>
 public interface ILocalFirewallManager
 {
+    /// <summary>
+    /// Ensures the local machine can accept inbound TCP traffic for the supplied bind host and port.
+    /// </summary>
     Task<FirewallAccessResult> EnsureInboundTcpAccessAsync(string label, string bindHost, int port);
 }
 
+/// <summary>
+/// Describes the outcome of Workbench firewall access checks for a launched service port.
+/// </summary>
 public enum FirewallAccessStatus
 {
     NotNeeded = 0,
@@ -24,14 +33,23 @@ public enum FirewallAccessStatus
     Unsupported = 5
 }
 
+/// <summary>
+/// Describes whether firewall work succeeded and whether the operator still needs to take action.
+/// </summary>
 public sealed record FirewallAccessResult(FirewallAccessStatus Status, string Message)
 {
     public bool RequiresAttention
         => Status is FirewallAccessStatus.PermissionRequired or FirewallAccessStatus.Failed;
 }
 
+/// <summary>
+/// Captures stdout/stderr from an OS firewall command invocation.
+/// </summary>
 public sealed record FirewallCommandResult(int ExitCode, string Stdout, string Stderr);
 
+/// <summary>
+/// Implements best-effort Windows and Linux firewall rule handling for Workbench local launch.
+/// </summary>
 public sealed class LocalFirewallManager : ILocalFirewallManager
 {
     private readonly Func<ProcessStartInfo, Task<FirewallCommandResult>> _commandRunner;
@@ -54,6 +72,7 @@ public sealed class LocalFirewallManager : ILocalFirewallManager
         _commandExists = commandExists ?? CommandExists;
     }
 
+    /// <inheritdoc />
     public async Task<FirewallAccessResult> EnsureInboundTcpAccessAsync(string label, string bindHost, int port)
     {
         if (port <= 0 || port >= 65536)

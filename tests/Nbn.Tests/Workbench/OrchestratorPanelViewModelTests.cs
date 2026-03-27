@@ -218,6 +218,42 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task StartSettingsMonitorCommand_WhenRunnerAlreadyRunning_StillTriggersReconnect()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsPortText = "12010"
+        };
+        var reconnectCount = 0;
+        var vm = CreateViewModel(
+            connections,
+            new FakeWorkbenchClient(),
+            new SuccessfulLocalProjectLaunchPreparer(CreateLongRunningProcessStartInfo()),
+            connectAll: () =>
+            {
+                reconnectCount++;
+                return Task.CompletedTask;
+            });
+
+        try
+        {
+            vm.StartSettingsMonitorCommand.Execute(null);
+            await WaitForAsync(() => vm.SettingsLaunchStatus.StartsWith("Running", StringComparison.Ordinal));
+            await WaitForAsync(() => reconnectCount == 1);
+
+            vm.StartSettingsMonitorCommand.Execute(null);
+            await WaitForAsync(() => string.Equals(vm.SettingsLaunchStatus, "Already running.", StringComparison.Ordinal));
+            await WaitForAsync(() => reconnectCount == 2);
+
+            Assert.Equal("Already running.", vm.SettingsLaunchStatus);
+        }
+        finally
+        {
+            await vm.StopAllAsyncForShutdown();
+        }
+    }
+
+    [Fact]
     public async Task ApplyWorkerPolicyCommand_WritesSettingsBackedValues()
     {
         var connections = new ConnectionViewModel
@@ -2270,16 +2306,39 @@ public class OrchestratorPanelViewModelTests
         ConnectionViewModel connections,
         WorkbenchClient client,
         ILocalProjectLaunchPreparer? launchPreparer = null,
-        ILocalFirewallManager? firewallManager = null)
+        ILocalFirewallManager? firewallManager = null,
+        Func<Task>? connectAll = null)
     {
         return new OrchestratorPanelViewModel(
             new UiDispatcher(),
             connections,
             client,
-            connectAll: () => Task.CompletedTask,
+            connectAll: connectAll ?? (() => Task.CompletedTask),
             disconnectAll: () => { },
             launchPreparer: launchPreparer,
             firewallManager: firewallManager ?? new FakeLocalFirewallManager());
+    }
+
+    private static ProcessStartInfo CreateLongRunningProcessStartInfo()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/d /c ping -n 30 127.0.0.1 > nul",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+        }
+
+        return new ProcessStartInfo
+        {
+            FileName = "/bin/sh",
+            Arguments = "-c \"sleep 30\"",
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
     }
 
     private static DesignerPanelViewModel CreateDesignerViewModel(
@@ -2581,6 +2640,14 @@ public class OrchestratorPanelViewModelTests
             CallCount++;
             LastRuntimeArgs = runtimeArgs;
             return Task.FromResult(new LocalProjectLaunchPreparation(false, null, failureMessage));
+        }
+    }
+
+    private sealed class SuccessfulLocalProjectLaunchPreparer(ProcessStartInfo startInfo) : ILocalProjectLaunchPreparer
+    {
+        public Task<LocalProjectLaunchPreparation> PrepareAsync(string? projectPath, string exeName, string runtimeArgs, string label)
+        {
+            return Task.FromResult(new LocalProjectLaunchPreparation(true, startInfo, "Prepared."));
         }
     }
 

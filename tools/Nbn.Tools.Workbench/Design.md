@@ -5,6 +5,7 @@ Owns desktop orchestration/visualization/debug UX and deterministic view-model d
 ## Stable responsibilities
 
 - Host operator workflows over IO/debug/viz and reproduction surfaces without exposing actor placement details.
+- Keep Workbench boundaries explicit: `ShellViewModel` owns reconnect/status fan-out, `OrchestratorPanelViewModel` owns explicit local launch/stop flows and launch diagnostics, and `WorkbenchClient` remains the transport/request boundary without auto-starting runtime services on connect.
 - Keep command/view-model correctness independent of Avalonia loop availability (dispatcher wrappers execute inline when no UI lifetime exists).
 - Keep visualization semantics deterministic across rendering modes.
 - Treat `DebugHub` and `VisualizationHub` as Observability-owned actor names resolved at the configured Observability host/port (not Workbench-owned services).
