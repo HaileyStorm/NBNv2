@@ -1923,6 +1923,94 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     }
 
     [Fact]
+    public async Task PlacementAssignmentRequest_HttpArtifactStore_WithInvalidCacheRoot_LoadsArtifactBackedShard()
+    {
+        var fallbackArtifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-http-fallback-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(fallbackArtifactRoot);
+        var invalidArtifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-http-invalid-root-{Guid.NewGuid():N}");
+        await File.WriteAllTextAsync(invalidArtifactRoot, "artifact-root-is-a-file");
+
+        await using var server = new HttpArtifactStoreTestServer();
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+
+            var richNbn = NbnTestVectors.CreateRichNbnVector().Bytes;
+            var manifest = await server.SeedAsync(richNbn, "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", server.BaseUri.AbsoluteUri);
+
+            var workerNodeId = Guid.NewGuid();
+            var brainId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+
+            _ = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new FixedBrainInfoWithBaseDefinitionActor(brainDef, inputWidth: 2, outputWidth: 2)),
+                ioName);
+            var workerPid = harness.Root.Spawn(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactRootPath: invalidArtifactRoot,
+                    artifactStore: new LocalArtifactStore(new ArtifactStoreOptions(fallbackArtifactRoot)))));
+
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            harness.Root.Send(
+                workerPid,
+                new WorkerNodeActor.DiscoverySnapshotApplied(
+                    new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+                    {
+                        [ServiceEndpointSettings.IoGatewayKey] = new(
+                            ServiceEndpointSettings.IoGatewayKey,
+                            new ServiceEndpoint(string.Empty, ioName),
+                            nowMs)
+                    }));
+
+            var ack = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = BuildAssignment(
+                        assignmentId: "assign-http-invalid-cache-root",
+                        brainId: brainId,
+                        workerNodeId: workerNodeId,
+                        placementEpoch: 1,
+                        regionId: NbnConstants.InputRegionId,
+                        shardIndex: 0,
+                        target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                        neuronStart: 0,
+                        neuronCount: 2)
+                });
+
+            Assert.True(ack.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, ack.State);
+
+            var reconcile = await harness.Root.RequestAsync<PlacementReconcileReport>(
+                workerPid,
+                new PlacementReconcileRequest
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    PlacementEpoch = 1
+                });
+            _ = Assert.Single(reconcile.Assignments, static assignment => assignment.AssignmentId == "assign-http-invalid-cache-root");
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(fallbackArtifactRoot))
+            {
+                Directory.Delete(fallbackArtifactRoot, recursive: true);
+            }
+
+            if (File.Exists(invalidArtifactRoot))
+            {
+                File.Delete(invalidArtifactRoot);
+            }
+        }
+    }
+
+    [Fact]
     public async Task PlacementAssignmentRequest_HttpArtifactStore_Reuses_NodeLocalCache_Across_Assignments()
     {
         var workerArtifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-http-store-{Guid.NewGuid():N}");

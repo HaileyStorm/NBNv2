@@ -28,7 +28,15 @@ public sealed class CachingArtifactStore : IArtifactStore
         options = ArtifactRegionIndexBuilder.PopulateIfMissing(content, mediaType, options);
         var manifest = await _upstream.StoreAsync(content, mediaType, options, cancellationToken).ConfigureAwait(false);
         CacheManifest(manifest);
-        await _cache.EnsureAsync(manifest, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _cache.EnsureAsync(manifest, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (IsRecoverableCacheFailure(ex))
+        {
+            // Cache persistence is an optimization; remote-store correctness must not depend on it.
+        }
+
         return manifest;
     }
 
@@ -74,11 +82,21 @@ public sealed class CachingArtifactStore : IArtifactStore
             return null;
         }
 
-        await _cache.EnsureAsync(manifest, cancellationToken).ConfigureAwait(false);
-        cachedEntry = await _cache.TryGetAsync(artifactId, cancellationToken).ConfigureAwait(false);
-        return cachedEntry is not null
-            ? OpenCachedEntry(cachedEntry)
-            : await _upstream.TryOpenArtifactAsync(artifactId, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _cache.EnsureAsync(manifest, cancellationToken).ConfigureAwait(false);
+            cachedEntry = await _cache.TryGetAsync(artifactId, cancellationToken).ConfigureAwait(false);
+            if (cachedEntry is not null)
+            {
+                return OpenCachedEntry(cachedEntry);
+            }
+        }
+        catch (Exception ex) when (IsRecoverableCacheFailure(ex))
+        {
+            // Cache persistence is an optimization; remote-store correctness must not depend on it.
+        }
+
+        return await _upstream.TryOpenArtifactAsync(artifactId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -121,12 +139,27 @@ public sealed class CachingArtifactStore : IArtifactStore
         }
 
         await using var _ = upstreamRange;
-        var rangeEntry = await _cache.StoreRangeAsync(artifactId, offset, length, upstreamRange, cancellationToken).ConfigureAwait(false);
-        return OpenCachedEntry(rangeEntry);
+        try
+        {
+            var rangeEntry = await _cache.StoreRangeAsync(artifactId, offset, length, upstreamRange, cancellationToken).ConfigureAwait(false);
+            return OpenCachedEntry(rangeEntry);
+        }
+        catch (Exception ex) when (IsRecoverableCacheFailure(ex))
+        {
+            // Cache persistence is an optimization; remote-store correctness must not depend on it.
+            return await _upstream.TryOpenArtifactRangeAsync(artifactId, offset, length, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static Stream OpenCachedEntry(ArtifactCacheEntry entry)
         => new FileStream(entry.Path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 64 * 1024, useAsync: true);
+
+    private static bool IsRecoverableCacheFailure(Exception ex)
+        => ex is UnauthorizedAccessException
+           || ex is IOException
+           || ex is DirectoryNotFoundException
+           || ex is NotSupportedException
+           || ex is PathTooLongException;
 
     private void CacheManifest(ArtifactManifest manifest)
     {

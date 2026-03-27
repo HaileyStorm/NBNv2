@@ -2,6 +2,7 @@ using Nbn.Shared;
 
 namespace Nbn.Tests.Shared;
 
+[Collection("EnvironmentVariableSerial")]
 public sealed class NetworkAddressDefaultsTests
 {
     [Fact]

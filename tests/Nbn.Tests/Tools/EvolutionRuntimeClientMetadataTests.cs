@@ -12,6 +12,7 @@ using Repro = Nbn.Proto.Repro;
 
 namespace Nbn.Tests.Tools;
 
+[Collection("EnvironmentVariableSerial")]
 public sealed class EvolutionRuntimeClientMetadataTests
 {
     [Fact]

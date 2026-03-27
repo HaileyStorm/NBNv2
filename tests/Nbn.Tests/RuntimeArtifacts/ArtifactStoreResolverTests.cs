@@ -183,6 +183,51 @@ public sealed class ArtifactStoreResolverTests
     }
 
     [Fact]
+    public async Task Resolve_HttpStoreUri_WhenCacheRootIsInvalid_FallsBackToUpstreamRead()
+    {
+        await using var server = new HttpArtifactStoreTestServer();
+        var localRoot = Path.Combine(Path.GetTempPath(), $"nbn-artifact-http-fallback-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(localRoot);
+        var invalidCacheRoot = Path.Combine(Path.GetTempPath(), $"nbn-artifact-http-cache-file-{Guid.NewGuid():N}");
+        await File.WriteAllTextAsync(invalidCacheRoot, "cache-root-is-a-file");
+
+        try
+        {
+            var payload = new byte[] { 31, 32, 33, 34, 35, 36 };
+            var manifest = await server.SeedAsync(payload, "application/x-nbn");
+            var resolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(localRoot, invalidCacheRoot));
+            var store = resolver.Resolve(server.BaseUri.AbsoluteUri);
+
+            await using (var first = await store.TryOpenArtifactAsync(manifest.ArtifactId))
+            {
+                Assert.NotNull(first);
+                Assert.Equal(payload, await ReadAllBytesAsync(first!));
+            }
+
+            await using (var second = await store.TryOpenArtifactAsync(manifest.ArtifactId))
+            {
+                Assert.NotNull(second);
+                Assert.Equal(payload, await ReadAllBytesAsync(second!));
+            }
+
+            Assert.Equal(2, server.ArtifactRequests);
+            Assert.False(Directory.Exists(Path.Combine(invalidCacheRoot, "artifacts")));
+        }
+        finally
+        {
+            if (Directory.Exists(localRoot))
+            {
+                Directory.Delete(localRoot, recursive: true);
+            }
+
+            if (File.Exists(invalidCacheRoot))
+            {
+                File.Delete(invalidCacheRoot);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Resolve_NonFileStoreUri_Uses_EnvironmentHttpTarget_When_Configured()
     {
         await using var server = new HttpArtifactStoreTestServer();
@@ -264,5 +309,12 @@ public sealed class ArtifactStoreResolverTests
             Environment.SetEnvironmentVariable("NBN_ARTIFACT_ROOT", originalRoot);
             Environment.SetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT", originalCache);
         }
+    }
+
+    private static async Task<byte[]> ReadAllBytesAsync(Stream stream)
+    {
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer);
+        return buffer.ToArray();
     }
 }
