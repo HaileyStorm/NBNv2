@@ -144,6 +144,9 @@ Keep docs concise and high-value:
 - Canonical local entrypoints are `tools/dist/release.sh --confirm` and `tools/dist/release.ps1 -ConfirmRelease`.
 - Those scripts validate docs freshness, build/test, compute the next version from `release/version.json`, create the tag, and push it.
 - The pushed tag triggers `.github/workflows/release.yml`, which builds installers/packages and publishes the GitHub Release.
+- When a release is performed, agents must ensure the final GitHub Release title/body is meaningful and operator-facing. Do not leave placeholder text, tag-only text, or generic one-line workflow text in the published release.
+- A proper release description should summarize the important operator-visible changes, relevant installation/runtime notes, validation performed, and any caveats or follow-up attention items.
+- If automation creates only a placeholder release shell, update it afterward with `gh release edit` (or equivalent) before considering the release complete.
 - Agents must not run the release scripts, create release tags, or push release tags without explicit human confirmation in the active session.
 - Package/install contract details live in `tools/dist/Design.md`; keep release automation, alias names, and Workbench installed-mode behavior aligned with that file.
 

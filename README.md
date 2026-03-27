@@ -47,6 +47,21 @@ NBN is not a gradient-descent/backprop training framework.
 - `tests/`
   - `Nbn.Tests`
 
+## Installation
+
+- Full-suite artifacts are `nbn-suite-<version>-win-x64-setup.exe`, `nbn-suite_<version>_amd64.deb`, and `nbn-suite-<version>-linux-x64-installer.run`.
+- Worker-only artifacts are `nbn-worker-<version>-win-x64-setup.exe`, `nbn-worker_<version>_amd64.deb`, `nbn-worker-<version>-linux-x64-installer.run`, `nbn-worker-<version>-win-x64-portable.zip`, and `nbn-worker-<version>-linux-x64-portable.tar.gz`.
+- Full-suite installers place files under `C:\Program Files\NBN\` on Windows and `/opt/nbn/` on Linux. Worker-only installers use `C:\Program Files\NBN Worker\` and `/opt/nbn-worker/`.
+- Installers place one `bin` directory on `PATH`. Portable worker archives do not modify `PATH`; run `bin/nbn-worker` from the extracted directory.
+- Full-suite installed aliases are `nbn-workbench`, `nbn-settings`, `nbn-hivemind`, `nbn-io`, `nbn-repro`, `nbn-speciation`, `nbn-observability`, `nbn-worker`, `nbn-brainhost`, `nbn-regionhost`, `nbn-evolution-sim`, and `nbn-perf-probe`. Worker-only installs expose `nbn-worker`.
+- Installed Workbench resolves managed runtime launches from `runtime-manifest.json` first and PATH aliases second. It does not require a source checkout or the .NET SDK for `Start` / `Start All`.
+- `nbn-settings` is the installed alias for SettingsMonitor. Its key options are `--db <path>`, `--bind-host <host>`, `--port <port>`, `--advertise-host <host>`, and `--advertise-port <port>`.
+- For SettingsMonitor and other remoted services, `--bind-host` / `--port` describe the local listening socket, while `--advertise-host` / `--advertise-port` describe the address other nodes should discover and use. For a multi-machine run, the advertised host should be the discoverable IP or DNS name, not `127.0.0.1`.
+- Example SettingsMonitor launch: `nbn-settings --db ./settingsmonitor.db --bind-host 0.0.0.0 --port 12010 --advertise-host 10.20.30.40 --advertise-port 12010`
+- `nbn-worker` is the installed alias for WorkerNode. Its core connectivity options are `--bind-host`, `--port`, `--advertise-host`, `--advertise-port`, `--settings-host`, `--settings-port`, `--settings-name`, `--logical-name`, and `--root-name`.
+- Worker resource quota flags are `--cpu-pct`, `--ram-pct`, `--storage-pct`, `--gpu-compute-pct`, and `--gpu-vram-pct` (or legacy `--gpu-pct`). These percentages define the worker availability it advertises for placement; lower values intentionally reserve headroom instead of offering the full machine.
+- Example worker launch: `nbn-worker --bind-host 0.0.0.0 --port 12041 --advertise-host 10.20.30.41 --advertise-port 12041 --settings-host 10.20.30.40 --settings-port 12010 --settings-name SettingsMonitor --logical-name nbn.worker.lab-a --root-name worker-node --cpu-pct 75 --ram-pct 75 --storage-pct 80 --gpu-compute-pct 70 --gpu-vram-pct 70`
+
 ## Build And Test
 
 ```bash
@@ -68,24 +83,6 @@ dotnet run --project tools/Nbn.Tools.Workbench -c Release
 ```
 
 In `Orchestrator`, use `Start All`, then in `Designer` use `Generate Random Brain` and `Spawn Brain` for the current end-to-end local validation path.
-
-## Installed Releases
-
-- Full-suite release artifacts are:
-  - Windows installer: `nbn-suite-<version>-win-x64-setup.exe`
-  - Linux `.deb`: `nbn-suite_<version>_amd64.deb`
-  - Linux `.run`: `nbn-suite-<version>-linux-x64-installer.run`
-- Worker-only release artifacts are:
-  - Windows installer: `nbn-worker-<version>-win-x64-setup.exe`
-  - Linux `.deb`: `nbn-worker_<version>_amd64.deb`
-  - Linux `.run`: `nbn-worker-<version>-linux-x64-installer.run`
-  - Windows portable zip: `nbn-worker-<version>-win-x64-portable.zip`
-  - Linux portable tarball: `nbn-worker-<version>-linux-x64-portable.tar.gz`
-- Full-suite installers/package artifacts install Workbench plus the managed runtime/tool aliases: `nbn-workbench`, `nbn-settings`, `nbn-hivemind`, `nbn-io`, `nbn-repro`, `nbn-speciation`, `nbn-observability`, `nbn-worker`, `nbn-brainhost`, `nbn-regionhost`, `nbn-evolution-sim`, and `nbn-perf-probe`.
-- Full-suite install roots are `C:\Program Files\NBN\` on Windows and `/opt/nbn/` on Linux.
-- Worker-only install roots are `C:\Program Files\NBN Worker\` on Windows and `/opt/nbn-worker/` on Linux.
-- Worker-only artifacts expose `nbn-worker`. The portable worker archives do not modify `PATH`; run `bin/nbn-worker` from the extracted directory.
-- Installed Workbench uses `runtime-manifest.json` plus PATH aliases and does not require a source checkout or the .NET SDK for `Start` / `Start All`.
 
 ## Manual Release Flow
 

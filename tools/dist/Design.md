@@ -38,6 +38,8 @@ Owns distribution packaging, release metadata, tag-triggered release automation,
   4. create and push tag `v<version>`
   5. GitHub Actions builds, packages, and publishes the GitHub release from that tag
 - The local release scripts refuse to tag or push without explicit confirmation.
+- The published GitHub Release description must be curated and meaningful. A tag-only or generic placeholder description is not sufficient for an operator-facing release.
+- Release descriptions should call out the major shipped changes, installation/runtime notes, validation performed, and any important caveats for operators.
 
 ## Supported artifacts
 
