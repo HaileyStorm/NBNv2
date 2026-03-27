@@ -6,6 +6,30 @@ namespace Nbn.Tests.SettingsMonitor;
 public sealed class SettingsMonitorDefaultsTests
 {
     [Fact]
+    public void DefaultSettings_Include_ArtifactCompressionDefaults()
+    {
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            SettingsMonitorDefaults.ArtifactChunkCompressionKindKey,
+            out var kind));
+        Assert.Equal(SettingsMonitorDefaults.ArtifactCompressionDefaults.Kind, kind);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            SettingsMonitorDefaults.ArtifactChunkCompressionLevelKey,
+            out var level));
+        Assert.Equal(SettingsMonitorDefaults.ArtifactCompressionDefaults.Level.ToString(), level);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            SettingsMonitorDefaults.ArtifactChunkCompressionMinBytesKey,
+            out var minBytes));
+        Assert.Equal(SettingsMonitorDefaults.ArtifactCompressionDefaults.MinBytes.ToString(), minBytes);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            SettingsMonitorDefaults.ArtifactChunkCompressionOnlyIfSmallerKey,
+            out var onlyIfSmaller));
+        Assert.Equal("true", onlyIfSmaller);
+    }
+
+    [Fact]
     public void DefaultSettings_Include_SystemCostEnergyMasterKey()
     {
         Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(

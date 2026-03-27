@@ -13,7 +13,8 @@ public sealed partial class SettingsMonitorActor
             return;
         }
 
-        UpdateNodeSnapshot(nodeId, message.LogicalName, message.Address, message.RootActorName, NowMs(), true);
+        var observedMs = ObserveNowMs();
+        UpdateNodeSnapshot(nodeId, message.LogicalName, message.Address, message.RootActorName, observedMs, true);
 
         var task = _store.UpsertNodeAsync(
             new NodeRegistration(
@@ -21,7 +22,7 @@ public sealed partial class SettingsMonitorActor
                 message.LogicalName ?? string.Empty,
                 message.Address ?? string.Empty,
                 message.RootActorName ?? string.Empty),
-            NowMs());
+            observedMs);
 
         context.ReenterAfter(task, completed =>
         {
@@ -41,9 +42,10 @@ public sealed partial class SettingsMonitorActor
             return;
         }
 
-        UpdateNodeSnapshot(nodeId, message.LogicalName, null, null, NowMs(), false);
+        var observedMs = ObserveNowMs();
+        UpdateNodeSnapshot(nodeId, message.LogicalName, null, null, observedMs, false);
 
-        var task = _store.MarkNodeOfflineAsync(nodeId, NowMs());
+        var task = _store.MarkNodeOfflineAsync(nodeId, observedMs);
         context.ReenterAfter(task, completed =>
         {
             if (completed.IsFaulted)
@@ -63,10 +65,11 @@ public sealed partial class SettingsMonitorActor
         }
 
         var caps = message.Caps ?? new ProtoSettings.NodeCapabilities();
-        UpdateNodeSnapshot(nodeId, null, null, null, message.TimeMs > 0 ? (long)message.TimeMs : NowMs(), true);
+        var observedMs = NormalizeObservedMs(message.TimeMs);
+        UpdateNodeSnapshot(nodeId, null, null, null, observedMs, true);
         var heartbeat = new NodeHeartbeat(
             nodeId,
-            message.TimeMs > 0 ? (long)message.TimeMs : NowMs(),
+            observedMs,
             new NodeCapabilities(
                 caps.CpuCores,
                 (long)caps.RamFreeBytes,
@@ -341,6 +344,11 @@ public sealed partial class SettingsMonitorActor
 
         return uuid.TryToGuid(out guid);
     }
+
+    private static long NormalizeObservedMs(ulong observedMs)
+        => observedMs > 0 ? (long)observedMs : ObserveNowMs();
+
+    private static long ObserveNowMs() => NowMs();
 
     private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 }

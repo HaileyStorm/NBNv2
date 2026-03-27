@@ -50,14 +50,13 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             return null;
         }
 
-        if (string.IsNullOrWhiteSpace(settingsHost) || settingsPort <= 0 || string.IsNullOrWhiteSpace(settingsName))
+        var settingsPid = CreateSettingsPid(settingsHost, settingsPort, settingsName);
+        if (settingsPid is null)
         {
             return null;
         }
 
-        return new ServiceEndpointDiscoveryClient(
-            system,
-            new PID($"{settingsHost}:{settingsPort}", settingsName));
+        return new ServiceEndpointDiscoveryClient(system, settingsPid);
     }
 
     /// <summary>
@@ -102,15 +101,13 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             throw new ArgumentException("Setting key is required.", nameof(settingKey));
         }
 
-        using var timeoutCts = CreateTimeoutToken(cancellationToken);
-        await _system.Root.RequestAsync<SettingValue>(
-            _settingsPid,
+        await RequestSettingsAsync<SettingValue>(
             new SettingSet
             {
                 Key = settingKey.Trim(),
                 Value = endpoint.ToSettingValue()
             },
-            timeoutCts.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -125,14 +122,12 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
             return null;
         }
 
-        using var timeoutCts = CreateTimeoutToken(cancellationToken);
-        var settingValue = await _system.Root.RequestAsync<SettingValue>(
-            _settingsPid,
+        var settingValue = await RequestSettingsAsync<SettingValue>(
             new SettingGet
             {
                 Key = settingKey.Trim()
             },
-            timeoutCts.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
 
         return ServiceEndpointSettings.TryParseSetting(
             settingValue.Key,
@@ -149,11 +144,9 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
     public async Task<IReadOnlyDictionary<string, ServiceEndpointRegistration>> ResolveFromListAsync(
         CancellationToken cancellationToken = default)
     {
-        using var timeoutCts = CreateTimeoutToken(cancellationToken);
-        var response = await _system.Root.RequestAsync<SettingListResponse>(
-            _settingsPid,
+        var response = await RequestSettingsAsync<SettingListResponse>(
             new SettingListRequest(),
-            timeoutCts.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
 
         var resolved = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal);
         foreach (var setting in response.Settings)
@@ -213,16 +206,7 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         var keyFilter = BuildKeyFilter(keys);
         var subscriberPid = EnsureSubscriber(keyFilter);
 
-        // Verify the settings endpoint is reachable before registering the watcher.
-        // Without this check, startup degrades into fire-and-forget subscribe attempts.
-        using var timeoutCts = CreateTimeoutToken(cancellationToken);
-        await _system.Root.RequestAsync<SettingValue>(
-            _settingsPid,
-            new SettingGet
-            {
-                Key = ServiceEndpointSettings.HiveMindKey
-            },
-            timeoutCts.Token).ConfigureAwait(false);
+        await EnsureSettingsReachableAsync(cancellationToken).ConfigureAwait(false);
 
         _system.Root.Send(_settingsPid, new SettingSubscribe
         {
@@ -263,6 +247,35 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await UnsubscribeAsync().ConfigureAwait(false);
+    }
+
+    private static PID? CreateSettingsPid(string? settingsHost, int settingsPort, string? settingsName)
+    {
+        if (string.IsNullOrWhiteSpace(settingsHost) || settingsPort <= 0 || string.IsNullOrWhiteSpace(settingsName))
+        {
+            return null;
+        }
+
+        return new PID($"{settingsHost}:{settingsPort}", settingsName);
+    }
+
+    private Task EnsureSettingsReachableAsync(CancellationToken cancellationToken)
+        => RequestSettingsAsync<SettingValue>(
+            new SettingGet
+            {
+                Key = ServiceEndpointSettings.HiveMindKey
+            },
+            cancellationToken);
+
+    private async Task<TResponse> RequestSettingsAsync<TResponse>(
+        object request,
+        CancellationToken cancellationToken = default)
+    {
+        using var timeoutCts = CreateTimeoutToken(cancellationToken);
+        return await _system.Root.RequestAsync<TResponse>(
+            _settingsPid,
+            request,
+            timeoutCts.Token).ConfigureAwait(false);
     }
 
     private PID EnsureSubscriber(HashSet<string> keyFilter)

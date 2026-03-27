@@ -3,16 +3,40 @@ using Nbn.Shared;
 
 namespace Nbn.Runtime.SettingsMonitor;
 
+/// <summary>
+/// Defines canonical SettingsMonitor default keys and seed values.
+/// </summary>
 public static class SettingsMonitorDefaults
 {
+    /// <summary>
+    /// Settings key for artifact chunk compression kind.
+    /// </summary>
     public const string ArtifactChunkCompressionKindKey = "artifact.chunk.compression.kind";
+
+    /// <summary>
+    /// Settings key for artifact chunk compression level.
+    /// </summary>
     public const string ArtifactChunkCompressionLevelKey = "artifact.chunk.compression.level";
+
+    /// <summary>
+    /// Settings key for the minimum chunk size eligible for compression.
+    /// </summary>
     public const string ArtifactChunkCompressionMinBytesKey = "artifact.chunk.compression.min_bytes";
+
+    /// <summary>
+    /// Settings key controlling whether compressed chunks must be smaller than the original payload.
+    /// </summary>
     public const string ArtifactChunkCompressionOnlyIfSmallerKey = "artifact.chunk.compression.only_if_smaller";
 
+    /// <summary>
+    /// Canonical fallback artifact compression settings used when the store is empty or invalid.
+    /// </summary>
     public static readonly ArtifactCompressionSettings ArtifactCompressionDefaults =
         new("zstd", 3, 64 * 1024, true);
 
+    /// <summary>
+    /// Canonical default setting rows seeded into a fresh SettingsMonitor store.
+    /// </summary>
     public static readonly IReadOnlyDictionary<string, string> DefaultSettings = BuildDefaultSettings();
 
     private static IReadOnlyDictionary<string, string> BuildDefaultSettings()

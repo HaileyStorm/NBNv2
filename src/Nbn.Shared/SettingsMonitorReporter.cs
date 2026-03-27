@@ -4,8 +4,13 @@ using System.IO;
 
 namespace Nbn.Shared;
 
+/// <summary>
+/// Reports node liveness and capability heartbeats to SettingsMonitor on a fixed cadence.
+/// </summary>
 public sealed class SettingsMonitorReporter : IAsyncDisposable
 {
+    private static readonly TimeSpan DefaultHeartbeatInterval = TimeSpan.FromSeconds(5);
+
     private readonly ActorSystem _system;
     private readonly PID _settingsPid;
     private readonly NodeOnline _online;
@@ -36,6 +41,9 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         _lastGoodCapabilities = CloneCapabilities(fallbackCapabilities);
     }
 
+    /// <summary>
+    /// Starts a reporter when the SettingsMonitor location is described by host, port, and actor name.
+    /// </summary>
     public static SettingsMonitorReporter? Start(
         ActorSystem? system,
         string? settingsHost,
@@ -48,35 +56,39 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         Func<NodeCapabilities>? capabilitiesProvider = null,
         TimeSpan? heartbeatInterval = null)
     {
-        if (system is null)
+        return Start(
+            system,
+            CreateSettingsPid(settingsHost, settingsPort, settingsName),
+            nodeAddress,
+            logicalName,
+            rootActorName,
+            capabilities,
+            capabilitiesProvider,
+            heartbeatInterval);
+    }
+
+    /// <summary>
+    /// Starts a reporter bound directly to a SettingsMonitor actor PID.
+    /// </summary>
+    public static SettingsMonitorReporter? Start(
+        ActorSystem? system,
+        PID? settingsPid,
+        string nodeAddress,
+        string logicalName,
+        string rootActorName,
+        NodeCapabilities? capabilities = null,
+        Func<NodeCapabilities>? capabilitiesProvider = null,
+        TimeSpan? heartbeatInterval = null)
+    {
+        if (system is null || settingsPid is null)
         {
             return null;
         }
 
-        if (string.IsNullOrWhiteSpace(settingsHost) || settingsPort <= 0 || string.IsNullOrWhiteSpace(settingsName))
+        if (!TryCreateLifecycleMessages(nodeAddress, logicalName, rootActorName, out var online, out var offline))
         {
             return null;
         }
-
-        var nodeId = NodeIdentity.DeriveNodeId(nodeAddress);
-        if (nodeId == Guid.Empty)
-        {
-            return null;
-        }
-
-        var settingsPid = new PID($"{settingsHost}:{settingsPort}", settingsName);
-        var online = new NodeOnline
-        {
-            NodeId = nodeId.ToProtoUuid(),
-            LogicalName = logicalName ?? string.Empty,
-            Address = nodeAddress ?? string.Empty,
-            RootActorName = rootActorName ?? string.Empty
-        };
-        var offline = new NodeOffline
-        {
-            NodeId = nodeId.ToProtoUuid(),
-            LogicalName = logicalName ?? string.Empty
-        };
 
         var reporter = new SettingsMonitorReporter(
             system,
@@ -85,7 +97,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
             offline,
             capabilities ?? BuildDefaultCapabilities(),
             capabilitiesProvider,
-            heartbeatInterval ?? TimeSpan.FromSeconds(5));
+            heartbeatInterval ?? DefaultHeartbeatInterval);
 
         reporter.StartInternal();
         return reporter;
@@ -93,7 +105,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
 
     private void StartInternal()
     {
-        _system.Root.Send(_settingsPid, _online);
+        SendSettingsMessage(_online);
         _loop = RunHeartbeatAsync(_cts.Token);
     }
 
@@ -116,16 +128,16 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
 
     private Task SendHeartbeatAsync()
     {
-        _system.Root.Send(_settingsPid, _online);
+        SendSettingsMessage(_online);
         var capabilities = ResolveCapabilities();
         var heartbeat = new NodeHeartbeat
         {
             NodeId = _online.NodeId,
-            TimeMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            TimeMs = GetObservationTimeMs(),
             Caps = capabilities
         };
 
-        _system.Root.Send(_settingsPid, heartbeat);
+        SendSettingsMessage(heartbeat);
         return Task.CompletedTask;
     }
 
@@ -133,27 +145,25 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
     {
         if (_capabilitiesProvider is null)
         {
-            return CloneCapabilities(_lastGoodCapabilities ?? _fallbackCapabilities);
+            return GetLastGoodOrFallbackCapabilities();
         }
 
         try
         {
             var resolved = _capabilitiesProvider() ?? CloneCapabilities(_fallbackCapabilities);
-            if (HasUsablePlacementCapacity(resolved))
-            {
-                _lastGoodCapabilities = CloneCapabilities(resolved);
-            }
-
+            RememberLastGoodCapabilities(resolved);
             return resolved;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(
-                $"[WARN] SettingsMonitorReporter capability provider failed for {_online.Address}/{_online.RootActorName}: {ex.GetBaseException().Message}");
-            return CloneCapabilities(_lastGoodCapabilities ?? _fallbackCapabilities);
+            LogCapabilityProviderFailure(ex);
+            return GetLastGoodOrFallbackCapabilities();
         }
     }
 
+    /// <summary>
+    /// Stops the heartbeat loop and reports the node as offline.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         _cts.Cancel();
@@ -170,7 +180,7 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
 
         try
         {
-            _system.Root.Send(_settingsPid, _offline);
+            SendSettingsMessage(_offline);
         }
         catch
         {
@@ -179,6 +189,9 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         _cts.Dispose();
     }
 
+    /// <summary>
+    /// Builds a conservative fallback capability snapshot from the local process environment.
+    /// </summary>
     public static NodeCapabilities BuildDefaultCapabilities()
     {
         var memory = ProbeFallbackMemory();
@@ -204,6 +217,70 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
             GpuComputeLimitPercent = 100,
             GpuVramLimitPercent = 100
         };
+    }
+
+    private static PID? CreateSettingsPid(string? settingsHost, int settingsPort, string? settingsName)
+    {
+        if (string.IsNullOrWhiteSpace(settingsHost) || settingsPort <= 0 || string.IsNullOrWhiteSpace(settingsName))
+        {
+            return null;
+        }
+
+        return new PID($"{settingsHost}:{settingsPort}", settingsName);
+    }
+
+    private static bool TryCreateLifecycleMessages(
+        string? nodeAddress,
+        string? logicalName,
+        string? rootActorName,
+        out NodeOnline online,
+        out NodeOffline offline)
+    {
+        online = new NodeOnline();
+        offline = new NodeOffline();
+
+        var nodeId = NodeIdentity.DeriveNodeId(nodeAddress ?? string.Empty);
+        if (nodeId == Guid.Empty)
+        {
+            return false;
+        }
+
+        online = new NodeOnline
+        {
+            NodeId = nodeId.ToProtoUuid(),
+            LogicalName = logicalName ?? string.Empty,
+            Address = nodeAddress ?? string.Empty,
+            RootActorName = rootActorName ?? string.Empty
+        };
+        offline = new NodeOffline
+        {
+            NodeId = nodeId.ToProtoUuid(),
+            LogicalName = logicalName ?? string.Empty
+        };
+        return true;
+    }
+
+    private static ulong GetObservationTimeMs()
+        => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+    private void SendSettingsMessage(object message)
+        => _system.Root.Send(_settingsPid, message);
+
+    private NodeCapabilities GetLastGoodOrFallbackCapabilities()
+        => CloneCapabilities(_lastGoodCapabilities ?? _fallbackCapabilities);
+
+    private void RememberLastGoodCapabilities(NodeCapabilities capabilities)
+    {
+        if (HasUsablePlacementCapacity(capabilities))
+        {
+            _lastGoodCapabilities = CloneCapabilities(capabilities);
+        }
+    }
+
+    private void LogCapabilityProviderFailure(Exception ex)
+    {
+        Console.Error.WriteLine(
+            $"[WARN] SettingsMonitorReporter capability provider failed for {_online.Address}/{_online.RootActorName}: {ex.GetBaseException().Message}");
     }
 
     private static bool HasUsablePlacementCapacity(NodeCapabilities capabilities)
