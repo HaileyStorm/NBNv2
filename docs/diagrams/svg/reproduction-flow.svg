@@ -28,68 +28,61 @@
 </defs>
 <g>
 <rect x="0" y="0" width="1600" height="900" fill="url(#bg-gradient)" />
-<circle cx="86" cy="90" r="180" fill="#FFF3CF" opacity="0.8" />
-<circle cx="1510" cy="120" r="180" fill="#EAF7F9" opacity="0.85" />
-<circle cx="1460" cy="830" r="220" fill="#FFF1E7" opacity="0.85" />
-<circle cx="130" cy="790" r="180" fill="#F3F5F8" opacity="0.9" />
+<circle cx="90" cy="88" r="120" fill="#FFF3CF" opacity="0.75" />
+<circle cx="1515" cy="100" r="110" fill="#EAF7F9" opacity="0.75" />
+<circle cx="1495" cy="820" r="120" fill="#FFF1E7" opacity="0.7" />
 </g>
 <g>
 <text x="70" y="70" fill="#131B2C" font-size="42" font-weight="850" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Reproduction compatibility and child synthesis</text>
 <text x="70" y="108" fill="#556071" font-size="21" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">The runtime can stop at assessment-only reports or continue through locus-aligned mutation into a child artifact and optional spawn.</text>
 </g>
 <g>
-<rect x="60" y="170" width="260" height="150" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="60" y="170" width="260" height="9" rx="26" fill="#E0A31A" />
-<text x="80" y="214" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Parent A</text>
-<text x="80" y="248" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="80" dy="0">BrainId or artifact refs</tspan><tspan x="80" dy="1.35em">base-only or live strengths</tspan></text>
+<rect x="60" y="220" width="230" height="110" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="60" y="220" width="230" height="9" rx="26" fill="#E0A31A" />
+<text x="80" y="264" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Parent A</text>
+<text x="80" y="298" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="80" dy="0">BrainId or artifact refs</tspan><tspan x="80" dy="1.35em">base or live strength source</tspan></text>
 </g>
 <g>
-<rect x="60" y="350" width="260" height="150" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="60" y="350" width="260" height="9" rx="26" fill="#E0A31A" />
-<text x="80" y="394" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Parent B</text>
-<text x="80" y="428" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="80" dy="0">BrainId or artifact refs</tspan><tspan x="80" dy="1.35em">same addressing options</tspan></text>
+<rect x="60" y="380" width="230" height="110" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="60" y="380" width="230" height="9" rx="26" fill="#E0A31A" />
+<text x="80" y="424" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Parent B</text>
+<text x="80" y="458" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="80" dy="0">same addressing modes</tspan><tspan x="80" dy="1.35em">same compatibility rules</tspan></text>
 </g>
 <g>
-<rect x="60" y="540" width="260" height="190" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="60" y="540" width="260" height="9" rx="26" fill="#E0A31A" />
-<text x="80" y="584" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">ReproduceConfig</text>
-<text x="80" y="618" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="80" dy="0">run_count + thresholds</tspan><tspan x="80" dy="1.35em">protect_io_region_neuron_counts=true by default</tspan><tspan x="80" dy="1.35em">manual IO add/remove only when protection is disabled</tspan></text>
+<rect x="60" y="540" width="230" height="150" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="60" y="540" width="230" height="9" rx="26" fill="#E0A31A" />
+<text x="80" y="584" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">ReproduceConfig</text>
+<text x="80" y="618" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="80" dy="0">run_count + thresholds</tspan><tspan x="80" dy="1.35em">IO neuron count protected by default</tspan><tspan x="80" dy="1.35em">manual IO add/remove only when protection is off</tspan></text>
 </g>
 <g>
-<rect x="370" y="145" width="450" height="615" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<rect x="370" y="145" width="450" height="12" rx="34" fill="#1B8393" />
-<text x="394" y="189" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Compatibility gate cascade</text>
-<text x="394" y="221" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Abort as soon as one gate fails</text>
+<rect x="350" y="190" width="470" height="520" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<rect x="350" y="190" width="470" height="12" rx="34" fill="#1B8393" />
+<text x="374" y="234" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Compatibility gate cascade</text>
+<text x="374" y="266" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Abort as soon as one gate fails</text>
 </g>
 <g>
-<rect x="860" y="165" width="300" height="265" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<rect x="860" y="165" width="300" height="12" rx="34" fill="#F97316" />
-<text x="884" y="209" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Locus-aligned mutation</text>
-<text x="884" y="241" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">(region_id, neuron_id) stays canonical</text>
+<rect x="880" y="190" width="600" height="520" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<rect x="880" y="190" width="600" height="12" rx="34" fill="#F97316" />
+<text x="904" y="234" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Outputs</text>
+<text x="904" y="266" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Assessment can stop early; synthesis can continue to a child artifact</text>
 </g>
 <g>
-<rect x="860" y="500" width="300" height="180" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<rect x="860" y="500" width="300" height="12" rx="34" fill="#1B8393" />
-<text x="884" y="544" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Assessment-only path</text>
-<text x="884" y="576" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">No child synthesis, no spawn attempt</text>
+<rect x="920" y="270" width="220" height="130" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="920" y="270" width="220" height="9" rx="26" fill="#1B8393" />
+<text x="940" y="314" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Assessment only</text>
+<text x="940" y="348" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="940" dy="0">same gate cascade</tspan><tspan x="940" dy="1.35em">no child bytes</tspan><tspan x="940" dy="1.35em">used by speciation bootstrap</tspan></text>
 </g>
 <g>
-<rect x="1210" y="190" width="270" height="120" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1210" y="190" width="270" height="9" rx="26" fill="#2B8857" />
-<text x="1230" y="234" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Child artifact</text>
-<text x="1230" y="268" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1230" dy="0">new .nbn definition</tspan><tspan x="1230" dy="1.35em">summary + mutation report</tspan></text>
+<rect x="1200" y="250" width="240" height="190" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="1200" y="250" width="240" height="9" rx="26" fill="#F97316" />
+<text x="1220" y="294" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Child synthesis</text>
+<text x="1220" y="328" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1220" dy="0">align by (region_id, neuron_id)</tspan><tspan x="1220" dy="1.35em">mutate functions / params / axons</tspan><tspan x="1220" dy="1.35em">respect IO invariants + duplicate-target rules</tspan><tspan x="1220" dy="1.35em">optional spawn policy after synthesis</tspan></text>
 </g>
 <g>
-<rect x="1210" y="350" width="270" height="150" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1210" y="350" width="270" height="9" rx="26" fill="#2B8857" />
-<text x="1230" y="394" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Optional spawn</text>
-<text x="1230" y="428" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1230" dy="0">SpawnChildDefaultOn / Never / Always</tspan><tspan x="1230" dy="1.35em">IO / HiveMind surface child BrainId on success</tspan></text>
-</g>
-<g>
-<rect x="1210" y="540" width="270" height="120" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1210" y="540" width="270" height="9" rx="26" fill="#1B8393" />
-<text x="1230" y="584" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Similarity report</text>
-<text x="1230" y="618" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1230" dy="0">compatible=false + abort_reason when a gate or runtime step fails</tspan></text>
+<rect x="1030" y="540" width="260" height="110" rx="26" fill="white" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="1030" y="540" width="260" height="9" rx="26" fill="#2B8857" />
+<text x="1050" y="584" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Similarity + mutation report</text>
+<text x="1050" y="618" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1050" dy="0">assessment-only returns here directly</tspan><tspan x="1050" dy="1.35em">successful synthesis also returns here</tspan></text>
 </g>
 <rect x="405" y="220" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <g>
@@ -97,79 +90,71 @@
 <text x="433" y="245" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">1</text>
 </g>
 <text x="465" y="249" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Format + quantization compatibility</text>
-<rect x="405" y="288" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<rect x="405" y="276" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <g>
-<circle cx="433" cy="312" r="18" fill="#1B8393" />
-<text x="433" y="313" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">2</text>
+<circle cx="433" cy="300" r="18" fill="#1B8393" />
+<text x="433" y="301" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">2</text>
 </g>
-<text x="465" y="317" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Input/output region invariants</text>
-<rect x="405" y="356" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<text x="465" y="305" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Input/output region invariants</text>
+<rect x="405" y="332" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <g>
-<circle cx="433" cy="380" r="18" fill="#1B8393" />
-<text x="433" y="381" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">3</text>
+<circle cx="433" cy="356" r="18" fill="#1B8393" />
+<text x="433" y="357" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">3</text>
 </g>
-<text x="465" y="385" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Region presence similarity</text>
-<rect x="405" y="424" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<text x="465" y="361" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Region presence similarity</text>
+<rect x="405" y="388" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <g>
-<circle cx="433" cy="448" r="18" fill="#1B8393" />
-<text x="433" y="449" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">4</text>
+<circle cx="433" cy="412" r="18" fill="#1B8393" />
+<text x="433" y="413" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">4</text>
 </g>
-<text x="465" y="453" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Per-region neuron span tolerance</text>
-<rect x="405" y="492" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<text x="465" y="417" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Per-region neuron span tolerance</text>
+<rect x="405" y="444" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <g>
-<circle cx="433" cy="516" r="18" fill="#1B8393" />
-<text x="433" y="517" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">5</text>
+<circle cx="433" cy="468" r="18" fill="#1B8393" />
+<text x="433" y="469" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">5</text>
 </g>
-<text x="465" y="521" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Function distribution similarity</text>
-<rect x="405" y="560" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<text x="465" y="473" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Function distribution similarity</text>
+<rect x="405" y="500" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <g>
-<circle cx="433" cy="584" r="18" fill="#1B8393" />
-<text x="433" y="585" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">6</text>
+<circle cx="433" cy="524" r="18" fill="#1B8393" />
+<text x="433" y="525" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">6</text>
 </g>
-<text x="465" y="589" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Connectivity distribution similarity</text>
-<rect x="405" y="628" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<text x="465" y="529" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Connectivity distribution similarity</text>
+<rect x="405" y="556" width="380" height="48" rx="18" fill="white" stroke="#D9D1BB" stroke-width="2" />
 <g>
-<circle cx="433" cy="652" r="18" fill="#1B8393" />
-<text x="433" y="653" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">7</text>
+<circle cx="433" cy="580" r="18" fill="#1B8393" />
+<text x="433" y="581" fill="white" font-size="18" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">7</text>
 </g>
-<text x="465" y="657" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Spot-check overlap (strength ignored)</text>
-<text x="890" y="235" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="890" dy="0">align by (region_id, neuron_id)</tspan><tspan x="890" dy="1.35em">mutate functions / params / axons</tspan><tspan x="890" dy="1.35em">IO axon invariants always apply</tspan><tspan x="890" dy="1.35em">duplicate targets still forbidden</tspan></text>
-<text x="890" y="555" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="890" dy="0">Use the same compatibility rules</tspan><tspan x="890" dy="1.35em">Return scores without child bytes</tspan><tspan x="890" dy="1.35em">Speciation bootstrap relies on this path</tspan></text>
+<text x="465" y="585" fill="#131B2C" font-size="18" font-weight="650" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Spot-check overlap (strength ignored)</text>
 <g>
-<line x1="320" y1="245" x2="370" y2="245" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
-<text x="345" y="225" fill="#E0A31A" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">load parents</text>
+<line x1="290" y1="275" x2="350" y2="275" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
+<text x="320" y="255" fill="#E0A31A" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">load parents</text>
 </g>
 <g>
-<line x1="320" y1="425" x2="370" y2="425" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
+<line x1="290" y1="435" x2="350" y2="435" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
 </g>
 <g>
-<line x1="320" y1="635" x2="370" y2="635" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
-<text x="345" y="615" fill="#E0A31A" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">config + manual IO ops</text>
+<line x1="290" y1="615" x2="350" y2="615" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
+<text x="320" y="595" fill="#E0A31A" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">thresholds + policy</text>
 </g>
 <g>
-<line x1="820" y1="320" x2="860" y2="320" stroke="#F97316" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-orange)" />
-<text x="840" y="300" fill="#F97316" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">compatible</text>
+<line x1="820" y1="330" x2="920" y2="330" stroke="#1B8393" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-teal)" />
+<text x="870" y="310" fill="#1B8393" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">stop here for assessment</text>
 </g>
 <g>
-<line x1="820" y1="590" x2="1210" y2="600" stroke="#1B8393" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-teal)" />
-<text x="1015" y="575" fill="#1B8393" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">assessment result</text>
+<line x1="820" y1="360" x2="1200" y2="345" stroke="#F97316" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-orange)" />
+<text x="1005" y="324" fill="#F97316" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">continue when compatible</text>
 </g>
 <g>
-<polyline points="1010,430 1010,460 1345,460 1345,500" fill="none" stroke="#2B8857" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-green)" />
-<text x="1180" y="442" fill="#2B8857" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">spawn policy</text>
+<line x1="1030" y1="400" x2="1080" y2="540" stroke="#1B8393" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-teal)" />
 </g>
 <g>
-<line x1="1160" y1="250" x2="1210" y2="250" stroke="#2B8857" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-green)" />
-<text x="1185" y="230" fill="#2B8857" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">synthesize child</text>
+<line x1="1320" y1="440" x2="1240" y2="540" stroke="#F97316" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-orange)" />
 </g>
 <g>
-<line x1="1345" y1="310" x2="1345" y2="350" stroke="#2B8857" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-green)" />
+<rect x="60" y="780" width="1480" height="75" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<rect x="60" y="780" width="14" height="75" rx="28" fill="#B94B34" />
+<text x="92" y="820" fill="#131B2C" font-size="24" font-weight="780" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Protected IO regions</text>
+<text x="92" y="852" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="92" dy="0">Neuron count changes in regions 0 and 31 are rejected unless the caller disables protection</tspan><tspan x="92" dy="1.35em">and supplies explicit manual add/remove operations. Axon invariants still apply either way.</tspan></text>
 </g>
-<g>
-<rect x="370" y="785" width="1110" height="82" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<rect x="370" y="785" width="14" height="82" rx="28" fill="#B94B34" />
-<text x="402" y="825" fill="#131B2C" font-size="24" font-weight="780" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Protected IO regions</text>
-<text x="402" y="857" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="402" dy="0">Neuron count changes in regions 0 and 31 are rejected unless the caller explicitly disables protection and supplies manual add/remove operations. Axon invariants still apply either way.</tspan></text>
-</g>
-<text x="1528" y="875" fill="#7A8392" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="end" dominant-baseline="alphabetic">SVG source + PNG render live together under docs/diagrams/</text>
 </svg>

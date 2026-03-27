@@ -28,238 +28,163 @@
 </defs>
 <g>
 <rect x="0" y="0" width="1600" height="900" fill="url(#bg-gradient)" />
-<circle cx="86" cy="90" r="180" fill="#FFF3CF" opacity="0.8" />
-<circle cx="1510" cy="120" r="180" fill="#EAF7F9" opacity="0.85" />
-<circle cx="1460" cy="830" r="220" fill="#FFF1E7" opacity="0.85" />
-<circle cx="130" cy="790" r="180" fill="#F3F5F8" opacity="0.9" />
+<circle cx="90" cy="88" r="120" fill="#FFF3CF" opacity="0.75" />
+<circle cx="1515" cy="100" r="110" fill="#EAF7F9" opacity="0.75" />
+<circle cx="1495" cy="820" r="120" fill="#FFF1E7" opacity="0.7" />
 </g>
 <g>
 <text x="70" y="70" fill="#131B2C" font-size="42" font-weight="850" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">NBN runtime service topology</text>
 <text x="70" y="108" fill="#556071" font-size="21" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Control-plane roots stay discoverable while per-brain actors and shards move across workers.</text>
 </g>
 <g>
-<rect x="40" y="140" width="300" height="700" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<rect x="40" y="140" width="300" height="12" rx="34" fill="#E0A31A" />
-<text x="64" y="184" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">External surfaces</text>
-<text x="64" y="216" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Operator and client entrypoints</text>
+<rect x="50" y="150" width="240" height="620" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<rect x="50" y="150" width="240" height="12" rx="34" fill="#E0A31A" />
+<text x="74" y="194" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Clients</text>
+<text x="74" y="226" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Stable public entrypoints</text>
 </g>
 <g>
-<rect x="360" y="140" width="520" height="700" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<rect x="360" y="140" width="520" height="12" rx="34" fill="#1B8393" />
-<text x="384" y="184" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Control plane</text>
-<text x="384" y="216" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Discovery, lifecycle, routing, and artifacts</text>
+<rect x="340" y="150" width="480" height="620" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<rect x="340" y="150" width="480" height="12" rx="34" fill="#1B8393" />
+<text x="364" y="194" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Core services</text>
+<text x="364" y="226" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Registry, routing, and durable state</text>
 </g>
 <g>
-<rect x="900" y="140" width="660" height="700" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<rect x="900" y="140" width="660" height="12" rx="34" fill="#F97316" />
-<text x="924" y="184" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Per-brain runtime</text>
-<text x="924" y="216" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Actors can be co-located or worker-hosted</text>
+<rect x="870" y="150" width="680" height="620" rx="34" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<rect x="870" y="150" width="680" height="12" rx="34" fill="#F97316" />
+<text x="894" y="194" fill="#131B2C" font-size="28" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Per-brain runtime</text>
+<text x="894" y="226" fill="#7A8392" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Placement can move without changing public endpoints</text>
 </g>
 <g>
-<rect x="70" y="190" width="240" height="130" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="70" y="190" width="240" height="9" rx="26" fill="#E0A31A" />
-<text x="90" y="234" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">External World</text>
-<text x="90" y="268" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="90" dy="0">Proto.Actor clients</tspan><tspan x="90" dy="1.35em">input writes</tspan><tspan x="90" dy="1.35em">output subscriptions</tspan></text>
+<rect x="80" y="360" width="180" height="110" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="80" y="360" width="180" height="9" rx="26" fill="#E0A31A" />
+<text x="100" y="404" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">External World</text>
+<text x="100" y="438" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="100" dy="0">Proto.Actor clients</tspan><tspan x="100" dy="1.35em">input writes + subscriptions</tspan></text>
 </g>
 <g>
-<rect x="70" y="360" width="240" height="150" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="70" y="360" width="240" height="9" rx="26" fill="#E0A31A" />
-<text x="90" y="404" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Workbench</text>
-<text x="90" y="438" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="90" dy="0">service discovery</tspan><tspan x="90" dy="1.35em">spawn / control</tspan><tspan x="90" dy="1.35em">observability peers</tspan></text>
+<rect x="80" y="540" width="180" height="110" rx="26" fill="#FFF3CF" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="80" y="540" width="180" height="9" rx="26" fill="#E0A31A" />
+<text x="100" y="584" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Workbench</text>
+<text x="100" y="618" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="100" dy="0">discovery</tspan><tspan x="100" dy="1.35em">control</tspan><tspan x="100" dy="1.35em">visualization peers</tspan></text>
 </g>
 <g>
-<rect x="70" y="560" width="240" height="180" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<rect x="70" y="560" width="14" height="180" rx="28" fill="#E0A31A" />
-<text x="102" y="600" fill="#131B2C" font-size="24" font-weight="780" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Abstraction boundary</text>
-<text x="102" y="632" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="102" dy="0">Clients do not need shard PIDs or worker placement.</tspan><tspan x="102" dy="1.35em">IO Gateway remains the stable public surface.</tspan></text>
+<rect x="380" y="220" width="180" height="110" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="380" y="220" width="180" height="9" rx="26" fill="#1B8393" />
+<text x="400" y="264" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">SettingsMonitor</text>
+<text x="400" y="298" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="400" dy="0">registry + leases</tspan><tspan x="400" dy="1.35em">settings + capability rows</tspan></text>
 </g>
 <g>
-<rect x="390" y="190" width="220" height="150" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="390" y="190" width="220" height="9" rx="26" fill="#1B8393" />
-<text x="410" y="234" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">SettingsMonitor</text>
-<text x="410" y="268" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="410" dy="0">registry + leases</tspan><tspan x="410" dy="1.35em">service endpoints</tspan><tspan x="410" dy="1.35em">settings + capability rows</tspan></text>
+<rect x="600" y="220" width="180" height="110" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="600" y="220" width="180" height="9" rx="26" fill="#1B8393" />
+<text x="620" y="264" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">HiveMind</text>
+<text x="620" y="298" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="620" dy="0">global tick</tspan><tspan x="620" dy="1.35em">spawn / pause / recovery</tspan></text>
 </g>
 <g>
-<rect x="630" y="190" width="220" height="150" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="630" y="190" width="220" height="9" rx="26" fill="#1B8393" />
-<text x="650" y="234" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">HiveMind</text>
-<text x="650" y="268" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="650" dy="0">global tick pacing</tspan><tspan x="650" dy="1.35em">brain lifecycle</tspan><tspan x="650" dy="1.35em">placement / recovery</tspan></text>
+<rect x="490" y="390" width="180" height="110" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="490" y="390" width="180" height="9" rx="26" fill="#1B8393" />
+<text x="510" y="434" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">IO Gateway</text>
+<text x="510" y="468" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="510" dy="0">stable brain-facing IO surface</tspan><tspan x="510" dy="1.35em">spawns coordinators</tspan></text>
 </g>
 <g>
-<rect x="390" y="390" width="220" height="150" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="390" y="390" width="220" height="9" rx="26" fill="#1B8393" />
-<text x="410" y="434" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">IO Gateway</text>
-<text x="410" y="468" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="410" dy="0">well-known gateway</tspan><tspan x="410" dy="1.35em">brain control routing</tspan><tspan x="410" dy="1.35em">per-brain coordinators</tspan></text>
+<rect x="380" y="560" width="180" height="110" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="380" y="560" width="180" height="9" rx="26" fill="#1B8393" />
+<text x="400" y="604" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Observability</text>
+<text x="400" y="638" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="400" dy="0">debug + visualization hubs</tspan></text>
 </g>
 <g>
-<rect x="630" y="390" width="220" height="120" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="630" y="390" width="220" height="9" rx="26" fill="#1B8393" />
-<text x="650" y="434" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Reproduction</text>
-<text x="650" y="468" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="650" dy="0">artifact-based child synthesis</tspan><tspan x="650" dy="1.35em">compatibility assessment</tspan></text>
+<rect x="600" y="560" width="180" height="110" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="600" y="560" width="180" height="9" rx="26" fill="#1B8393" />
+<text x="620" y="604" fill="#131B2C" font-size="22" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Artifact Store</text>
+<text x="620" y="638" fill="#556071" font-size="17" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="620" dy="0">CAS for .nbn / .nbs</tspan><tspan x="620" dy="1.35em">recovery + partial fetch</tspan></text>
 </g>
 <g>
-<rect x="500" y="575" width="240" height="110" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="500" y="575" width="240" height="9" rx="26" fill="#1B8393" />
-<text x="520" y="619" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Observability hubs</text>
-<text x="520" y="653" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="520" dy="0">debug + visualization streams</tspan></text>
+<rect x="920" y="230" width="170" height="90" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="920" y="230" width="170" height="9" rx="26" fill="#F97316" />
+<text x="940" y="274" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">BrainRoot</text>
+<text x="940" y="308" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="940" dy="0">control + metadata</tspan></text>
 </g>
 <g>
-<rect x="500" y="705" width="240" height="105" rx="26" fill="#EAF7F9" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="500" y="705" width="240" height="9" rx="26" fill="#1B8393" />
-<text x="520" y="749" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Artifact Store</text>
-<text x="520" y="783" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="520" dy="0">CAS manifests</tspan><tspan x="520" dy="1.35em">partial fetch + cache</tspan></text>
+<rect x="1160" y="230" width="220" height="90" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
+<rect x="1160" y="230" width="220" height="9" rx="26" fill="#F97316" />
+<text x="1180" y="274" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">BrainSignalRouter</text>
+<text x="1180" y="308" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1180" dy="0">tick delivery + shard routing</tspan></text>
 </g>
 <g>
-<rect x="935" y="175" width="170" height="100" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="935" y="175" width="170" height="9" rx="26" fill="#F97316" />
-<text x="955" y="219" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">BrainRoot</text>
-<text x="955" y="253" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="955" dy="0">control + metadata</tspan></text>
-</g>
+<rect x="910" y="390" width="180" height="250" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<text x="930" y="428" fill="#131B2C" font-size="24" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Worker A</text>
 <g>
-<rect x="1120" y="175" width="210" height="100" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1120" y="175" width="210" height="9" rx="26" fill="#F97316" />
-<text x="1140" y="219" fill="#131B2C" font-size="24" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">BrainSignalRouter</text>
-<text x="1140" y="253" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1140" dy="0">tick delivery + routing</tspan></text>
-</g>
-<rect x="930" y="320" width="400" height="455" rx="28" fill="none" stroke="#C8D3D6" stroke-width="2" stroke-dasharray="10 10" />
-<text x="950" y="352" fill="#1B8393" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Low-latency worker segment</text>
-<g>
-<rect x="940" y="380" width="180" height="380" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<text x="960" y="418" fill="#131B2C" font-size="24" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Worker A</text>
-<g>
-<rect x="960" y="436" width="88" height="28" rx="14.0" fill="#FFF3CF" />
-<text x="1004" y="451" fill="#131B2C" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">CPU</text>
-</g>
-<g>
-<rect x="1058" y="436" width="88" height="28" rx="14.0" fill="#EAF7F9" />
-<text x="1102" y="451" fill="#131B2C" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">RTT 1x</text>
+<rect x="930" y="446" width="88" height="28" rx="14.0" fill="#EAF7F9" />
+<text x="974" y="461" fill="#131B2C" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">RTT 1x</text>
 </g>
 </g>
 <g>
-<rect x="1140" y="380" width="180" height="380" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<text x="1160" y="418" fill="#131B2C" font-size="24" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Worker B</text>
+<rect x="1130" y="390" width="180" height="250" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<text x="1150" y="428" fill="#131B2C" font-size="24" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Worker B</text>
 <g>
-<rect x="1160" y="436" width="88" height="28" rx="14.0" fill="#FFF1E7" />
-<text x="1204" y="451" fill="#131B2C" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">GPU</text>
-</g>
-<g>
-<rect x="1258" y="436" width="88" height="28" rx="14.0" fill="#EAF7F9" />
-<text x="1302" y="451" fill="#131B2C" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">RTT 1x</text>
+<rect x="1150" y="446" width="88" height="28" rx="14.0" fill="#EAF7F9" />
+<text x="1194" y="461" fill="#131B2C" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">RTT 1x</text>
 </g>
 </g>
 <g>
-<rect x="1340" y="380" width="180" height="380" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
-<text x="1360" y="418" fill="#131B2C" font-size="24" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Worker C</text>
+<rect x="1350" y="390" width="180" height="250" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<text x="1370" y="428" fill="#131B2C" font-size="24" font-weight="800" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Worker C</text>
 <g>
-<rect x="1360" y="436" width="88" height="28" rx="14.0" fill="#F3F5F8" />
-<text x="1404" y="451" fill="#131B2C" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">remote</text>
-</g>
-<g>
-<rect x="1458" y="436" width="88" height="28" rx="14.0" fill="#F3F5F8" />
-<text x="1502" y="451" fill="#131B2C" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">RTT 4x</text>
+<rect x="1370" y="446" width="88" height="28" rx="14.0" fill="#F3F5F8" />
+<text x="1414" y="461" fill="#131B2C" font-size="18" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">RTT 4x</text>
 </g>
 </g>
+<rect x="932" y="470" width="136" height="44" rx="16" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" />
+<rect x="932" y="528" width="136" height="60" rx="16" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" />
+<rect x="1152" y="470" width="136" height="60" rx="16" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" />
+<rect x="1152" y="544" width="136" height="60" rx="16" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" />
+<rect x="1372" y="470" width="136" height="60" rx="16" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" />
+<rect x="1372" y="544" width="136" height="44" rx="16" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" />
+<text x="1000" y="496" fill="#131B2C" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">InputCoordinator</text>
+<text x="1000" y="546" fill="#131B2C" font-size="16" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle"><tspan x="1000" dy="0">RegionShard A</tspan><tspan x="1000" dy="1.35em">0-1023</tspan></text>
+<text x="1220" y="496" fill="#131B2C" font-size="16" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle"><tspan x="1220" dy="0">RegionShard B</tspan><tspan x="1220" dy="1.35em">1024-2047</tspan></text>
+<text x="1220" y="570" fill="#131B2C" font-size="16" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle"><tspan x="1220" dy="0">RegionShard C</tspan><tspan x="1220" dy="1.35em">2048-3071</tspan></text>
+<text x="1440" y="496" fill="#131B2C" font-size="16" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle"><tspan x="1440" dy="0">RegionShard D</tspan><tspan x="1440" dy="1.35em">3072-3499</tspan></text>
+<text x="1440" y="570" fill="#131B2C" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="middle">OutputCoordinator</text>
+<text x="980" y="360" fill="#F97316" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">worker placement can change</text>
 <g>
-<rect x="960" y="450" width="140" height="95" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="960" y="450" width="140" height="9" rx="26" fill="#F97316" />
-<text x="980" y="494" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">InputCoordinator</text>
-<text x="980" y="528" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="980" dy="0">brain-local input mode</tspan></text>
-</g>
-<g>
-<rect x="960" y="565" width="140" height="145" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="960" y="565" width="140" height="9" rx="26" fill="#F97316" />
-<text x="980" y="609" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">RegionShard</text>
-<text x="980" y="643" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="980" dy="0">region 0..1023</tspan><tspan x="980" dy="1.35em">compute backend</tspan><tspan x="980" dy="1.35em">selective region load</tspan></text>
-</g>
-<g>
-<rect x="1160" y="450" width="140" height="145" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1160" y="450" width="140" height="9" rx="26" fill="#F97316" />
-<text x="1180" y="494" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">RegionShard</text>
-<text x="1180" y="528" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1180" dy="0">region 1024..2047</tspan><tspan x="1180" dy="1.35em">heavy mutual traffic</tspan></text>
+<line x1="260" y1="415" x2="490" y2="445" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
+<text x="380" y="405" fill="#E0A31A" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">brain IO + control</text>
 </g>
 <g>
-<rect x="1160" y="620" width="140" height="90" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1160" y="620" width="140" height="9" rx="26" fill="#F97316" />
-<text x="1180" y="664" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">RegionShard</text>
-<text x="1180" y="698" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1180" dy="0">region 2048..3071</tspan></text>
+<line x1="260" y1="595" x2="380" y2="615" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
+<text x="320" y="580" fill="#E0A31A" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">subscribe</text>
 </g>
 <g>
-<rect x="1360" y="450" width="140" height="95" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1360" y="450" width="140" height="9" rx="26" fill="#F97316" />
-<text x="1380" y="494" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">OutputCoordinator</text>
-<text x="1380" y="528" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1380" dy="0">vector + single events</tspan></text>
+<line x1="560" y1="275" x2="600" y2="275" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
+<text x="580" y="255" fill="#131B2C" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">registry + settings</text>
 </g>
 <g>
-<rect x="1360" y="565" width="140" height="145" rx="26" fill="#FFF1E7" stroke="#D9D1BB" stroke-width="2" filter="url(#shadow)" />
-<rect x="1360" y="565" width="140" height="9" rx="26" fill="#F97316" />
-<text x="1380" y="609" fill="#131B2C" font-size="21" font-weight="750" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">RegionShard</text>
-<text x="1380" y="643" fill="#556071" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="1380" dy="0">region 3072..3499</tspan><tspan x="1380" dy="1.35em">tail shard if needed</tspan></text>
+<line x1="580" y1="390" x2="690" y2="330" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
+<text x="655" y="372" fill="#131B2C" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">spawn / pause / kill</text>
 </g>
 <g>
-<line x1="310" y1="255" x2="390" y2="455" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
-<text x="345" y="340" fill="#E0A31A" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">brain control + IO</text>
+<line x1="780" y1="275" x2="920" y2="275" stroke="#F97316" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-orange)" />
+<text x="850" y="255" fill="#F97316" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">place + register</text>
 </g>
 <g>
-<line x1="310" y1="430" x2="390" y2="265" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
-<text x="332" y="332" fill="#E0A31A" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">discovery</text>
+<line x1="1090" y1="275" x2="1160" y2="275" stroke="#F97316" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-orange)" />
 </g>
 <g>
-<line x1="310" y1="432" x2="500" y2="630" stroke="#E0A31A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-gold)" />
-<text x="390" y="560" fill="#E0A31A" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">subscribe</text>
+<polyline points="1270,320 1270,360 1000,360 1000,390" fill="none" stroke="#F97316" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-orange)" />
 </g>
 <g>
-<line x1="610" y1="265" x2="630" y2="265" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
-<text x="620" y="250" fill="#131B2C" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">registry + settings</text>
+<polyline points="1270,320 1270,360 1220,360 1220,390" fill="none" stroke="#F97316" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-orange)" />
 </g>
 <g>
-<line x1="500" y1="340" x2="500" y2="390" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
-<text x="560" y="374" fill="#131B2C" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">forward / spawn</text>
+<polyline points="1270,320 1270,360 1440,360 1440,390" fill="none" stroke="#F97316" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-orange)" />
 </g>
 <g>
-<line x1="610" y1="455" x2="630" y2="455" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
-<text x="620" y="440" fill="#131B2C" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">spawn / kill / pause</text>
+<line x1="780" y1="615" x2="910" y2="615" stroke="#1B8393" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-teal)" />
+<text x="845" y="595" fill="#1B8393" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">load / recover artifacts</text>
 </g>
 <g>
-<line x1="740" y1="510" x2="620" y2="705" stroke="#131B2C" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-ink)" />
-<text x="735" y="620" fill="#131B2C" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">store child artifacts</text>
+<rect x="80" y="800" width="1460" height="70" rx="28" fill="white" stroke="#D9D1BB" stroke-width="2" />
+<rect x="80" y="800" width="14" height="70" rx="28" fill="#E0A31A" />
+<text x="112" y="840" fill="#131B2C" font-size="24" font-weight="780" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start" dominant-baseline="alphabetic">Abstraction boundary</text>
+<text x="112" y="872" fill="#556071" font-size="18" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="start"><tspan x="112" dy="0">External clients and Workbench talk to stable service roots.</tspan><tspan x="112" dy="1.35em">They do not need shard placement, actor PIDs, or the current worker host for a coordinator.</tspan></text>
 </g>
-<g>
-<line x1="740" y1="735" x2="945" y2="650" stroke="#1B8393" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-teal)" />
-<text x="880" y="700" fill="#1B8393" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">selective .nbn/.nbs fetch</text>
-</g>
-<g>
-<line x1="740" y1="735" x2="1360" y2="648" stroke="#1B8393" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-teal)" />
-<text x="1120" y="700" fill="#1B8393" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">cache-backed load</text>
-</g>
-<g>
-<line x1="740" y1="630" x2="310" y2="630" stroke="#1B8393" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-teal)" />
-<text x="515" y="615" fill="#1B8393" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">peer subscriptions</text>
-</g>
-<g>
-<line x1="740" y1="630" x2="1225" y2="275" stroke="#1B8393" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-teal)" />
-<text x="975" y="420" fill="#1B8393" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">debug + viz streams</text>
-</g>
-<g>
-<line x1="850" y1="265" x2="1020" y2="225" stroke="#F97316" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-orange)" />
-<text x="960" y="205" fill="#F97316" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">place + register</text>
-</g>
-<g>
-<line x1="1110" y1="225" x2="1120" y2="225" stroke="#F97316" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-orange)" />
-</g>
-<g>
-<polyline points="500,540 500,602 1030,602 1030,545" fill="none" stroke="#F97316" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-orange)" />
-<text x="770" y="588" fill="#F97316" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">route directly to hosted coordinators</text>
-</g>
-<g>
-<polyline points="1330,225 1450,225 1450,450" fill="none" stroke="#F97316" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-orange)" />
-<text x="1450" y="350" fill="#F97316" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">output events</text>
-</g>
-<g>
-<polyline points="1330,225 1210,225 1210,450" fill="none" stroke="#F97316" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow-orange)" />
-<text x="1208" y="350" fill="#F97316" font-size="17" font-weight="700" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="middle" dominant-baseline="alphabetic">delivery fanout</text>
-</g>
-<g>
-<line x1="1320" y1="650" x2="1360" y2="650" stroke="#F97316" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow-orange)" />
-</g>
-<text x="1528" y="875" fill="#7A8392" font-size="16" font-weight="500" font-family="Segoe UI, Helvetica Neue, Arial, sans-serif" text-anchor="end" dominant-baseline="alphabetic">SVG source + PNG render live together under docs/diagrams/</text>
 </svg>
