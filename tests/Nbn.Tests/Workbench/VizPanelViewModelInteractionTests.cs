@@ -1658,6 +1658,45 @@ public class VizPanelViewModelInteractionTests
     }
 
     [Fact]
+    public void MiniActivityChart_MalformedLowSignalInput_RemainsStableAndEmpty()
+    {
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "Running", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+        vm.IncludeLowSignalEvents = false;
+
+        vm.AddVizEvent(CreateVizEvent(
+            type: VizEventType.VizAxonSent.ToString(),
+            brainId: brain.BrainId.ToString("D"),
+            tickId: 200,
+            region: "bad",
+            source: "R1N",
+            target: "RxN1",
+            value: 1e-6f,
+            strength: 0f));
+        vm.AddVizEvent(CreateVizEvent(
+            type: VizEventType.VizNeuronFired.ToString(),
+            brainId: brain.BrainId.ToString("D"),
+            tickId: 201,
+            region: string.Empty,
+            source: string.Empty,
+            target: string.Empty,
+            value: float.NaN,
+            strength: 0f));
+
+        var stable = SpinWait.SpinUntil(
+            () => vm.MiniActivityChartRangeLabel.Contains("awaiting activity", StringComparison.OrdinalIgnoreCase),
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(stable);
+        Assert.Empty(vm.MiniActivityChartSeries);
+        Assert.Contains("awaiting activity", vm.MiniActivityChartRangeLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("no ranked series", vm.MiniActivityChartMetricLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("failed", vm.Status, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void ApplyActivityOptions_InvalidMiniTopN_ShowsValidationError()
     {
         var vm = CreateViewModel();
