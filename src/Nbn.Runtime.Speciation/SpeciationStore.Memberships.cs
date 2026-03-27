@@ -54,52 +54,29 @@ public sealed partial class SpeciationStore
                 return new SpeciationAssignOutcome(false, immutableConflict, existing);
             }
 
-            foreach (var displayNameUpdate in normalizedSpeciesDisplayNameUpdates)
-            {
-                await connection.ExecuteAsync(
-                    new CommandDefinition(
-                        UpsertSpeciesSql,
-                        new
-                        {
-                            epoch_id = epochId,
-                            species_id = displayNameUpdate.SpeciesId,
-                            display_name = displayNameUpdate.SpeciesDisplayName,
-                            created_ms = decidedMs
-                        },
-                        transaction,
-                        cancellationToken: cancellationToken));
-            }
+            await UpsertSpeciesDisplayNamesAsync(
+                connection,
+                transaction,
+                epochId,
+                normalizedSpeciesDisplayNameUpdates,
+                decidedMs,
+                cancellationToken);
+            await UpsertSpeciesAsync(
+                connection,
+                transaction,
+                epochId,
+                normalized.SpeciesId,
+                normalized.SpeciesDisplayName,
+                decidedMs,
+                cancellationToken);
 
-            await connection.ExecuteAsync(
-                new CommandDefinition(
-                    UpsertSpeciesSql,
-                    new
-                    {
-                        epoch_id = epochId,
-                        species_id = normalized.SpeciesId,
-                        display_name = normalized.SpeciesDisplayName,
-                        created_ms = decidedMs
-                    },
-                    transaction,
-                    cancellationToken: cancellationToken));
-
-            var decisionId = await connection.ExecuteScalarAsync<long>(
-                new CommandDefinition(
-                    InsertDecisionSql,
-                    new
-                    {
-                        epoch_id = epochId,
-                        brain_id = normalized.BrainId,
-                        species_id = normalized.SpeciesId,
-                        decided_ms = decidedMs,
-                        policy_version = normalized.PolicyVersion,
-                        decision_reason = normalized.DecisionReason,
-                        decision_metadata_json = normalized.DecisionMetadataJson,
-                        source_brain_id = normalized.SourceBrainId,
-                        source_artifact_ref = normalized.SourceArtifactRef
-                    },
-                    transaction,
-                    cancellationToken: cancellationToken));
+            var decisionId = await InsertDecisionAsync(
+                connection,
+                transaction,
+                epochId,
+                normalized,
+                decidedMs,
+                cancellationToken);
 
             await connection.ExecuteAsync(
                 new CommandDefinition(
@@ -115,37 +92,23 @@ public sealed partial class SpeciationStore
                     transaction,
                     cancellationToken: cancellationToken));
 
-            if (normalizedLineageMetadata is not null)
-            {
-                foreach (var parentBrainId in normalizedLineageParentIds)
-                {
-                    await connection.ExecuteAsync(
-                        new CommandDefinition(
-                            InsertLineageEdgeSql,
-                            new
-                            {
-                                epoch_id = epochId,
-                                parent_brain_id = parentBrainId,
-                                child_brain_id = normalized.BrainId,
-                                metadata_json = normalizedLineageMetadata,
-                                created_ms = decidedMs
-                            },
-                            transaction,
-                            cancellationToken: cancellationToken));
-                }
-            }
-
-            var created = await GetMembershipInternalAsync(
+            await InsertLineageEdgesAsync(
                 connection,
                 transaction,
                 epochId,
                 normalized.BrainId,
+                normalizedLineageParentIds,
+                normalizedLineageMetadata,
+                decidedMs,
                 cancellationToken);
-            if (created is null)
-            {
-                throw new InvalidOperationException(
-                    $"Membership insert returned no record for epoch={epochId} brain={normalized.BrainId:D}.");
-            }
+
+            var created = await GetRequiredMembershipInternalAsync(
+                connection,
+                transaction,
+                epochId,
+                normalized.BrainId,
+                cancellationToken,
+                $"Membership insert returned no record for epoch={epochId} brain={normalized.BrainId:D}.");
 
             await transaction.CommitAsync(cancellationToken);
             return new SpeciationAssignOutcome(true, false, created);
@@ -326,36 +289,22 @@ public sealed partial class SpeciationStore
                     Membership: existing);
             }
 
-            await connection.ExecuteAsync(
-                new CommandDefinition(
-                    UpsertSpeciesSql,
-                    new
-                    {
-                        epoch_id = epochId,
-                        species_id = normalized.SpeciesId,
-                        display_name = normalized.SpeciesDisplayName,
-                        created_ms = decidedMs
-                    },
-                    transaction,
-                    cancellationToken: cancellationToken));
+            await UpsertSpeciesAsync(
+                connection,
+                transaction,
+                epochId,
+                normalized.SpeciesId,
+                normalized.SpeciesDisplayName,
+                decidedMs,
+                cancellationToken);
 
-            var decisionId = await connection.ExecuteScalarAsync<long>(
-                new CommandDefinition(
-                    InsertDecisionSql,
-                    new
-                    {
-                        epoch_id = epochId,
-                        brain_id = normalized.BrainId,
-                        species_id = normalized.SpeciesId,
-                        decided_ms = decidedMs,
-                        policy_version = normalized.PolicyVersion,
-                        decision_reason = normalized.DecisionReason,
-                        decision_metadata_json = normalized.DecisionMetadataJson,
-                        source_brain_id = normalized.SourceBrainId,
-                        source_artifact_ref = normalized.SourceArtifactRef
-                    },
-                    transaction,
-                    cancellationToken: cancellationToken));
+            var decisionId = await InsertDecisionAsync(
+                connection,
+                transaction,
+                epochId,
+                normalized,
+                decidedMs,
+                cancellationToken);
 
             var updatedRows = await connection.ExecuteAsync(
                 new CommandDefinition(
@@ -381,37 +330,23 @@ public sealed partial class SpeciationStore
                     Membership: latest);
             }
 
-            if (normalizedLineageMetadata is not null)
-            {
-                foreach (var parentBrainId in normalizedLineageParentIds)
-                {
-                    await connection.ExecuteAsync(
-                        new CommandDefinition(
-                            InsertLineageEdgeSql,
-                            new
-                            {
-                                epoch_id = epochId,
-                                parent_brain_id = parentBrainId,
-                                child_brain_id = normalized.BrainId,
-                                metadata_json = normalizedLineageMetadata,
-                                created_ms = decidedMs
-                            },
-                            transaction,
-                            cancellationToken: cancellationToken));
-                }
-            }
-
-            var reassigned = await GetMembershipInternalAsync(
+            await InsertLineageEdgesAsync(
                 connection,
                 transaction,
                 epochId,
                 normalized.BrainId,
+                normalizedLineageParentIds,
+                normalizedLineageMetadata,
+                decidedMs,
                 cancellationToken);
-            if (reassigned is null)
-            {
-                throw new InvalidOperationException(
-                    $"Membership reassign returned no record for epoch={epochId} brain={normalized.BrainId:D}.");
-            }
+
+            var reassigned = await GetRequiredMembershipInternalAsync(
+                connection,
+                transaction,
+                epochId,
+                normalized.BrainId,
+                cancellationToken,
+                $"Membership reassign returned no record for epoch={epochId} brain={normalized.BrainId:D}.");
 
             await transaction.CommitAsync(cancellationToken);
             return new SpeciationReassignOutcome(

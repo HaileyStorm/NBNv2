@@ -118,18 +118,13 @@ public sealed partial class SpeciationStore
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
         var epochId = await CreateEpochAsync(connection, transaction, createdMs, cancellationToken);
-        await connection.ExecuteAsync(
-            new CommandDefinition(
-                InsertConfigSnapshotSql,
-                new
-                {
-                    epoch_id = epochId,
-                    policy_version = normalizedConfig.PolicyVersion,
-                    config_snapshot_json = normalizedConfig.ConfigSnapshotJson,
-                    captured_ms = createdMs
-                },
-                transaction,
-                cancellationToken: cancellationToken));
+        await InsertConfigSnapshotAsync(
+            connection,
+            transaction,
+            epochId,
+            normalizedConfig,
+            createdMs,
+            cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
 
@@ -174,18 +169,13 @@ public sealed partial class SpeciationStore
         await connection.ExecuteAsync(new CommandDefinition(ResetAllAutoincrementSql, transaction: transaction, cancellationToken: cancellationToken));
 
         var epochId = await CreateEpochAsync(connection, transaction, createdMs, cancellationToken);
-        await connection.ExecuteAsync(
-            new CommandDefinition(
-                InsertConfigSnapshotSql,
-                new
-                {
-                    epoch_id = epochId,
-                    policy_version = normalizedConfig.PolicyVersion,
-                    config_snapshot_json = normalizedConfig.ConfigSnapshotJson,
-                    captured_ms = createdMs
-                },
-                transaction,
-                cancellationToken: cancellationToken));
+        await InsertConfigSnapshotAsync(
+            connection,
+            transaction,
+            epochId,
+            normalizedConfig,
+            createdMs,
+            cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
 
@@ -341,6 +331,23 @@ public sealed partial class SpeciationStore
             return;
         }
 
+        await InsertConfigSnapshotAsync(
+            connection,
+            transaction,
+            epochId,
+            runtimeConfig,
+            capturedMs,
+            cancellationToken);
+    }
+
+    private async Task InsertConfigSnapshotAsync(
+        SqliteConnection connection,
+        IDbTransaction transaction,
+        long epochId,
+        SpeciationRuntimeConfig runtimeConfig,
+        long capturedMs,
+        CancellationToken cancellationToken)
+    {
         await connection.ExecuteAsync(
             new CommandDefinition(
                 InsertConfigSnapshotSql,

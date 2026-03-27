@@ -129,6 +129,128 @@ public sealed partial class SpeciationStore
         return connection;
     }
 
+    private async Task UpsertSpeciesAsync(
+        SqliteConnection connection,
+        IDbTransaction transaction,
+        long epochId,
+        string speciesId,
+        string speciesDisplayName,
+        long createdMs,
+        CancellationToken cancellationToken)
+    {
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                UpsertSpeciesSql,
+                new
+                {
+                    epoch_id = epochId,
+                    species_id = speciesId,
+                    display_name = speciesDisplayName,
+                    created_ms = createdMs
+                },
+                transaction,
+                cancellationToken: cancellationToken));
+    }
+
+    private async Task UpsertSpeciesDisplayNamesAsync(
+        SqliteConnection connection,
+        IDbTransaction transaction,
+        long epochId,
+        IReadOnlyList<SpeciationSpeciesDisplayNameUpdate> speciesDisplayNameUpdates,
+        long createdMs,
+        CancellationToken cancellationToken)
+    {
+        foreach (var displayNameUpdate in speciesDisplayNameUpdates)
+        {
+            await UpsertSpeciesAsync(
+                connection,
+                transaction,
+                epochId,
+                displayNameUpdate.SpeciesId,
+                displayNameUpdate.SpeciesDisplayName,
+                createdMs,
+                cancellationToken);
+        }
+    }
+
+    private async Task<long> InsertDecisionAsync(
+        SqliteConnection connection,
+        IDbTransaction transaction,
+        long epochId,
+        SpeciationAssignment assignment,
+        long decidedMs,
+        CancellationToken cancellationToken)
+    {
+        return await connection.ExecuteScalarAsync<long>(
+            new CommandDefinition(
+                InsertDecisionSql,
+                new
+                {
+                    epoch_id = epochId,
+                    brain_id = assignment.BrainId,
+                    species_id = assignment.SpeciesId,
+                    decided_ms = decidedMs,
+                    policy_version = assignment.PolicyVersion,
+                    decision_reason = assignment.DecisionReason,
+                    decision_metadata_json = assignment.DecisionMetadataJson,
+                    source_brain_id = assignment.SourceBrainId,
+                    source_artifact_ref = assignment.SourceArtifactRef
+                },
+                transaction,
+                cancellationToken: cancellationToken));
+    }
+
+    private async Task InsertLineageEdgesAsync(
+        SqliteConnection connection,
+        IDbTransaction transaction,
+        long epochId,
+        Guid childBrainId,
+        IReadOnlyList<Guid> lineageParentBrainIds,
+        string? lineageMetadataJson,
+        long createdMs,
+        CancellationToken cancellationToken)
+    {
+        if (lineageParentBrainIds.Count == 0 || lineageMetadataJson is null)
+        {
+            return;
+        }
+
+        foreach (var parentBrainId in lineageParentBrainIds)
+        {
+            await connection.ExecuteAsync(
+                new CommandDefinition(
+                    InsertLineageEdgeSql,
+                    new
+                    {
+                        epoch_id = epochId,
+                        parent_brain_id = parentBrainId,
+                        child_brain_id = childBrainId,
+                        metadata_json = lineageMetadataJson,
+                        created_ms = createdMs
+                    },
+                    transaction,
+                    cancellationToken: cancellationToken));
+        }
+    }
+
+    private async Task<SpeciationMembershipRecord> GetRequiredMembershipInternalAsync(
+        SqliteConnection connection,
+        IDbTransaction transaction,
+        long epochId,
+        Guid brainId,
+        CancellationToken cancellationToken,
+        string missingRecordMessage)
+    {
+        var membership = await GetMembershipInternalAsync(
+            connection,
+            transaction,
+            epochId,
+            brainId,
+            cancellationToken);
+        return membership
+            ?? throw new InvalidOperationException(missingRecordMessage);
+    }
+
     private sealed class EpochRow
     {
         public long EpochId { get; set; }

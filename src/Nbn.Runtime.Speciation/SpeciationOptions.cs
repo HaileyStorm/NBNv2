@@ -1,5 +1,8 @@
 namespace Nbn.Runtime.Speciation;
 
+/// <summary>
+/// Defines process-level hosting, discovery, and telemetry options for the speciation service.
+/// </summary>
 public sealed record SpeciationOptions(
     string DatabasePath,
     string BindHost,
@@ -18,12 +21,34 @@ public sealed record SpeciationOptions(
     int SettingsPort,
     string SettingsName)
 {
+    /// <summary>
+    /// Default policy version used when SettingsMonitor has not supplied an override.
+    /// </summary>
     public const string DefaultPolicyVersion = "default";
+
+    /// <summary>
+    /// Default species id assigned during startup/manual reconciliation.
+    /// </summary>
     public const string DefaultSpeciesId = "species.default";
+
+    /// <summary>
+    /// Default species display name assigned during startup/manual reconciliation.
+    /// </summary>
     public const string DefaultSpeciesDisplayName = "Default species";
+
+    /// <summary>
+    /// Default decision reason written for startup reconciliation assignments.
+    /// </summary>
     public const string DefaultStartupReconcileDecisionReason = "startup_reconcile";
+
+    /// <summary>
+    /// Default empty runtime config snapshot persisted when no settings override exists.
+    /// </summary>
     public const string DefaultConfigSnapshotJson = "{}";
 
+    /// <summary>
+    /// Converts the host-process options into the persisted runtime config fallback.
+    /// </summary>
     public SpeciationRuntimeConfig ToRuntimeConfig()
         => new(
             DefaultPolicyVersion,
@@ -32,6 +57,9 @@ public sealed record SpeciationOptions(
             DefaultSpeciesDisplayName,
             DefaultStartupReconcileDecisionReason);
 
+    /// <summary>
+    /// Parses command-line arguments and environment variables into speciation service options.
+    /// </summary>
     public static SpeciationOptions FromArgs(string[] args)
     {
         var dbPath = GetEnv("NBN_SPECIATION_DB") ?? GetDefaultDatabasePath();
@@ -270,6 +298,9 @@ public sealed record SpeciationOptions(
             settingsName);
     }
 
+    /// <summary>
+    /// Returns the default SQLite path used by the standalone speciation service.
+    /// </summary>
     public static string GetDefaultDatabasePath()
     {
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

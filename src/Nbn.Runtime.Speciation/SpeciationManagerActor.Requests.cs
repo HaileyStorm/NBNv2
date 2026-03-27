@@ -49,7 +49,8 @@ public sealed partial class SpeciationManagerActor
         var assignTask = _store.TryAssignMembershipAsync(
             epoch.EpochId,
             message.Assignment,
-            message.DecisionTimeMs);
+            message.DecisionTimeMs,
+            StoreMutationCancellationToken);
 
         context.ReenterAfter(assignTask, completed =>
         {
@@ -87,7 +88,10 @@ public sealed partial class SpeciationManagerActor
         }
 
         var nextConfig = BuildResetRuntimeConfig(message);
-        var resetTask = _store.ResetEpochAsync(nextConfig, message.ResetTimeMs);
+        var resetTask = _store.ResetEpochAsync(
+            nextConfig,
+            message.ResetTimeMs,
+            StoreMutationCancellationToken);
         context.ReenterAfter(resetTask, completed =>
         {
             if (completed.IsFaulted)
@@ -124,7 +128,8 @@ public sealed partial class SpeciationManagerActor
             message.BrainIds ?? Array.Empty<Guid>(),
             runtimeConfig,
             metadataJson,
-            message.DecisionTimeMs);
+            message.DecisionTimeMs,
+            StoreMutationCancellationToken);
 
         context.ReenterAfter(reconcileTask, completed =>
         {
@@ -194,7 +199,8 @@ public sealed partial class SpeciationManagerActor
             message.ParentBrainId,
             message.ChildBrainId,
             message.MetadataJson,
-            message.CreatedMs);
+            message.CreatedMs,
+            StoreMutationCancellationToken);
 
         context.ReenterAfter(recordTask, completed =>
         {
@@ -306,7 +312,10 @@ public sealed partial class SpeciationManagerActor
 
             var activity = SpeciationTelemetry.StartEpochTransitionActivity("start_new_epoch", previousEpoch.EpochId);
             var applyTime = message.HasApplyTimeMs ? (long?)message.ApplyTimeMs : null;
-            var resetTask = _store.ResetEpochAsync(nextConfig, applyTime);
+            var resetTask = _store.ResetEpochAsync(
+                nextConfig,
+                applyTime,
+                StoreMutationCancellationToken);
             context.ReenterAfter(resetTask, completed =>
             {
                 using (activity)
@@ -398,7 +407,10 @@ public sealed partial class SpeciationManagerActor
         }
 
         var applyTime = message.HasApplyTimeMs ? (long?)message.ApplyTimeMs : null;
-        var resetTask = _store.ResetAllAsync(_runtimeConfig, applyTime);
+        var resetTask = _store.ResetAllAsync(
+            _runtimeConfig,
+            applyTime,
+            StoreMutationCancellationToken);
         context.ReenterAfter(resetTask, completed =>
         {
             using (activity)
@@ -551,7 +563,7 @@ public sealed partial class SpeciationManagerActor
             return;
         }
 
-        var deleteTask = _store.DeleteEpochAsync(epochId);
+        var deleteTask = _store.DeleteEpochAsync(epochId, StoreMutationCancellationToken);
         context.ReenterAfter(deleteTask, completed =>
         {
             if (completed.IsFaulted)

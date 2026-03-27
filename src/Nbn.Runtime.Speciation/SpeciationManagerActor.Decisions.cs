@@ -343,7 +343,7 @@ public sealed partial class SpeciationManagerActor
             epoch.EpochId,
             assignment,
             decisionTimeMs,
-            cancellationToken: default,
+            cancellationToken: StoreMutationCancellationToken,
             lineageParentBrainIds: orderedParentBrainIds,
             lineageMetadataJson: resolvedDecisionMetadata,
             speciesDisplayNameUpdates: speciesDisplayNameUpdates).ConfigureAwait(false);

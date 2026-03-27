@@ -49,13 +49,15 @@ public sealed partial class SpeciationManagerActor
 
     private async Task<SpeciationEpochInfo> InitializeStoreAsync(IContext context)
     {
-        await _store.InitializeAsync().ConfigureAwait(false);
+        await _store.InitializeAsync(StoreMutationCancellationToken).ConfigureAwait(false);
         _runtimeConfig = await ResolveRuntimeConfigFromSettingsAsync(context, _runtimeConfig).ConfigureAwait(false);
         _assignmentPolicy = BuildAssignmentPolicy(_runtimeConfig);
         _compatibilityAssessmentConfig = await ResolveCompatibilityAssessmentConfigFromSettingsAsync(
             context,
             _compatibilityAssessmentConfig).ConfigureAwait(false);
-        var epoch = await _store.EnsureCurrentEpochAsync(_runtimeConfig).ConfigureAwait(false);
+        var epoch = await _store.EnsureCurrentEpochAsync(
+            _runtimeConfig,
+            cancellationToken: StoreMutationCancellationToken).ConfigureAwait(false);
         await PrimeSpeciesSimilarityFloorsAsync(epoch.EpochId).ConfigureAwait(false);
         return epoch;
     }
@@ -192,7 +194,8 @@ public sealed partial class SpeciationManagerActor
                 _currentEpoch.EpochId,
                 knownBrains,
                 _runtimeConfig,
-                decisionMetadataJson: "{\"source\":\"startup_reconcile\"}");
+                decisionMetadataJson: "{\"source\":\"startup_reconcile\"}",
+                cancellationToken: StoreMutationCancellationToken);
 
             context.ReenterAfter(reconcileTask, reconcileCompleted =>
             {

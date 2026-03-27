@@ -23,6 +23,8 @@ public sealed partial class SpeciationManagerActor : IActor
 {
     private static readonly TimeSpan DefaultSettingsRequestTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DefaultCompatibilityRequestTimeout = TimeSpan.FromSeconds(5);
+    // Once a mutation enters actor-ordered commit flow, let the store finish or fail atomically.
+    private static readonly CancellationToken StoreMutationCancellationToken = CancellationToken.None;
     private static readonly JsonSerializerOptions MetadataJsonSerializerOptions = new()
     {
         WriteIndented = false

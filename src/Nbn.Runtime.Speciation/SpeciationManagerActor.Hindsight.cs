@@ -160,7 +160,8 @@ public sealed partial class SpeciationManagerActor
                 candidate.BrainId,
                 expectedSpeciesId: sourceSpeciesId,
                 assignment: reassignment,
-                decisionTimeMs: reassignmentTimeMs).ConfigureAwait(false);
+                decisionTimeMs: reassignmentTimeMs,
+                cancellationToken: StoreMutationCancellationToken).ConfigureAwait(false);
             if (outcome.Reassigned)
             {
                 reassigned++;
