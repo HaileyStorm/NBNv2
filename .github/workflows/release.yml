@@ -126,6 +126,7 @@ jobs:
 
       - env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           version="${GITHUB_REF_NAME#v}"
           mapfile -t assets < <(find release-assets -type f | sort)
