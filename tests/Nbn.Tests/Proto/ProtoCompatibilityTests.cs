@@ -477,6 +477,15 @@ public class ProtoCompatibilityTests
         AssertField(connectAck, "server_name", 1, FieldType.String);
         AssertField(connectAck, "server_time_ms", 2, FieldType.Fixed64);
 
+        var placementWorkerInventoryRequest = descriptor.MessageTypes.Single(message => message.Name == "GetPlacementWorkerInventory");
+        Assert.Empty(placementWorkerInventoryRequest.Fields.InDeclarationOrder());
+
+        var placementWorkerInventoryResult = descriptor.MessageTypes.Single(message => message.Name == "PlacementWorkerInventoryResult");
+        AssertField(placementWorkerInventoryResult, "success", 1, FieldType.Bool);
+        AssertField(placementWorkerInventoryResult, "failure_reason_code", 2, FieldType.String);
+        AssertField(placementWorkerInventoryResult, "failure_message", 3, FieldType.String);
+        AssertField(placementWorkerInventoryResult, "inventory", 4, FieldType.Message, "nbn.control.PlacementWorkerInventory");
+
         var brainInfoRequest = descriptor.MessageTypes.Single(message => message.Name == "BrainInfoRequest");
         AssertField(brainInfoRequest, "brain_id", 1, FieldType.Message, "nbn.Uuid");
 

@@ -18,6 +18,15 @@ message ConnectAck {
   fixed64 server_time_ms = 2;
 }
 
+message GetPlacementWorkerInventory { }
+
+message PlacementWorkerInventoryResult {
+  bool success = 1;
+  string failure_reason_code = 2;
+  string failure_message = 3;
+  nbn.control.PlacementWorkerInventory inventory = 4;
+}
+
 message BrainInfoRequest {
   nbn.Uuid brain_id = 1;
 }

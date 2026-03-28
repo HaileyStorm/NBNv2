@@ -81,6 +81,9 @@ public sealed partial class IoGatewayActor : IActor
             case Connect message:
                 HandleConnect(context, message);
                 break;
+            case GetPlacementWorkerInventory:
+                await HandlePlacementWorkerInventoryAsync(context);
+                break;
             case SpawnBrainViaIO message:
                 await HandleSpawnBrain(context, message);
                 break;

@@ -5,7 +5,7 @@ Owns IO Gateway and per-brain coordinator integration paths for external command
 ## Stable responsibilities
 
 - `IoGatewayActor` is intentionally split by responsibility: discovery, reproduction/speciation forwarding, client lifecycle, per-brain registration/artifact state, coordinator routing, and energy/config commands live in separate partial files so refactors can stay file-bounded without changing gateway behavior.
-- Exposes canonical IO/proto wrappers for external runtime operations, including reproduction and speciation contract calls.
+- Exposes canonical IO/proto wrappers for external runtime operations, including reproduction/speciation contract calls and placement-worker capacity snapshots forwarded from HiveMind.
 - Normalizes upstream service failures into explicit, stable contract reason codes (unavailable, empty response, request failed) before returning to callers.
 - Forwards speciation stateful and batch requests to the dedicated Speciation manager endpoint without embedding assignment policy in the gateway.
 - Tracks coordinator PID ownership/location metadata from HiveMind so input/output traffic can route to worker-hosted coordinators and preserve subscriptions/pending input state across coordinator moves.

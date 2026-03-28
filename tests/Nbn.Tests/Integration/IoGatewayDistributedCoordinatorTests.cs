@@ -144,6 +144,72 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
+    public async Task GetPlacementWorkerInventory_Proxies_HiveMindPlacementInventory()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var expectedWorkerNodeId = Guid.NewGuid();
+        var expectedInventory = new ProtoControl.PlacementWorkerInventory
+        {
+            SnapshotMs = 321
+        };
+        expectedInventory.Workers.Add(new ProtoControl.PlacementWorkerInventoryEntry
+        {
+            WorkerNodeId = expectedWorkerNodeId.ToProtoUuid(),
+            WorkerAddress = "127.0.0.1:12041",
+            WorkerRootActorName = "worker-node",
+            IsAlive = true,
+            CpuScore = 25f,
+            CpuLimitPercent = 100,
+            RamFreeBytes = 2048,
+            RamTotalBytes = 4096,
+            ProcessRamUsedBytes = 256,
+            RamLimitPercent = 100,
+            StorageFreeBytes = 4096,
+            StorageTotalBytes = 8192,
+            StorageLimitPercent = 100
+        });
+        var hivePid = root.Spawn(Props.FromProducer(() => new PlacementWorkerInventoryProbeActor(expectedInventory)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hivePid)));
+
+        var result = await root.RequestAsync<PlacementWorkerInventoryResult>(
+            gateway,
+            new GetPlacementWorkerInventory(),
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(result.Success);
+        Assert.Equal(string.Empty, result.FailureReasonCode);
+        Assert.Equal(string.Empty, result.FailureMessage);
+        Assert.Equal((ulong)321, result.Inventory.SnapshotMs);
+        var worker = Assert.Single(result.Inventory.Workers);
+        Assert.True(worker.WorkerNodeId.TryToGuid(out var workerNodeId));
+        Assert.Equal(expectedWorkerNodeId, workerNodeId);
+        Assert.Equal("127.0.0.1:12041", worker.WorkerAddress);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task GetPlacementWorkerInventory_ReportsUnavailable_WhenHiveMindIsMissing()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: null)));
+
+        var result = await root.RequestAsync<PlacementWorkerInventoryResult>(
+            gateway,
+            new GetPlacementWorkerInventory(),
+            TimeSpan.FromSeconds(5));
+
+        Assert.False(result.Success);
+        Assert.Equal("capacity_unavailable", result.FailureReasonCode);
+        Assert.Contains("HiveMind endpoint is not configured", result.FailureMessage, StringComparison.Ordinal);
+        Assert.Empty(result.Inventory.Workers);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task EnsureBrainEntry_Bootstraps_ArtifactMetadata_From_HiveMindExports()
     {
         var system = new ActorSystem();
@@ -180,6 +246,26 @@ public sealed class IoGatewayDistributedCoordinatorTests
         Assert.Equal(snapshot.StoreUri, info.LastSnapshot.StoreUri);
 
         await system.ShutdownAsync();
+    }
+
+    private sealed class PlacementWorkerInventoryProbeActor : IActor
+    {
+        private readonly ProtoControl.PlacementWorkerInventory _inventory;
+
+        public PlacementWorkerInventoryProbeActor(ProtoControl.PlacementWorkerInventory inventory)
+        {
+            _inventory = inventory.Clone();
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is ProtoControl.PlacementWorkerInventoryRequest)
+            {
+                context.Respond(_inventory.Clone());
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     [Fact]

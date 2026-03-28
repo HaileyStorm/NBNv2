@@ -6,6 +6,7 @@
 * External World does not need to know tick IDs to write inputs or receive outputs.
 * Inputs are applied on the next tick automatically by the IO coordinators and the tick delivery phase.
 * Outputs are delivered with tick correlation, but External World is not required to use it.
+* External World may query placement-ready worker capacity through IO when it needs runtime-sizing hints for environment orchestration; the returned snapshot reflects HiveMind's placement-eligible worker view rather than raw SettingsMonitor rows.
 
 ### 13.2 IO Gateway and per-brain coordinators
 
@@ -13,6 +14,7 @@
 
 * accepts client connections, subscriptions, and control messages
 * forwards brain-level requests to HiveMind and/or ReproductionManager
+* forwards placement-ready worker capacity queries to HiveMind and returns the placement-filtered worker inventory through the IO contract
 * spawns per-brain `InputCoordinator` and `OutputCoordinator` actors
 
 Brain lifecycle control carries backpressure pause metadata:
