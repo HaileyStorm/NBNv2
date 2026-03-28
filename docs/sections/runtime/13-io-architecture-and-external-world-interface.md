@@ -7,6 +7,7 @@
 * Inputs are applied on the next tick automatically by the IO coordinators and the tick delivery phase.
 * Outputs are delivered with tick correlation, but External World is not required to use it.
 * External World may query placement-ready worker capacity through IO when it needs runtime-sizing hints for environment orchestration; the returned snapshot reflects HiveMind's placement-eligible worker view rather than raw SettingsMonitor rows.
+* External World may explicitly terminate a running brain through IO; it does not need a separate HiveMind control-plane connection for ordinary brain-lifecycle teardown.
 
 ### 13.2 IO Gateway and per-brain coordinators
 

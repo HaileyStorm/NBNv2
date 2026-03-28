@@ -466,6 +466,17 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoIo_KillBrainViaIOAck_Fields_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+        var killAck = descriptor.MessageTypes.Single(message => message.Name == "KillBrainViaIOAck");
+
+        AssertField(killAck, "accepted", 1, FieldType.Bool);
+        AssertField(killAck, "failure_reason_code", 2, FieldType.String);
+        AssertField(killAck, "failure_message", 3, FieldType.String);
+    }
+
+    [Fact]
     public void ProtoIo_ConnectionAndLifecycleFields_AreStable()
     {
         var descriptor = NbnIoReflection.Descriptor;
@@ -495,6 +506,9 @@ public class ProtoCompatibilityTests
 
         var spawnBrainViaIo = descriptor.MessageTypes.Single(message => message.Name == "SpawnBrainViaIO");
         AssertField(spawnBrainViaIo, "request", 1, FieldType.Message, "nbn.control.SpawnBrain");
+
+        var killBrainViaIo = descriptor.MessageTypes.Single(message => message.Name == "KillBrainViaIO");
+        AssertField(killBrainViaIo, "request", 1, FieldType.Message, "nbn.control.KillBrain");
 
         var unregisterBrain = descriptor.MessageTypes.Single(message => message.Name == "UnregisterBrain");
         AssertField(unregisterBrain, "brain_id", 1, FieldType.Message, "nbn.Uuid");

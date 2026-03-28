@@ -1102,6 +1102,16 @@ message SpawnBrainViaIOAck {
   string failure_message = 3;
 }
 
+message KillBrainViaIO {
+  nbn.control.KillBrain request = 1;
+}
+
+message KillBrainViaIOAck {
+  bool accepted = 1;
+  string failure_reason_code = 2;
+  string failure_message = 3;
+}
+
 message InputWrite {
   nbn.Uuid brain_id = 1;
   uint32 input_index = 2;

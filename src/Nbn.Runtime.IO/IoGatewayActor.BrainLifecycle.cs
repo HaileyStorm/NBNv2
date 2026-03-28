@@ -56,6 +56,53 @@ public sealed partial class IoGatewayActor
         }
     }
 
+    private void HandleKillBrain(IContext context, KillBrainViaIO message)
+    {
+        if (_hiveMindPid is null)
+        {
+            context.Respond(new KillBrainViaIOAck
+            {
+                Accepted = false,
+                FailureReasonCode = "kill_unavailable",
+                FailureMessage = "Kill failed: HiveMind endpoint is not configured."
+            });
+            return;
+        }
+
+        var request = message.Request;
+        if (request is null || !TryGetBrainId(request.BrainId, out _))
+        {
+            context.Respond(new KillBrainViaIOAck
+            {
+                Accepted = false,
+                FailureReasonCode = "kill_invalid_request",
+                FailureMessage = "Kill failed: brain_id is required."
+            });
+            return;
+        }
+
+        try
+        {
+            context.Send(_hiveMindPid, request);
+            context.Respond(new KillBrainViaIOAck
+            {
+                Accepted = true,
+                FailureReasonCode = string.Empty,
+                FailureMessage = string.Empty
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"KillBrainViaIO failed: {ex.Message}");
+            context.Respond(new KillBrainViaIOAck
+            {
+                Accepted = false,
+                FailureReasonCode = "kill_request_failed",
+                FailureMessage = $"Kill failed: request forwarding to HiveMind failed ({ex.GetBaseException().Message})."
+            });
+        }
+    }
+
     private async Task HandleBrainInfoAsync(IContext context, BrainInfoRequest message)
     {
         if (!TryGetBrainId(message.BrainId, out var brainId))

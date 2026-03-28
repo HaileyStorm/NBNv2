@@ -306,6 +306,67 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task KillBrainViaIO_Forwards_To_HiveMind_And_AcksAccepted()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var firstKill = new TaskCompletionSource<ProtoControl.KillBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondKill = new TaskCompletionSource<ProtoControl.KillBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveKillProbe(firstKill, secondKill)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+        var brainId = Guid.NewGuid();
+
+        var response = await root.RequestAsync<KillBrainViaIOAck>(
+            gateway,
+            new KillBrainViaIO
+            {
+                Request = new ProtoControl.KillBrain
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    Reason = "basics_demo_stop"
+                }
+            });
+
+        Assert.True(response.Accepted);
+        Assert.True(string.IsNullOrWhiteSpace(response.FailureReasonCode));
+        Assert.True(string.IsNullOrWhiteSpace(response.FailureMessage));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var forwarded = await firstKill.Task.WaitAsync(cts.Token);
+        Assert.True(forwarded.BrainId.TryToGuid(out var forwardedBrainId));
+        Assert.Equal(brainId, forwardedBrainId);
+        Assert.Equal("basics_demo_stop", forwarded.Reason);
+        Assert.False(secondKill.Task.IsCompleted);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task KillBrainViaIO_Returns_Actionable_Failure_When_HiveMind_Is_Unavailable()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var response = await root.RequestAsync<KillBrainViaIOAck>(
+            gateway,
+            new KillBrainViaIO
+            {
+                Request = new ProtoControl.KillBrain
+                {
+                    BrainId = Guid.NewGuid().ToProtoUuid(),
+                    Reason = "basics_demo_stop"
+                }
+            });
+
+        Assert.False(response.Accepted);
+        Assert.Equal("kill_unavailable", response.FailureReasonCode);
+        Assert.Equal("Kill failed: HiveMind endpoint is not configured.", response.FailureMessage);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ExportBrainDefinition_Returns_Registered_BaseDefinition()
     {
         var system = new ActorSystem();
