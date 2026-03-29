@@ -2169,6 +2169,55 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task SelectedEpochOption_FiltersCladogramToSelectedEpoch()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 9,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.root",
+                SpeciesDisplayName = "Root",
+                DecisionReason = "explicit_species",
+                AssignedMs = 1000
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 10,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.child",
+                SpeciesDisplayName = "Root [A]",
+                DecisionReason = "lineage_diverged_new_species",
+                AssignedMs = 1100,
+                DecisionMetadataJson = "{\"lineage\":{\"dominant_species_id\":\"species.root\",\"dominant_species_display_name\":\"Root\"}}"
+            }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+        var vm = CreateViewModel(client);
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => FlattenCladogram(vm.CladogramItems).Any(item => string.Equals(item.SpeciesId, "species.child", StringComparison.Ordinal)));
+
+        vm.SelectedEpochOption = vm.EpochOptions.Single(option => option.EpochId == 9);
+        await WaitForAsync(() =>
+            FlattenCladogram(vm.CladogramItems).Any(item => string.Equals(item.SpeciesId, "species.root", StringComparison.Ordinal))
+            && !FlattenCladogram(vm.CladogramItems).Any(item => string.Equals(item.SpeciesId, "species.child", StringComparison.Ordinal)));
+
+        var cladogramNodes = FlattenCladogram(vm.CladogramItems).ToArray();
+        Assert.Contains(cladogramNodes, item => item.SpeciesId == "species.root");
+        Assert.DoesNotContain(cladogramNodes, item => item.SpeciesId == "species.child");
+    }
+
+    [Fact]
     public async Task RefreshHistoryCommand_AutoExpandsCladogramBranchWhenNewSpeciesAppear()
     {
         var brainRoot = Guid.NewGuid();

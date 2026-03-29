@@ -591,7 +591,7 @@ public sealed partial class SpeciationPanelViewModel
         var speciationChartSource = new SpeciationChartSourceFrame(
             ChartHistory: chartHistory,
             ColorSourceHistory: chartResponse.History,
-            CladogramHistory: chartResponse.History);
+            CladogramHistory: filteredHistory);
         var populationSnapshot = BuildPopulationChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder, speciesColors);
         var flowSnapshot = BuildFlowChartSnapshot(
             flowChartSource.EpochRows,
@@ -610,7 +610,7 @@ public sealed partial class SpeciationPanelViewModel
             ParseDouble(LineageSplitThreshold, 0.88d),
             ParseDouble(LineageSplitGuardMargin, 0.02d),
             speciesColors);
-        var cladogramSourceHistory = chartResponse.History;
+        var cladogramSourceHistory = filteredHistory;
         var cladogramSnapshot = BuildCladogramSnapshot(cladogramSourceHistory, speciesColors);
 
         _dispatcher.Post(() =>
