@@ -371,6 +371,7 @@ public class IoGatewayArtifactReferenceTests
     {
         var system = new ActorSystem();
         var root = system.Root;
+        var brainId = Guid.NewGuid();
         var forwarded = new TaskCompletionSource<ProtoControl.SetOutputVectorSource>(TaskCreationOptions.RunContinuationsAsynchronously);
         var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveOutputVectorSourceProbe(forwarded, accepted: true)));
         var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
@@ -379,16 +380,23 @@ public class IoGatewayArtifactReferenceTests
             gateway,
             new SetOutputVectorSource
             {
-                OutputVectorSource = ProtoControl.OutputVectorSource.Buffer
+                OutputVectorSource = ProtoControl.OutputVectorSource.Buffer,
+                BrainId = brainId.ToProtoUuid()
             });
 
         Assert.True(response.Success);
         Assert.True(string.IsNullOrWhiteSpace(response.FailureReasonCode));
         Assert.Equal(ProtoControl.OutputVectorSource.Buffer, response.OutputVectorSource);
+        Assert.NotNull(response.BrainId);
+        Assert.True(response.BrainId.TryToGuid(out var acknowledgedBrainId));
+        Assert.Equal(brainId, acknowledgedBrainId);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var request = await forwarded.Task.WaitAsync(cts.Token);
         Assert.Equal(ProtoControl.OutputVectorSource.Buffer, request.OutputVectorSource);
+        Assert.NotNull(request.BrainId);
+        Assert.True(request.BrainId.TryToGuid(out var forwardedBrainId));
+        Assert.Equal(brainId, forwardedBrainId);
 
         await system.ShutdownAsync();
     }
@@ -2773,7 +2781,8 @@ public class IoGatewayArtifactReferenceTests
                     {
                         Accepted = _accepted,
                         Message = _accepted ? "applied" : "rejected",
-                        OutputVectorSource = message.OutputVectorSource
+                        OutputVectorSource = message.OutputVectorSource,
+                        BrainId = message.BrainId?.Clone()
                     });
                     break;
             }

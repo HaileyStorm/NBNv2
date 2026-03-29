@@ -125,12 +125,14 @@ enum OutputVectorSource {
 
 message SetOutputVectorSource {
   OutputVectorSource output_vector_source = 1;
+  nbn.Uuid brain_id = 2;
 }
 
 message SetOutputVectorSourceAck {
   bool accepted = 1;
   string message = 2;
   OutputVectorSource output_vector_source = 3;
+  nbn.Uuid brain_id = 4;
 }
 
 message UpdateShardOutputSink {

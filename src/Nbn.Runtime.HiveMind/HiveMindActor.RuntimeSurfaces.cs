@@ -107,7 +107,7 @@ public sealed partial class HiveMindActor
             InputWidth = (uint)Math.Max(0, brain.InputWidth),
             OutputWidth = (uint)Math.Max(0, brain.OutputWidth),
             InputCoordinatorMode = _inputCoordinatorMode,
-            OutputVectorSource = _outputVectorSource,
+            OutputVectorSource = brain.OutputVectorSource,
             InputCoordinatorPid = brain.InputCoordinatorPid is null ? string.Empty : PidLabel(brain.InputCoordinatorPid),
             OutputCoordinatorPid = outputCoordinatorPid is null ? string.Empty : PidLabel(outputCoordinatorPid),
             IoGatewayOwnsInputCoordinator = ioGatewayOwnsInputCoordinator,
@@ -421,7 +421,7 @@ public sealed partial class HiveMindActor
                 _costTierAMultiplier,
                 _costTierBMultiplier,
                 _costTierCMultiplier,
-                _outputVectorSource,
+                brain.OutputVectorSource,
                 _debugStreamEnabled,
                 _debugMinSeverity);
         }
@@ -472,7 +472,7 @@ public sealed partial class HiveMindActor
             && brain.IoRegisteredInputWidth == inputWidth
             && brain.IoRegisteredOutputWidth == outputWidth
             && brain.IoRegisteredInputCoordinatorMode == _inputCoordinatorMode
-            && brain.IoRegisteredOutputVectorSource == _outputVectorSource
+            && brain.IoRegisteredOutputVectorSource == brain.OutputVectorSource
             && brain.IoRegisteredOwnsInputCoordinator == ioGatewayOwnsInputCoordinator
             && brain.IoRegisteredOwnsOutputCoordinator == ioGatewayOwnsOutputCoordinator
             && string.Equals(brain.IoRegisteredInputCoordinatorPid, inputCoordinatorPidLabel, StringComparison.Ordinal)
@@ -518,7 +518,7 @@ public sealed partial class HiveMindActor
             HomeostasisEnergyTargetScale = brain.HomeostasisEnergyTargetScale,
             HomeostasisEnergyProbabilityScale = brain.HomeostasisEnergyProbabilityScale,
             InputCoordinatorMode = _inputCoordinatorMode,
-            OutputVectorSource = _outputVectorSource,
+            OutputVectorSource = brain.OutputVectorSource,
             LastTickCost = brain.LastTickCost,
             InputCoordinatorPid = inputCoordinatorPidLabel,
             OutputCoordinatorPid = outputCoordinatorPidLabel,
@@ -549,7 +549,7 @@ public sealed partial class HiveMindActor
         brain.IoRegisteredInputWidth = inputWidth;
         brain.IoRegisteredOutputWidth = outputWidth;
         brain.IoRegisteredInputCoordinatorMode = _inputCoordinatorMode;
-        brain.IoRegisteredOutputVectorSource = _outputVectorSource;
+        brain.IoRegisteredOutputVectorSource = brain.OutputVectorSource;
         brain.IoRegisteredOwnsInputCoordinator = ioGatewayOwnsInputCoordinator;
         brain.IoRegisteredOwnsOutputCoordinator = ioGatewayOwnsOutputCoordinator;
         brain.IoRegisteredInputCoordinatorPid = inputCoordinatorPidLabel;

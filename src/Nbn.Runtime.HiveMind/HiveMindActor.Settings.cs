@@ -114,8 +114,7 @@ public sealed partial class HiveMindActor
 
         if (TryApplyOutputVectorSourceSetting(key, value))
         {
-            UpdateAllShardRuntimeConfig(context);
-            RegisterAllBrainsWithIo(context);
+            ApplyDefaultOutputVectorSourceToUnpinnedBrains(context);
         }
 
         TryApplyTickRateOverrideSetting(context, key, value);

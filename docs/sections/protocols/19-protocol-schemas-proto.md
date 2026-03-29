@@ -1114,6 +1114,7 @@ message KillBrainViaIOAck {
 
 message SetOutputVectorSource {
   nbn.control.OutputVectorSource output_vector_source = 1;
+  nbn.Uuid brain_id = 2;
 }
 
 message SetOutputVectorSourceAck {
@@ -1121,6 +1122,7 @@ message SetOutputVectorSourceAck {
   string failure_reason_code = 2;
   string failure_message = 3;
   nbn.control.OutputVectorSource output_vector_source = 4;
+  nbn.Uuid brain_id = 5;
 }
 
 message InputWrite {

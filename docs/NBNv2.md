@@ -839,7 +839,7 @@ When a brain terminates (energy exhaustion, explicit kill from External World or
 * Outputs are delivered with tick correlation, but External World is not required to use it.
 * External World may query placement-ready worker capacity through IO when it needs runtime-sizing hints for environment orchestration; the returned snapshot reflects HiveMind's placement-eligible worker view rather than raw SettingsMonitor rows.
 * External World may explicitly terminate a running brain through IO; it does not need a separate HiveMind control-plane connection for ordinary brain-lifecycle teardown.
-* External World may switch the global continuous vector source between `potential` and `buffer` through IO; sparse `OutputEvent` subscriptions remain a separate transport choice.
+* External World may switch the continuous vector source between `potential` and `buffer` through IO. Requests that include `brain_id` apply only to that Brain; requests without `brain_id` update the runtime default for future and non-overridden Brains. Sparse `OutputEvent` subscriptions remain a separate transport choice.
 
 ### 13.2 IO Gateway and per-brain coordinators
 
@@ -898,6 +898,11 @@ Output vector source is runtime-selectable:
 
 * `potential` (default): vector samples activation potential semantics (existing behavior).
 * `buffer`: vector samples each output neuron's current persistent buffer value each tick, without requiring a fire event.
+
+IO selection scope is explicit:
+
+* `SetOutputVectorSource.brain_id` present: override only that Brain's vector source.
+* `SetOutputVectorSource.brain_id` omitted: update the runtime default used by newly spawned Brains and any existing Brains that have not received a per-brain override.
 
 External World may subscribe, per Brain, to individual and/or vector outputs.
 
@@ -2928,6 +2933,7 @@ message KillBrainViaIOAck {
 
 message SetOutputVectorSource {
   nbn.control.OutputVectorSource output_vector_source = 1;
+  nbn.Uuid brain_id = 2;
 }
 
 message SetOutputVectorSourceAck {
@@ -2935,6 +2941,7 @@ message SetOutputVectorSourceAck {
   string failure_reason_code = 2;
   string failure_message = 3;
   nbn.control.OutputVectorSource output_vector_source = 4;
+  nbn.Uuid brain_id = 5;
 }
 
 message InputWrite {

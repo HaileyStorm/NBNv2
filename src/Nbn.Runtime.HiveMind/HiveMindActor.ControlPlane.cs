@@ -71,7 +71,7 @@ public sealed partial class HiveMindActor
         var isNew = !_brains.TryGetValue(brainId, out var brain) || brain is null;
         if (isNew)
         {
-            brain = new BrainState(brainId)
+            brain = new BrainState(brainId, _outputVectorSource)
             {
                 SpawnedMs = NowMs()
             };
@@ -148,7 +148,7 @@ public sealed partial class HiveMindActor
     {
         if (!_brains.TryGetValue(brainId, out var brain))
         {
-            brain = new BrainState(brainId);
+            brain = new BrainState(brainId, _outputVectorSource);
             _brains.Add(brainId, brain);
         }
 
@@ -221,7 +221,7 @@ public sealed partial class HiveMindActor
     {
         if (!_brains.TryGetValue(brainId, out var brain))
         {
-            brain = new BrainState(brainId);
+            brain = new BrainState(brainId, _outputVectorSource);
             _brains.Add(brainId, brain);
         }
 
@@ -278,7 +278,7 @@ public sealed partial class HiveMindActor
             _costTierAMultiplier,
             _costTierBMultiplier,
             _costTierCMultiplier,
-            _outputVectorSource,
+            brain.OutputVectorSource,
             _debugStreamEnabled,
             _debugMinSeverity);
         UpdateRoutingTable(context, brain);

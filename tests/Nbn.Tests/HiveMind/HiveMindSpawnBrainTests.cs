@@ -238,6 +238,117 @@ public sealed class HiveMindSpawnBrainTests
     }
 
     [Fact]
+    public async Task SetOutputVectorSource_PerBrainOverride_Remains_Isolated_From_Later_Global_Default_Changes()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var metadataName = $"brain-info-{Guid.NewGuid():N}";
+            var workerAddress = "worker.local";
+
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 1_000,
+                    retryBackoffMs: 10,
+                    maxRetries: 1,
+                    reconcileTimeoutMs: 1_000))));
+            var metadata = root.SpawnNamed(
+                Props.FromProducer(() => new FixedBrainInfoActor(brainDef, inputWidth: 4, outputWidth: 4)),
+                metadataName);
+            var workerPid = root.Spawn(
+                Props.FromProducer(() => new WorkerNodeActor(workerId, workerAddress, artifactRootPath: artifactRoot)));
+
+            PrimeWorkerDiscoveryEndpoints(root, workerPid, hiveMind.Id, metadata.Id);
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            await WaitForAsync(
+                async () =>
+                {
+                    var worker = await root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                        workerPid,
+                        new WorkerNodeActor.GetWorkerNodeSnapshot());
+                    return worker.IoGatewayEndpoint.HasValue;
+                },
+                timeoutMs: 2_000);
+
+            async Task<Guid> SpawnBrainAsync()
+            {
+                var ack = await root.RequestAsync<SpawnBrainAck>(
+                    hiveMind,
+                    new SpawnBrain
+                    {
+                        BrainDef = brainDef
+                    },
+                    TimeSpan.FromSeconds(70));
+
+                Assert.True(ack.BrainId.TryToGuid(out var brainId));
+                Assert.NotEqual(Guid.Empty, brainId);
+                return brainId;
+            }
+
+            var brainA = await SpawnBrainAsync();
+            var brainB = await SpawnBrainAsync();
+
+            var perBrainAck = await root.RequestAsync<ProtoControl.SetOutputVectorSourceAck>(
+                hiveMind,
+                new ProtoControl.SetOutputVectorSource
+                {
+                    BrainId = brainA.ToProtoUuid(),
+                    OutputVectorSource = OutputVectorSource.Potential
+                });
+
+            Assert.True(perBrainAck.Accepted);
+            Assert.NotNull(perBrainAck.BrainId);
+            Assert.True(perBrainAck.BrainId.TryToGuid(out var acknowledgedBrainId));
+            Assert.Equal(brainA, acknowledgedBrainId);
+            Assert.Equal(OutputVectorSource.Potential, perBrainAck.OutputVectorSource);
+
+            var globalAck = await root.RequestAsync<ProtoControl.SetOutputVectorSourceAck>(
+                hiveMind,
+                new ProtoControl.SetOutputVectorSource
+                {
+                    OutputVectorSource = OutputVectorSource.Buffer
+                });
+
+            Assert.True(globalAck.Accepted);
+            Assert.Equal(OutputVectorSource.Buffer, globalAck.OutputVectorSource);
+            Assert.Null(globalAck.BrainId);
+
+            var brainC = await SpawnBrainAsync();
+
+            async Task<ProtoControl.BrainIoInfo> GetIoInfoAsync(Guid brainId)
+                => await root.RequestAsync<ProtoControl.BrainIoInfo>(
+                    hiveMind,
+                    new ProtoControl.GetBrainIoInfo
+                    {
+                        BrainId = brainId.ToProtoUuid()
+                    });
+
+            var infoA = await GetIoInfoAsync(brainA);
+            var infoB = await GetIoInfoAsync(brainB);
+            var infoC = await GetIoInfoAsync(brainC);
+
+            Assert.Equal(OutputVectorSource.Potential, infoA.OutputVectorSource);
+            Assert.Equal(OutputVectorSource.Buffer, infoB.OutputVectorSource);
+            Assert.Equal(OutputVectorSource.Buffer, infoC.OutputVectorSource);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task SpawnBrain_Returns_AssignmentRejected_Details_When_WorkerRole_DisablesBrainRoot()
     {
         var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();

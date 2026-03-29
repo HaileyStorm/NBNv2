@@ -105,6 +105,19 @@ public sealed partial class IoGatewayActor
 
     private async Task HandleSetOutputVectorSourceAsync(IContext context, SetOutputVectorSource message)
     {
+        if (message.BrainId is not null && !TryGetBrainId(message.BrainId, out _))
+        {
+            context.Respond(new SetOutputVectorSourceAck
+            {
+                Success = false,
+                FailureReasonCode = "output_vector_source_invalid_brain_id",
+                FailureMessage = "Output vector source update failed: brain_id is invalid.",
+                OutputVectorSource = DefaultOutputVectorSource,
+                BrainId = message.BrainId.Clone()
+            });
+            return;
+        }
+
         if (_hiveMindPid is null)
         {
             context.Respond(new SetOutputVectorSourceAck
@@ -112,7 +125,8 @@ public sealed partial class IoGatewayActor
                 Success = false,
                 FailureReasonCode = "output_vector_source_unavailable",
                 FailureMessage = "Output vector source update failed: HiveMind endpoint is not configured.",
-                OutputVectorSource = DefaultOutputVectorSource
+                OutputVectorSource = DefaultOutputVectorSource,
+                BrainId = message.BrainId?.Clone()
             });
             return;
         }
@@ -123,7 +137,8 @@ public sealed partial class IoGatewayActor
                 _hiveMindPid,
                 new ProtoControl.SetOutputVectorSource
                 {
-                    OutputVectorSource = message.OutputVectorSource
+                    OutputVectorSource = message.OutputVectorSource,
+                    BrainId = message.BrainId?.Clone()
                 },
                 DefaultRequestTimeout);
             if (ack is null)
@@ -133,7 +148,8 @@ public sealed partial class IoGatewayActor
                     Success = false,
                     FailureReasonCode = "output_vector_source_empty_response",
                     FailureMessage = "Output vector source update failed: HiveMind returned an empty acknowledgment.",
-                    OutputVectorSource = DefaultOutputVectorSource
+                    OutputVectorSource = DefaultOutputVectorSource,
+                    BrainId = message.BrainId?.Clone()
                 });
                 return;
             }
@@ -143,7 +159,8 @@ public sealed partial class IoGatewayActor
                 Success = ack.Accepted,
                 FailureReasonCode = ack.Accepted ? string.Empty : "output_vector_source_rejected",
                 FailureMessage = ack.Message ?? string.Empty,
-                OutputVectorSource = ack.OutputVectorSource
+                OutputVectorSource = ack.OutputVectorSource,
+                BrainId = ack.BrainId?.Clone()
             });
         }
         catch (Exception ex)
@@ -154,7 +171,8 @@ public sealed partial class IoGatewayActor
                 Success = false,
                 FailureReasonCode = "output_vector_source_request_failed",
                 FailureMessage = $"Output vector source update failed: request forwarding to HiveMind failed ({ex.GetBaseException().Message}).",
-                OutputVectorSource = DefaultOutputVectorSource
+                OutputVectorSource = DefaultOutputVectorSource,
+                BrainId = message.BrainId?.Clone()
             });
         }
     }

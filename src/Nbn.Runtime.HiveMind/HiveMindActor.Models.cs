@@ -119,9 +119,10 @@ public sealed partial class HiveMindActor
 
     private sealed class BrainState
     {
-        public BrainState(Guid brainId)
+        public BrainState(Guid brainId, ProtoControl.OutputVectorSource outputVectorSource)
         {
             BrainId = brainId;
+            OutputVectorSource = NormalizeOutputVectorSource(outputVectorSource);
         }
 
         public Guid BrainId { get; }
@@ -142,6 +143,9 @@ public sealed partial class HiveMindActor
             ProtoControl.InputCoordinatorMode.DirtyOnChange;
         public ProtoControl.OutputVectorSource IoRegisteredOutputVectorSource { get; set; } =
             ProtoControl.OutputVectorSource.Potential;
+        public ProtoControl.OutputVectorSource OutputVectorSource { get; set; } =
+            ProtoControl.OutputVectorSource.Potential;
+        public bool HasExplicitOutputVectorSource { get; set; }
         public bool IoRegistered { get; set; }
         public Nbn.Proto.ArtifactRef? BaseDefinition { get; set; }
         public Nbn.Proto.ArtifactRef? LastSnapshot { get; set; }

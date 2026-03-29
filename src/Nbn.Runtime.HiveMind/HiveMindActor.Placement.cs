@@ -201,7 +201,7 @@ public sealed partial class HiveMindActor
 
         if (!_brains.TryGetValue(brainId, out var brain))
         {
-            brain = new BrainState(brainId)
+            brain = new BrainState(brainId, _outputVectorSource)
             {
                 SpawnedMs = NowMs()
             };

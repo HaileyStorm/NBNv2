@@ -50,28 +50,91 @@ public sealed partial class HiveMindActor
 
     private void HandleSetOutputVectorSource(IContext context, ProtoControl.SetOutputVectorSource message)
     {
-        var normalized = message.OutputVectorSource switch
+        var normalized = NormalizeOutputVectorSource(message.OutputVectorSource);
+        if (message.BrainId is not null)
         {
-            ProtoControl.OutputVectorSource.Buffer => ProtoControl.OutputVectorSource.Buffer,
-            _ => ProtoControl.OutputVectorSource.Potential
-        };
+            if (!TryGetGuid(message.BrainId, out var brainId))
+            {
+                context.Respond(new ProtoControl.SetOutputVectorSourceAck
+                {
+                    Accepted = false,
+                    Message = "invalid_brain_id",
+                    OutputVectorSource = normalized,
+                    BrainId = message.BrainId.Clone()
+                });
+                return;
+            }
 
-        var changed = _outputVectorSource != normalized;
+            if (!_brains.TryGetValue(brainId, out var brain))
+            {
+                context.Respond(new ProtoControl.SetOutputVectorSourceAck
+                {
+                    Accepted = false,
+                    Message = "brain_not_registered",
+                    OutputVectorSource = normalized,
+                    BrainId = brainId.ToProtoUuid()
+                });
+                return;
+            }
+
+            var changed = brain.OutputVectorSource != normalized || !brain.HasExplicitOutputVectorSource;
+            brain.OutputVectorSource = normalized;
+            brain.HasExplicitOutputVectorSource = true;
+            if (changed)
+            {
+                UpdateShardRuntimeConfig(context, brain);
+                RegisterBrainWithIo(context, brain, force: true);
+                EmitDebug(
+                    context,
+                    ProtoSeverity.SevInfo,
+                    "io.output_vector_source.brain",
+                    $"Output vector source for brain {brain.BrainId} set to {FormatOutputVectorSource(brain.OutputVectorSource)}.");
+            }
+
+            context.Respond(new ProtoControl.SetOutputVectorSourceAck
+            {
+                Accepted = true,
+                Message = changed ? "applied" : "unchanged",
+                OutputVectorSource = brain.OutputVectorSource,
+                BrainId = brain.BrainId.ToProtoUuid()
+            });
+            return;
+        }
+
+        var defaultChanged = _outputVectorSource != normalized;
         _outputVectorSource = normalized;
-        if (changed)
+        if (defaultChanged)
         {
-            UpdateAllShardRuntimeConfig(context);
-            RegisterAllBrainsWithIo(context);
+            ApplyDefaultOutputVectorSourceToUnpinnedBrains(context);
             PersistOutputVectorSourceSetting(context);
-            EmitDebug(context, ProtoSeverity.SevInfo, "io.output_vector_source", $"Output vector source set to {FormatOutputVectorSource(_outputVectorSource)}.");
+            EmitDebug(
+                context,
+                ProtoSeverity.SevInfo,
+                "io.output_vector_source",
+                $"Default output vector source set to {FormatOutputVectorSource(_outputVectorSource)}.");
         }
 
         context.Respond(new ProtoControl.SetOutputVectorSourceAck
         {
             Accepted = true,
-            Message = changed ? "applied" : "unchanged",
+            Message = defaultChanged ? "applied" : "unchanged",
             OutputVectorSource = _outputVectorSource
         });
+    }
+
+    private void ApplyDefaultOutputVectorSourceToUnpinnedBrains(IContext context)
+    {
+        foreach (var brain in _brains.Values)
+        {
+            if (brain.HasExplicitOutputVectorSource || brain.OutputVectorSource == _outputVectorSource)
+            {
+                continue;
+            }
+
+            brain.OutputVectorSource = _outputVectorSource;
+            UpdateShardRuntimeConfig(context, brain);
+            RegisterBrainWithIo(context, brain, force: true);
+        }
     }
 
     private void PersistTickRateOverrideSetting(IContext context)
@@ -112,6 +175,15 @@ public sealed partial class HiveMindActor
         {
             ProtoControl.OutputVectorSource.Buffer => "buffer",
             _ => "potential"
+        };
+    }
+
+    private static ProtoControl.OutputVectorSource NormalizeOutputVectorSource(ProtoControl.OutputVectorSource source)
+    {
+        return source switch
+        {
+            ProtoControl.OutputVectorSource.Buffer => ProtoControl.OutputVectorSource.Buffer,
+            _ => ProtoControl.OutputVectorSource.Potential
         };
     }
 }

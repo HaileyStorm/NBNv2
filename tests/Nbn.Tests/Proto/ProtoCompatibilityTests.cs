@@ -168,11 +168,13 @@ public class ProtoCompatibilityTests
 
         var setOutputVectorSource = descriptor.MessageTypes.Single(message => message.Name == "SetOutputVectorSource");
         AssertField(setOutputVectorSource, "output_vector_source", 1, FieldType.Enum, "nbn.control.OutputVectorSource");
+        AssertField(setOutputVectorSource, "brain_id", 2, FieldType.Message, "nbn.Uuid");
 
         var setOutputVectorSourceAck = descriptor.MessageTypes.Single(message => message.Name == "SetOutputVectorSourceAck");
         AssertField(setOutputVectorSourceAck, "accepted", 1, FieldType.Bool);
         AssertField(setOutputVectorSourceAck, "message", 2, FieldType.String);
         AssertField(setOutputVectorSourceAck, "output_vector_source", 3, FieldType.Enum, "nbn.control.OutputVectorSource");
+        AssertField(setOutputVectorSourceAck, "brain_id", 4, FieldType.Message, "nbn.Uuid");
 
         var shardVisualization = descriptor.MessageTypes.Single(message => message.Name == "UpdateShardVisualization");
         AssertField(shardVisualization, "brain_id", 1, FieldType.Message, "nbn.Uuid");
@@ -494,6 +496,7 @@ public class ProtoCompatibilityTests
         AssertField(ack, "failure_reason_code", 2, FieldType.String);
         AssertField(ack, "failure_message", 3, FieldType.String);
         AssertField(ack, "output_vector_source", 4, FieldType.Enum, "nbn.control.OutputVectorSource");
+        AssertField(ack, "brain_id", 5, FieldType.Message, "nbn.Uuid");
     }
 
     [Fact]
@@ -532,6 +535,7 @@ public class ProtoCompatibilityTests
 
         var setOutputVectorSource = descriptor.MessageTypes.Single(message => message.Name == "SetOutputVectorSource");
         AssertField(setOutputVectorSource, "output_vector_source", 1, FieldType.Enum, "nbn.control.OutputVectorSource");
+        AssertField(setOutputVectorSource, "brain_id", 2, FieldType.Message, "nbn.Uuid");
 
         var unregisterBrain = descriptor.MessageTypes.Single(message => message.Name == "UnregisterBrain");
         AssertField(unregisterBrain, "brain_id", 1, FieldType.Message, "nbn.Uuid");
