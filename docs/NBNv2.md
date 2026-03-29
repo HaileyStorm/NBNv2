@@ -332,6 +332,7 @@ Define tick pacing primarily in Hz and derive periods:
 * `target_tick_period_ms = 1000 / target_tick_hz`
 
 The tick engine adjusts `target_tick_hz` downward (slower) under backpressure, never below `min_tick_hz`.
+`HiveMindStatus` reports both the configured/control target cadence and the current effective target, flags when automatic backpressure reduction is active, and exposes recent timeout/lateness window counts so operator surfaces can show current tick health without parsing logs.
 
 ### 6.5 Backpressure policy
 
@@ -359,6 +360,7 @@ Current implementation detail:
 * each backpressure pause decision pauses the first eligible Brain selected by the configured ordering
 * repeated timeout streaks continue applying the same ordering and can pause additional Brains over time
 * `lowest configured priority value` uses `pause_priority` from `SpawnBrain` or direct `RegisterBrain` control messages (default `0`)
+* HiveMind status also exposes current over-quota worker count plus recent worker-pressure counts across the configured pressure-rebalance window so operator tooling can distinguish immediate worker saturation from recent-but-recovered pressure.
 
 ### 6.6 Rescheduling rate limits and tick pausing
 
@@ -1166,7 +1168,8 @@ Runtime behavior:
 * Workbench visualizer cadence controls consume SettingsMonitor snapshots plus `SettingChanged` feeds, including external Settings DB value updates detected and published by SettingsMonitor for existing setting rows, so the operator control target tracks the authoritative settings value without reconnecting.
 * When `tick.cadence.hz` changes externally, Workbench re-queries HiveMind status so the visualizer continues to show both the configured cadence target and the current authoritative runtime target when they temporarily diverge.
 * When stream throttling is active (`target tick cadence faster than configured stream interval`), RegionShards sample visualization work in deterministic region phases across ticks to spread CPU cost without changing simulation compute/deliver semantics.
-* Workbench Orchestrator exposes settings-backed worker policy controls for capability refresh cadence and pressure-rebalance thresholds, plus `Profile Current System` for attached perf-probe runs against the currently running deployment.
+* Workbench Orchestrator exposes settings-backed worker policy controls for capability refresh cadence and pressure-rebalance thresholds, aggregate worker resource-usage summaries from SettingsMonitor capability snapshots, recent worker-pressure/tick-health summaries from HiveMind status, and `Profile Current System` for attached perf-probe runs against the currently running deployment.
+* Workbench Speciation surfaces total epoch count, current active epoch, and a pane-wide epoch selector so memberships and history visualizations stay aligned to one epoch scope when the operator drills into historical taxonomy state.
 
 ### 15.2 OpenTelemetry (NBN-managed)
 
@@ -1825,6 +1828,7 @@ The following `.proto` files define the canonical NBN wire schema. The source of
 
 - `subscriber_actor` fields in debug, IO output, and visualization subscriptions let callers supply a stable subscription identity instead of relying on the transient request sender PID.
 - `SetTickRateOverride` applies an operator override on top of the baseline target tick rate until explicitly cleared; `HiveMindStatus.has_tick_rate_override` and `tick_rate_override_hz` report the effective override state.
+- `HiveMindStatus` also carries the configured baseline tick target, automatic-backpressure-reduction flag, recent timeout/lateness window counts, and worker-pressure summary counts so operator clients can surface current runtime load from one status request.
 - `BrainInfo`, IO `RegisterBrain`, and `BrainIoInfo` expose coordinator mode, output-vector source, coordinator PID labels, and IO-gateway ownership booleans so tools can distinguish gateway-owned coordinators from worker-hosted coordinators.
 - Placement lifecycle, worker inventory, peer-latency, and capability-refresh messages in `nbn_control.proto` are the canonical operator-facing control-plane telemetry for placement orchestration and worker readiness.
 - Drift-check process: when a `.proto` contract changes, update the mirrored appendix content from the matching file under `src/Nbn.Shared/Protos`, re-render `docs/NBNv2.md`, run `dotnet test tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~Nbn.Tests.Proto.ProtoCompatibilityTests`, and run the docs freshness check (`bash tools/docs/render-nbnv2-docs.sh --check` on Linux/macOS or `powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check` on Windows).
@@ -2708,6 +2712,14 @@ message HiveMindStatus {
   uint32 registered_shards = 8;
   bool has_tick_rate_override = 9;
   float tick_rate_override_hz = 10;
+  float configured_target_tick_hz = 11;
+  bool automatic_backpressure_active = 12;
+  uint32 recent_tick_sample_count = 13;
+  uint32 recent_timeout_tick_count = 14;
+  uint32 recent_late_tick_count = 15;
+  uint32 worker_pressure_window = 16;
+  uint32 current_pressure_worker_count = 17;
+  uint32 recent_pressure_worker_count = 18;
 }
 
 message GetBrainRouting {

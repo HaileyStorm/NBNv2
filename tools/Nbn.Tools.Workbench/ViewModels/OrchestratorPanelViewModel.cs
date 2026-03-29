@@ -64,6 +64,9 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private string _lastSeededPullSettingsPortText = string.Empty;
     private string _lastSeededPullSettingsName = string.Empty;
     private string _workerEndpointSummary = "No active workers.";
+    private string _systemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
+    private string _systemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
+    private string _systemLoadTickSummary = "Tick health: awaiting HiveMind status.";
     private string _workerCapabilityRefreshSecondsText = WorkerCapabilitySettingsKeys.DefaultBenchmarkRefreshSeconds.ToString(CultureInfo.InvariantCulture);
     private string _workerPressureRebalanceWindowText = WorkerCapabilitySettingsKeys.DefaultPressureRebalanceWindow.ToString(CultureInfo.InvariantCulture);
     private string _workerPressureViolationRatioText = WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureViolationRatio);
@@ -266,6 +269,24 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     {
         get => _workerEndpointSummary;
         set => SetProperty(ref _workerEndpointSummary, value);
+    }
+
+    public string SystemLoadResourceSummary
+    {
+        get => _systemLoadResourceSummary;
+        set => SetProperty(ref _systemLoadResourceSummary, value);
+    }
+
+    public string SystemLoadPressureSummary
+    {
+        get => _systemLoadPressureSummary;
+        set => SetProperty(ref _systemLoadPressureSummary, value);
+    }
+
+    public string SystemLoadTickSummary
+    {
+        get => _systemLoadTickSummary;
+        set => SetProperty(ref _systemLoadTickSummary, value);
     }
 
     public string WorkerCapabilityRefreshSecondsText

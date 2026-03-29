@@ -151,6 +151,7 @@
               </Grid>
             </Border>
             <TextBlock Text="{Binding ServiceSummary}" Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding EpochInventorySummary}" Classes="muted" TextWrapping="Wrap" />
             <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
               <Border Classes="row">
                 <StackPanel Spacing="2">
@@ -170,6 +171,24 @@
                   <TextBlock Text="{Binding CurrentSpeciesCount}" Classes="row-title" />
                 </StackPanel>
               </Border>
+            </Grid>
+            <Grid ColumnDefinitions="Auto,*,*" ColumnSpacing="8">
+              <TextBlock Text="View epoch" Classes="muted" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="1"
+                        ItemsSource="{Binding EpochOptions}"
+                        SelectedItem="{Binding SelectedEpochOption}"
+                        Width="220">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:SpeciationEpochOptionItem">
+                    <TextBlock Text="{Binding Label}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <TextBlock Grid.Column="2"
+                         Text="Applies to memberships, trend charts, flow, split-proximity, and cladogram views."
+                         Classes="muted"
+                         VerticalAlignment="Center"
+                         TextWrapping="Wrap" />
             </Grid>
             <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
               <TextBlock Text="Delete epoch" Classes="muted" VerticalAlignment="Center" />
@@ -265,11 +284,8 @@
       <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
         <Border Classes="card" Grid.Column="0">
           <StackPanel Spacing="8">
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-              <TextBlock Text="Species Counts" Classes="card-title" />
-              <TextBox Grid.Column="1" Width="110" Watermark="Epoch (blank=current)" Text="{Binding EpochFilterText}" />
-            </Grid>
-            <TextBlock Text="Membership counts refresh automatically for the selected epoch window." Classes="muted" TextWrapping="Wrap" />
+            <TextBlock Text="Species Counts" Classes="card-title" />
+            <TextBlock Text="Membership counts refresh automatically for the selected epoch." Classes="muted" TextWrapping="Wrap" />
             <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Auto">
               <ItemsControl ItemsSource="{Binding SpeciesCounts}">
                 <ItemsControl.ItemTemplate>

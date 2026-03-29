@@ -156,6 +156,7 @@ public sealed partial class SpeciationPanelViewModel : ViewModelBase, IAsyncDisp
     private string _serviceSummary = "Service status not loaded.";
     private string _configStatus = "Settings-backed draft pending.";
     private string _historyStatus = "History not loaded.";
+    private string _epochInventorySummary = "Epochs: awaiting history.";
     private string _simStatus = "Simulator idle.";
     private string _simSessionId = "(none)";
     private string _simProgress = "No session.";
@@ -190,6 +191,8 @@ public sealed partial class SpeciationPanelViewModel : ViewModelBase, IAsyncDisp
     private long? _deleteEpochConfirmTarget;
     private string _deleteEpochText = string.Empty;
     private string _epochFilterText = string.Empty;
+    private SpeciationEpochOptionItem? _selectedEpochOption;
+    private bool _suppressEpochSelectionRefresh;
     private string _historyLimitText = DefaultHistoryLimit.ToString(CultureInfo.InvariantCulture);
     private string _chartWindowText = DefaultVisibleChartWindow.ToString(CultureInfo.InvariantCulture);
     private string _simParentAOverrideFilePath = string.Empty;
@@ -291,6 +294,7 @@ public sealed partial class SpeciationPanelViewModel : ViewModelBase, IAsyncDisp
         _connections.PropertyChanged += OnConnectionsPropertyChanged;
 
         SpeciesCounts = new ObservableCollection<SpeciationSpeciesCountItem>();
+        EpochOptions = new ObservableCollection<SpeciationEpochOptionItem>();
         EpochSummaries = new ObservableCollection<SpeciationEpochSummaryItem>();
         SimActiveBrains = new ObservableCollection<SpeciationSimulatorBrainOption>();
         SimSeedParents = new ObservableCollection<SpeciationSimulatorSeedParentItem>();
@@ -338,6 +342,7 @@ public sealed partial class SpeciationPanelViewModel : ViewModelBase, IAsyncDisp
     public ConnectionViewModel Connections => _connections;
 
     public ObservableCollection<SpeciationSpeciesCountItem> SpeciesCounts { get; }
+    public ObservableCollection<SpeciationEpochOptionItem> EpochOptions { get; }
     public ObservableCollection<SpeciationEpochSummaryItem> EpochSummaries { get; }
     public ObservableCollection<SpeciationSimulatorBrainOption> SimActiveBrains { get; }
     public ObservableCollection<SpeciationSimulatorSeedParentItem> SimSeedParents { get; }
@@ -398,6 +403,12 @@ public sealed partial class SpeciationPanelViewModel : ViewModelBase, IAsyncDisp
     {
         get => _historyStatus;
         set => SetProperty(ref _historyStatus, value);
+    }
+
+    public string EpochInventorySummary
+    {
+        get => _epochInventorySummary;
+        set => SetProperty(ref _epochInventorySummary, value);
     }
 
     public string SimulatorStatus
@@ -580,6 +591,29 @@ public sealed partial class SpeciationPanelViewModel : ViewModelBase, IAsyncDisp
     {
         get => _epochFilterText;
         set => SetProperty(ref _epochFilterText, value);
+    }
+
+    public SpeciationEpochOptionItem? SelectedEpochOption
+    {
+        get => _selectedEpochOption;
+        set
+        {
+            if (!SetProperty(ref _selectedEpochOption, value))
+            {
+                return;
+            }
+
+            if (_suppressEpochSelectionRefresh || value is null)
+            {
+                return;
+            }
+
+            _epochFilterText = value.EpochId > 0
+                ? value.EpochId.ToString(CultureInfo.InvariantCulture)
+                : string.Empty;
+            OnPropertyChanged(nameof(EpochFilterText));
+            RequestEpochSelectionRefresh();
+        }
     }
 
     public string DeleteEpochText

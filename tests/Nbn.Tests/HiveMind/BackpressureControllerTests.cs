@@ -106,6 +106,40 @@ public sealed class BackpressureControllerTests
         Assert.False(recovered.RequestPause);
     }
 
+    [Fact]
+    public void Evaluate_TracksRecentTickHealth_AndAutomaticReductionState()
+    {
+        var controller = new BackpressureController(CreateOptions(
+            targetTickHz: 20f,
+            minTickHz: 5f,
+            backpressureDecay: 0.5f,
+            backpressureRecovery: 2.0f,
+            lateBackpressureThreshold: 2,
+            timeoutRescheduleThreshold: 10,
+            timeoutPauseThreshold: 20));
+
+        controller.Evaluate(CreateOutcome(
+            tickId: 1,
+            lateComputeCount: 1));
+        controller.Evaluate(CreateOutcome(
+            tickId: 2,
+            lateDeliverCount: 1));
+        controller.Evaluate(CreateOutcome(
+            tickId: 3,
+            computeTimedOut: true));
+
+        Assert.Equal(20f, controller.ConfiguredTargetTickHz, 3);
+        Assert.Equal(3, controller.RecentTickSampleCount);
+        Assert.Equal(1, controller.RecentTimeoutTickCount);
+        Assert.Equal(2, controller.RecentLateTickCount);
+        Assert.True(controller.AutomaticBackpressureActive);
+
+        controller.Evaluate(CreateOutcome(tickId: 4));
+        controller.Evaluate(CreateOutcome(tickId: 5));
+
+        Assert.False(controller.AutomaticBackpressureActive);
+    }
+
     private static TickOutcome CreateOutcome(
         ulong tickId,
         bool computeTimedOut = false,

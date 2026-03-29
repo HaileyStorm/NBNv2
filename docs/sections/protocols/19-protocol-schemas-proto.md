@@ -6,6 +6,7 @@ The following `.proto` files define the canonical NBN wire schema. The source of
 
 - `subscriber_actor` fields in debug, IO output, and visualization subscriptions let callers supply a stable subscription identity instead of relying on the transient request sender PID.
 - `SetTickRateOverride` applies an operator override on top of the baseline target tick rate until explicitly cleared; `HiveMindStatus.has_tick_rate_override` and `tick_rate_override_hz` report the effective override state.
+- `HiveMindStatus` also carries the configured baseline tick target, automatic-backpressure-reduction flag, recent timeout/lateness window counts, and worker-pressure summary counts so operator clients can surface current runtime load from one status request.
 - `BrainInfo`, IO `RegisterBrain`, and `BrainIoInfo` expose coordinator mode, output-vector source, coordinator PID labels, and IO-gateway ownership booleans so tools can distinguish gateway-owned coordinators from worker-hosted coordinators.
 - Placement lifecycle, worker inventory, peer-latency, and capability-refresh messages in `nbn_control.proto` are the canonical operator-facing control-plane telemetry for placement orchestration and worker readiness.
 - Drift-check process: when a `.proto` contract changes, update the mirrored appendix content from the matching file under `src/Nbn.Shared/Protos`, re-render `docs/NBNv2.md`, run `dotnet test tests/Nbn.Tests/Nbn.Tests.csproj -c Release --disable-build-servers --filter FullyQualifiedName~Nbn.Tests.Proto.ProtoCompatibilityTests`, and run the docs freshness check (`bash tools/docs/render-nbnv2-docs.sh --check` on Linux/macOS or `powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check` on Windows).
@@ -889,6 +890,14 @@ message HiveMindStatus {
   uint32 registered_shards = 8;
   bool has_tick_rate_override = 9;
   float tick_rate_override_hz = 10;
+  float configured_target_tick_hz = 11;
+  bool automatic_backpressure_active = 12;
+  uint32 recent_tick_sample_count = 13;
+  uint32 recent_timeout_tick_count = 14;
+  uint32 recent_late_tick_count = 15;
+  uint32 worker_pressure_window = 16;
+  uint32 current_pressure_worker_count = 17;
+  uint32 recent_pressure_worker_count = 18;
 }
 
 message GetBrainRouting {

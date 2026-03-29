@@ -54,11 +54,13 @@ public sealed partial class OrchestratorPanelViewModel
             var brainsResponseTask = _client.ListBrainsAsync();
             var workerInventoryResponseTask = _client.ListWorkerInventorySnapshotAsync();
             var settingsResponseTask = _client.ListSettingsAsync();
+            var hiveMindStatusTask = _client.GetHiveMindStatusAsync();
 
             var nodesResponse = await nodesResponseTask.ConfigureAwait(false);
             var brainsResponse = await brainsResponseTask.ConfigureAwait(false);
             var workerInventoryResponse = await workerInventoryResponseTask.ConfigureAwait(false);
             var settingsResponse = await settingsResponseTask.ConfigureAwait(false);
+            var hiveMindStatus = await hiveMindStatusTask.ConfigureAwait(false);
 
             var nodes = nodesResponse?.Nodes?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.NodeStatus>();
             var brains = brainsResponse?.Brains?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainStatus>();
@@ -83,6 +85,7 @@ public sealed partial class OrchestratorPanelViewModel
                 workerInventory,
                 actorRowsResult.WorkerBrainHints,
                 workerNowMs);
+            var systemLoadState = BuildSystemLoadState(workerInventory, hiveMindStatus, workerNowMs);
             var settings = settingsResponse?.Settings?
                 .Select(entry => new SettingItem(
                     entry.Key ?? string.Empty,
@@ -141,6 +144,9 @@ public sealed partial class OrchestratorPanelViewModel
                 }
 
                 WorkerEndpointSummary = workerEndpointState.SummaryText;
+                SystemLoadResourceSummary = systemLoadState.ResourceSummary;
+                SystemLoadPressureSummary = systemLoadState.PressureSummary;
+                SystemLoadTickSummary = systemLoadState.TickSummary;
                 Trim(Nodes);
                 Trim(WorkerEndpoints);
                 Trim(Actors);
@@ -440,6 +446,9 @@ public sealed partial class OrchestratorPanelViewModel
             WorkerEndpoints.Clear();
             Actors.Clear();
             WorkerEndpointSummary = "No active workers.";
+            SystemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
+            SystemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
+            SystemLoadTickSummary = "Tick health: awaiting HiveMind status.";
 
             Connections.HiveMindDiscoverable = false;
             Connections.HiveMindStatus = "Offline";

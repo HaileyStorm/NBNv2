@@ -637,6 +637,111 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_BuildsSystemLoadSummary_And_CountsWorkerBrains()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerId = Guid.NewGuid();
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        var brainC = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = workerId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)nowMs,
+                Workers =
+                {
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = workerId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)nowMs,
+                        HasCapabilities = true,
+                        CapabilityTimeMs = (ulong)nowMs,
+                        Capabilities = new NodeCapabilities
+                        {
+                            CpuCores = 16,
+                            CpuLimitPercent = 75,
+                            ProcessCpuLoadPercent = 37.5f,
+                            RamTotalBytes = 32UL * 1024 * 1024 * 1024,
+                            RamLimitPercent = 80,
+                            ProcessRamUsedBytes = 8UL * 1024 * 1024 * 1024,
+                            StorageTotalBytes = 256UL * 1024 * 1024 * 1024,
+                            StorageFreeBytes = 192UL * 1024 * 1024 * 1024,
+                            StorageLimitPercent = 90
+                        }
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse
+            {
+                Controllers =
+                {
+                    new BrainControllerStatus { BrainId = brainA.ToProtoUuid(), NodeId = workerId.ToProtoUuid(), ActorName = "controller-a", LastSeenMs = (ulong)nowMs, IsAlive = true },
+                    new BrainControllerStatus { BrainId = brainB.ToProtoUuid(), NodeId = workerId.ToProtoUuid(), ActorName = "controller-b", LastSeenMs = (ulong)nowMs, IsAlive = true },
+                    new BrainControllerStatus { BrainId = brainC.ToProtoUuid(), NodeId = workerId.ToProtoUuid(), ActorName = "controller-c", LastSeenMs = (ulong)nowMs, IsAlive = true }
+                },
+                Brains =
+                {
+                    new BrainStatus { BrainId = brainA.ToProtoUuid(), State = "Running", SpawnedMs = (ulong)nowMs },
+                    new BrainStatus { BrainId = brainB.ToProtoUuid(), State = "Running", SpawnedMs = (ulong)nowMs },
+                    new BrainStatus { BrainId = brainC.ToProtoUuid(), State = "Running", SpawnedMs = (ulong)nowMs }
+                }
+            },
+            SettingsResponse = new SettingListResponse(),
+            HiveMindStatusResponse = new HiveMindStatus
+            {
+                TargetTickHz = 15f,
+                ConfiguredTargetTickHz = 30f,
+                AutomaticBackpressureActive = true,
+                RecentTickSampleCount = 32,
+                RecentTimeoutTickCount = 4,
+                RecentLateTickCount = 2,
+                WorkerPressureWindow = 6,
+                CurrentPressureWorkerCount = 1,
+                RecentPressureWorkerCount = 1
+            }
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        var workerEndpoint = Assert.Single(vm.WorkerEndpoints);
+        Assert.Equal(3, workerEndpoint.BrainCount);
+        Assert.Contains("Brains (3):", workerEndpoint.BrainHintSummary, StringComparison.Ordinal);
+        Assert.Contains("CPU 6/12 cores", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
+        Assert.Contains("RAM 8 GiB/25.6 GiB", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
+        Assert.Contains("storage 64 GiB/230.4 GiB", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
+        Assert.Contains("0/1 worker over quota now", vm.SystemLoadPressureSummary, StringComparison.Ordinal);
+        Assert.Contains("last 6 snapshots", vm.SystemLoadPressureSummary, StringComparison.Ordinal);
+        Assert.Contains("12.5% recent ticks timed out", vm.SystemLoadTickSummary, StringComparison.Ordinal);
+        Assert.Contains("6.3% had late arrivals", vm.SystemLoadTickSummary, StringComparison.Ordinal);
+        Assert.Contains("auto-reduced to 15 Hz from 30 Hz", vm.SystemLoadTickSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_MapsServiceEndpointSettings_ToConnectionInputs()
     {
         var connections = new ConnectionViewModel();
@@ -2577,6 +2682,7 @@ public class OrchestratorPanelViewModelTests
         public SettingListResponse? RemoteSettingsResponse { get; set; }
         public Func<string, int, string, SettingListResponse?>? RemoteSettingsFactory { get; set; }
         public TcpEndpointProbeResult ProbeResult { get; set; } = new(false, "TCP connect timed out.");
+        public HiveMindStatus? HiveMindStatusResponse { get; set; }
         public List<(string Key, string Value)> SettingCalls { get; } = new();
         public List<(string Host, int Port, string ActorName)> RemoteSettingsCalls { get; } = new();
         public SpawnBrainAck? SpawnBrainAck { get; set; }
@@ -2621,6 +2727,9 @@ public class OrchestratorPanelViewModelTests
             RemoteSettingsCalls.Add((host, port, actorName));
             return Task.FromResult(RemoteSettingsFactory?.Invoke(host, port, actorName) ?? RemoteSettingsResponse);
         }
+
+        public override Task<HiveMindStatus?> GetHiveMindStatusAsync()
+            => Task.FromResult(HiveMindStatusResponse);
 
         public override Task<TcpEndpointProbeResult> ProbeTcpEndpointAsync(string host, int port, TimeSpan? timeout = null)
             => Task.FromResult(ProbeResult);

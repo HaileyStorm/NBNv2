@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
@@ -130,18 +131,20 @@ public sealed partial class OrchestratorPanelViewModel
                     break;
             }
 
+            var brainHints = DescribeWorkerBrainHints(workerBrainHints, entry.NodeId);
             var capabilityChips = DescribeWorkerCapabilityChips(entry);
             rows.Add((WorkerStatusRank(status), entry.LastSeenMs, new WorkerEndpointItem(
                 entry.NodeId,
                 entry.LogicalName,
                 entry.Address,
                 entry.RootActorName,
-                FormatWorkerBrainHints(workerBrainHints, entry.NodeId),
+                brainHints.Preview,
                 FormatUpdated(entry.LastSeenMs),
                 status,
                 entry.PlacementDetail,
                 capabilityChips.CpuCapability,
-                capabilityChips.GpuCapability)));
+                capabilityChips.GpuCapability,
+                brainHints.Count)));
         }
 
         foreach (var staleNodeId in staleNodeIds)
@@ -158,6 +161,84 @@ public sealed partial class OrchestratorPanelViewModel
 
         var summary = BuildWorkerEndpointSummary(activeCount, limitedCount, degradedCount, failedCount);
         return new WorkerEndpointState(orderedRows, activeCount, limitedCount, degradedCount, failedCount, summary);
+    }
+
+    private SystemLoadState BuildSystemLoadState(
+        IReadOnlyList<Nbn.Proto.Settings.WorkerReadinessCapability> inventory,
+        Nbn.Proto.Control.HiveMindStatus? hiveMindStatus,
+        long nowMs)
+    {
+        var tolerancePercent = TryParseWorkerPressureTolerancePercent(_workerPressureTolerancePercentServerValue);
+        var workers = inventory
+            .Where(worker =>
+                worker.NodeId is not null
+                && worker.NodeId.TryToGuid(out _)
+                && IsWorkerHostCandidate(worker.LogicalName, worker.RootActorName)
+                && worker.IsAlive
+                && worker.IsReady
+                && IsFresh(worker.LastSeenMs, nowMs)
+                && worker.HasCapabilities
+                && worker.Capabilities is not null)
+            .ToArray();
+
+        if (workers.Length == 0)
+        {
+            return new SystemLoadState(
+                "Resource usage: awaiting worker telemetry.",
+                BuildSystemPressureSummary(0, 0, hiveMindStatus),
+                BuildTickHealthSummary(hiveMindStatus));
+        }
+
+        double cpuUsedCores = 0d;
+        double cpuQuotaCores = 0d;
+        ulong ramUsedBytes = 0UL;
+        ulong ramQuotaBytes = 0UL;
+        ulong storageUsedBytes = 0UL;
+        ulong storageQuotaBytes = 0UL;
+        ulong vramUsedBytes = 0UL;
+        ulong vramQuotaBytes = 0UL;
+        var gpuWorkerCount = 0;
+        var currentPressureWorkerCount = 0;
+
+        foreach (var worker in workers)
+        {
+            var caps = worker.Capabilities!;
+            cpuUsedCores += Math.Max(0d, caps.CpuCores * (caps.ProcessCpuLoadPercent / 100d));
+            cpuQuotaCores += WorkerCapabilityMath.EffectiveCpuCores(caps.CpuCores, caps.CpuLimitPercent);
+
+            ramUsedBytes += ToUnsigned(caps.ProcessRamUsedBytes);
+            ramQuotaBytes += WorkerCapabilityMath.LimitBytes(ToUnsigned(caps.RamTotalBytes), caps.RamLimitPercent);
+
+            storageUsedBytes += CalculateUsedBytes(caps.StorageFreeBytes, caps.StorageTotalBytes);
+            storageQuotaBytes += WorkerCapabilityMath.LimitBytes(ToUnsigned(caps.StorageTotalBytes), caps.StorageLimitPercent);
+
+            if (caps.HasGpu && caps.VramTotalBytes > 0)
+            {
+                gpuWorkerCount++;
+                vramUsedBytes += CalculateUsedBytes(caps.VramFreeBytes, caps.VramTotalBytes);
+                vramQuotaBytes += WorkerCapabilityMath.LimitBytes(ToUnsigned(caps.VramTotalBytes), caps.GpuVramLimitPercent);
+            }
+
+            if (IsWorkerCurrentlyOverLimit(caps, tolerancePercent))
+            {
+                currentPressureWorkerCount++;
+            }
+        }
+
+        return new SystemLoadState(
+            BuildSystemResourceSummary(
+                workers.Length,
+                gpuWorkerCount,
+                cpuUsedCores,
+                cpuQuotaCores,
+                ramUsedBytes,
+                ramQuotaBytes,
+                storageUsedBytes,
+                storageQuotaBytes,
+                vramUsedBytes,
+                vramQuotaBytes),
+            BuildSystemPressureSummary(currentPressureWorkerCount, workers.Length, hiveMindStatus),
+            BuildTickHealthSummary(hiveMindStatus));
     }
 
     private static long ResolveWorkerReferenceTimeMs(
@@ -477,22 +558,23 @@ public sealed partial class OrchestratorPanelViewModel
         return $"{count} {label} {suffix}";
     }
 
-    private static string FormatWorkerBrainHints(
+    private static WorkerBrainHintSummary DescribeWorkerBrainHints(
         IReadOnlyDictionary<Guid, HashSet<Guid>> workerBrainHints,
         Guid nodeId)
     {
         if (!workerBrainHints.TryGetValue(nodeId, out var brainIds) || brainIds.Count == 0)
         {
-            return "none";
+            return new WorkerBrainHintSummary(0, "none");
         }
 
         var abbreviated = brainIds
             .Select(AbbreviateBrainId)
             .OrderBy(value => value, StringComparer.Ordinal)
             .ToArray();
-        return abbreviated.Length <= MaxWorkerBrainHints
+        var preview = abbreviated.Length <= MaxWorkerBrainHints
             ? string.Join(", ", abbreviated)
             : $"{string.Join(", ", abbreviated.Take(MaxWorkerBrainHints))}, ...";
+        return new WorkerBrainHintSummary(brainIds.Count, preview);
     }
 
     private static string AbbreviateBrainId(Guid brainId)
@@ -514,6 +596,15 @@ public sealed partial class OrchestratorPanelViewModel
         int DegradedCount,
         int FailedCount,
         string SummaryText);
+
+    private sealed record WorkerBrainHintSummary(
+        int Count,
+        string Preview);
+
+    private sealed record SystemLoadState(
+        string ResourceSummary,
+        string PressureSummary,
+        string TickSummary);
 
     private sealed class WorkerEndpointSnapshot
     {
@@ -600,4 +691,147 @@ public sealed partial class OrchestratorPanelViewModel
 
         return $"{value:0.#}";
     }
+
+    private static float TryParseWorkerPressureTolerancePercent(string? value)
+    {
+        return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            ? Math.Max(0f, parsed)
+            : 0f;
+    }
+
+    private static bool IsWorkerCurrentlyOverLimit(Nbn.Proto.Settings.NodeCapabilities caps, float tolerancePercent)
+    {
+        return WorkerCapabilityMath.IsCpuOverLimit(caps.ProcessCpuLoadPercent, caps.CpuLimitPercent, tolerancePercent)
+               || WorkerCapabilityMath.IsRamOverLimit(
+                   ToUnsigned(caps.ProcessRamUsedBytes),
+                   ToUnsigned(caps.RamTotalBytes),
+                   caps.RamLimitPercent,
+                   tolerancePercent)
+               || WorkerCapabilityMath.IsStorageOverLimit(
+                   ToUnsigned(caps.StorageFreeBytes),
+                   ToUnsigned(caps.StorageTotalBytes),
+                   caps.StorageLimitPercent,
+                   tolerancePercent)
+               || (caps.HasGpu
+                   && WorkerCapabilityMath.IsVramOverLimit(
+                       ToUnsigned(caps.VramFreeBytes),
+                       ToUnsigned(caps.VramTotalBytes),
+                       caps.GpuVramLimitPercent,
+                       tolerancePercent));
+    }
+
+    private static string BuildSystemResourceSummary(
+        int workerCount,
+        int gpuWorkerCount,
+        double cpuUsedCores,
+        double cpuQuotaCores,
+        ulong ramUsedBytes,
+        ulong ramQuotaBytes,
+        ulong storageUsedBytes,
+        ulong storageQuotaBytes,
+        ulong vramUsedBytes,
+        ulong vramQuotaBytes)
+    {
+        var summary =
+            $"Resource usage: CPU {FormatCoreCount(cpuUsedCores)}/{FormatCoreCount(cpuQuotaCores)} cores, " +
+            $"RAM {FormatBytes(ramUsedBytes)}/{FormatBytes(ramQuotaBytes)}, " +
+            $"storage {FormatBytes(storageUsedBytes)}/{FormatBytes(storageQuotaBytes)} across {workerCount} worker{(workerCount == 1 ? string.Empty : "s")}.";
+
+        if (gpuWorkerCount > 0 && vramQuotaBytes > 0)
+        {
+            summary += $" VRAM {FormatBytes(vramUsedBytes)}/{FormatBytes(vramQuotaBytes)} across {gpuWorkerCount} GPU worker{(gpuWorkerCount == 1 ? string.Empty : "s")}.";
+        }
+
+        return summary;
+    }
+
+    private static string BuildSystemPressureSummary(
+        int currentPressureWorkerCount,
+        int workerCount,
+        Nbn.Proto.Control.HiveMindStatus? hiveMindStatus)
+    {
+        var currentPart = workerCount <= 0
+            ? "Pressure: no ready workers reported load telemetry."
+            : $"Pressure: {currentPressureWorkerCount}/{workerCount} worker{(workerCount == 1 ? string.Empty : "s")} over quota now.";
+        if (hiveMindStatus is null)
+        {
+            return $"{currentPart} Recent pressure requires a HiveMind connection.";
+        }
+
+        var window = Math.Max(1u, hiveMindStatus.WorkerPressureWindow);
+        return
+            $"{currentPart} {hiveMindStatus.RecentPressureWorkerCount} worker{(hiveMindStatus.RecentPressureWorkerCount == 1 ? string.Empty : "s")} reported pressure in the last {window} snapshot{(window == 1 ? string.Empty : "s")}.";
+    }
+
+    private static string BuildTickHealthSummary(Nbn.Proto.Control.HiveMindStatus? hiveMindStatus)
+    {
+        if (hiveMindStatus is null)
+        {
+            return "Tick health: connect HiveMind to view recent timeout and cadence pressure.";
+        }
+
+        var sampleCount = Math.Max(0u, hiveMindStatus.RecentTickSampleCount);
+        var timedOutPct = sampleCount == 0
+            ? 0d
+            : (100d * hiveMindStatus.RecentTimeoutTickCount) / sampleCount;
+        var latePct = sampleCount == 0
+            ? 0d
+            : (100d * hiveMindStatus.RecentLateTickCount) / sampleCount;
+        var requestedTargetHz = hiveMindStatus.HasTickRateOverride && hiveMindStatus.TickRateOverrideHz > 0f
+            ? hiveMindStatus.TickRateOverrideHz
+            : hiveMindStatus.ConfiguredTargetTickHz;
+        var cadencePart = hiveMindStatus.AutomaticBackpressureActive && requestedTargetHz > 0f
+            ? $"Cadence auto-reduced to {FormatHz(hiveMindStatus.TargetTickHz)} from {FormatHz(requestedTargetHz)}."
+            : hiveMindStatus.TargetTickHz > 0f
+                ? $"Cadence target {FormatHz(hiveMindStatus.TargetTickHz)}."
+                : "Cadence target unavailable.";
+        var tickPart = sampleCount == 0
+            ? "Tick health: waiting for completed ticks."
+            : $"Tick health: {timedOutPct:0.#}% recent ticks timed out and {latePct:0.#}% had late arrivals ({sampleCount} sample{(sampleCount == 1 ? string.Empty : "s")}).";
+        var reschedulePart = hiveMindStatus.RescheduleInProgress ? " Reschedule in progress." : string.Empty;
+        return $"{tickPart} {cadencePart}{reschedulePart}";
+    }
+
+    private static string FormatHz(float value)
+        => !float.IsFinite(value) || value <= 0f
+            ? "n/a"
+            : $"{value:0.###} Hz";
+
+    private static string FormatCoreCount(double value)
+    {
+        if (!double.IsFinite(value) || value <= 0d)
+        {
+            return "0";
+        }
+
+        return value >= 10d ? value.ToString("0.#", CultureInfo.InvariantCulture) : value.ToString("0.##", CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatBytes(ulong bytes)
+    {
+        if (bytes == 0UL)
+        {
+            return "0 B";
+        }
+
+        var units = new[] { "B", "KiB", "MiB", "GiB", "TiB", "PiB" };
+        var value = (double)bytes;
+        var unitIndex = 0;
+        while (value >= 1024d && unitIndex < units.Length - 1)
+        {
+            value /= 1024d;
+            unitIndex++;
+        }
+
+        var format = value >= 10d ? "0.#" : "0.##";
+        return $"{value.ToString(format, CultureInfo.InvariantCulture)} {units[unitIndex]}";
+    }
+
+    private static ulong CalculateUsedBytes(ulong freeBytes, ulong totalBytes)
+        => freeBytes >= totalBytes ? 0UL : totalBytes - freeBytes;
+
+    private static ulong ToUnsigned(ulong value) => value;
+
+    private static ulong ToUnsigned(long value)
+        => value <= 0 ? 0UL : (ulong)value;
 }

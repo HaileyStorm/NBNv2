@@ -56,6 +56,7 @@ Define tick pacing primarily in Hz and derive periods:
 * `target_tick_period_ms = 1000 / target_tick_hz`
 
 The tick engine adjusts `target_tick_hz` downward (slower) under backpressure, never below `min_tick_hz`.
+`HiveMindStatus` reports both the configured/control target cadence and the current effective target, flags when automatic backpressure reduction is active, and exposes recent timeout/lateness window counts so operator surfaces can show current tick health without parsing logs.
 
 ### 6.5 Backpressure policy
 
@@ -83,6 +84,7 @@ Current implementation detail:
 * each backpressure pause decision pauses the first eligible Brain selected by the configured ordering
 * repeated timeout streaks continue applying the same ordering and can pause additional Brains over time
 * `lowest configured priority value` uses `pause_priority` from `SpawnBrain` or direct `RegisterBrain` control messages (default `0`)
+* HiveMind status also exposes current over-quota worker count plus recent worker-pressure counts across the configured pressure-rebalance window so operator tooling can distinguish immediate worker saturation from recent-but-recovered pressure.
 
 ### 6.6 Rescheduling rate limits and tick pausing
 

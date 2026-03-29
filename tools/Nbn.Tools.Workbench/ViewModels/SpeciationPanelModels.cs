@@ -25,6 +25,14 @@ public sealed record SpeciationEpochSummaryItem(
     string LastAssigned);
 
 /// <summary>
+/// Represents a selectable epoch in the speciation pane.
+/// </summary>
+public sealed record SpeciationEpochOptionItem(
+    long EpochId,
+    string Label,
+    bool IsActive);
+
+/// <summary>
 /// Represents a rendered chart series for a species.
 /// </summary>
 public sealed record SpeciationLineChartSeriesItem(

@@ -226,6 +226,21 @@ public sealed partial class SpeciationPanelViewModel
         _liveChartsPollCts = null;
     }
 
+    private void RequestEpochSelectionRefresh()
+    {
+        if (!Connections.SettingsConnected || !Connections.SpeciationDiscoverable)
+        {
+            return;
+        }
+
+        if (Interlocked.Exchange(ref _autoRefreshInFlight, 1) != 0)
+        {
+            return;
+        }
+
+        _ = RefreshPaneStateFromConnectionsAsync();
+    }
+
     private async Task RefreshPaneDataAsync(bool includeMemberships)
     {
         await RefreshStatusAsync().ConfigureAwait(false);
@@ -545,10 +560,10 @@ public sealed partial class SpeciationPanelViewModel
         ChartWindowText = chartWindow.ToString(CultureInfo.InvariantCulture);
         var chartHistoryLimit = chartWindow == 0u ? DefaultChartHistoryLimit : chartWindow;
         var historyPageSize = Math.Max(historyLimit, Math.Max(chartHistoryLimit, DefaultCladogramHistoryLimit));
-        var epochFilter = ResolveEpochFilter();
+        var requestedEpochId = ResolveEpochFilter();
 
         var chartResponse = await LoadCompleteSpeciationHistoryAsync(
-                epochFilter,
+                epochId: null,
                 brainId: null,
                 historyPageSize)
             .ConfigureAwait(false);
@@ -560,10 +575,18 @@ public sealed partial class SpeciationPanelViewModel
             return;
         }
 
-        var chartHistory = TrimHistoryToChartWindow(chartResponse.History, chartWindow);
+        var epochOptions = BuildEpochOptions(chartResponse.History, CurrentEpochId);
+        var effectiveEpochId = ResolveEffectiveEpochId(epochOptions, requestedEpochId, CurrentEpochId);
+        var filteredHistory = effectiveEpochId.HasValue
+            ? chartResponse.History
+                .Where(entry => (long)entry.EpochId == effectiveEpochId.Value)
+                .ToArray()
+            : chartResponse.History.ToArray();
+        var chartHistory = TrimHistoryToChartWindow(filteredHistory, chartWindow);
         var populationFrame = BuildEpochPopulationFrame(chartHistory);
         var epochSummaries = BuildEpochSummaries(chartHistory);
         var speciesColors = BuildSpeciesColorMap(chartResponse.History, _speciesColorOverrides);
+        var epochInventorySummary = BuildEpochInventorySummary(epochOptions, CurrentEpochId, effectiveEpochId);
         var flowChartSource = new FlowChartSourceFrame(populationFrame.EpochRows, populationFrame.SpeciesOrder, speciesColors);
         var speciationChartSource = new SpeciationChartSourceFrame(
             ChartHistory: chartHistory,
@@ -592,12 +615,14 @@ public sealed partial class SpeciationPanelViewModel
 
         _dispatcher.Post(() =>
         {
+            ApplyEpochOptions(epochOptions, effectiveEpochId);
             EpochSummaries.Clear();
             foreach (var row in epochSummaries)
             {
                 EpochSummaries.Add(row);
             }
 
+            EpochInventorySummary = epochInventorySummary;
             _lastSpeciationChartSource = speciationChartSource;
             _lastFlowChartSource = flowChartSource;
             ApplyPopulationChartSnapshot(populationSnapshot);
@@ -951,12 +976,110 @@ public sealed partial class SpeciationPanelViewModel
 
     private long? ResolveEpochFilter()
     {
+        if (SelectedEpochOption is not null && SelectedEpochOption.EpochId > 0)
+        {
+            return SelectedEpochOption.EpochId;
+        }
+
         if (string.IsNullOrWhiteSpace(EpochFilterText))
         {
-            return CurrentEpochId > 0 ? CurrentEpochId : null;
+            return null;
         }
 
         return long.TryParse(EpochFilterText.Trim(), out var parsed) && parsed > 0 ? parsed : null;
+    }
+
+    private void ApplyEpochOptions(IReadOnlyList<SpeciationEpochOptionItem> options, long? effectiveEpochId)
+    {
+        _suppressEpochSelectionRefresh = true;
+        try
+        {
+            EpochOptions.Clear();
+            foreach (var option in options)
+            {
+                EpochOptions.Add(option);
+            }
+
+            SelectedEpochOption = effectiveEpochId.HasValue
+                ? EpochOptions.FirstOrDefault(option => option.EpochId == effectiveEpochId.Value)
+                : EpochOptions.FirstOrDefault(option => option.EpochId <= 0);
+            _epochFilterText = SelectedEpochOption is not null && SelectedEpochOption.EpochId > 0
+                ? SelectedEpochOption.EpochId.ToString(CultureInfo.InvariantCulture)
+                : string.Empty;
+            OnPropertyChanged(nameof(EpochFilterText));
+        }
+        finally
+        {
+            _suppressEpochSelectionRefresh = false;
+        }
+    }
+
+    private static IReadOnlyList<SpeciationEpochOptionItem> BuildEpochOptions(
+        IReadOnlyList<SpeciationMembershipRecord> history,
+        long currentEpochId)
+    {
+        var epochIds = history
+            .Select(entry => (long)entry.EpochId)
+            .Where(epochId => epochId > 0)
+            .Distinct()
+            .OrderByDescending(epochId => epochId)
+            .ToList();
+        if (currentEpochId > 0 && !epochIds.Contains(currentEpochId))
+        {
+            epochIds.Insert(0, currentEpochId);
+        }
+
+        var ordered = new List<SpeciationEpochOptionItem>(epochIds.Count + 2)
+        {
+            new(0, "All epochs", IsActive: false)
+        };
+        if (currentEpochId > 0)
+        {
+            ordered.Add(new SpeciationEpochOptionItem(currentEpochId, $"Epoch {currentEpochId} (active)", IsActive: true));
+        }
+
+        foreach (var epochId in epochIds.Where(epochId => epochId != currentEpochId))
+        {
+            ordered.Add(new SpeciationEpochOptionItem(epochId, $"Epoch {epochId}", IsActive: false));
+        }
+
+        return ordered;
+    }
+
+    private static long? ResolveEffectiveEpochId(
+        IReadOnlyList<SpeciationEpochOptionItem> options,
+        long? requestedEpochId,
+        long currentEpochId)
+    {
+        if (requestedEpochId.HasValue
+            && options.Any(option => option.EpochId == requestedEpochId.Value))
+        {
+            return requestedEpochId.Value;
+        }
+
+        return null;
+    }
+
+    private static string BuildEpochInventorySummary(
+        IReadOnlyList<SpeciationEpochOptionItem> options,
+        long currentEpochId,
+        long? viewingEpochId)
+    {
+        var totalEpochs = options.Count(option => option.EpochId > 0);
+        if (totalEpochs == 0)
+        {
+            return "Epochs: none reported yet.";
+        }
+
+        var activeLabel = currentEpochId > 0
+            ? currentEpochId.ToString(CultureInfo.InvariantCulture)
+            : "(unknown)";
+        var viewingLabel = viewingEpochId.HasValue && viewingEpochId.Value > 0
+            ? viewingEpochId.Value == currentEpochId && currentEpochId > 0
+                ? $"{viewingEpochId.Value} (active)"
+                : viewingEpochId.Value.ToString(CultureInfo.InvariantCulture)
+            : "all loaded epochs";
+        return $"Epochs: {totalEpochs} total. Active: {activeLabel}. Viewing: {viewingLabel}.";
     }
 
     private async Task PersistSpeciationSettingsAsync()

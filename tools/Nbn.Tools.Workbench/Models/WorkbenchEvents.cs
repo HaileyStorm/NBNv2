@@ -93,7 +93,8 @@ public sealed record WorkerEndpointItem(
     string Status,
     string PlacementDetail = "",
     string CpuCapability = "",
-    string GpuCapability = "")
+    string GpuCapability = "",
+    int BrainCount = 0)
 {
     private string StatusKey => (Status ?? string.Empty).Trim().ToLowerInvariant();
     public bool IsActive => StatusKey is "active" or "online";
@@ -129,6 +130,7 @@ public sealed record WorkerEndpointItem(
     public string GpuChipBackground => "#E8EEFF";
     public string GpuChipBorder => "#4D7FD6";
     public string GpuChipForeground => "#183B7A";
+    public string BrainHintSummary => $"Brains ({Math.Max(0, BrainCount)}): {BrainHints}";
 }
 
 public sealed record EndpointStatusItem(

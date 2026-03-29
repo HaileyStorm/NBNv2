@@ -162,6 +162,22 @@
           </StackPanel>
         </Border>
 
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="System Load" Classes="card-title" />
+            <TextBlock Text="Worker resource usage comes from SettingsMonitor capability snapshots; recent pressure and tick-health summaries come from HiveMind status." Classes="muted" TextWrapping="Wrap" />
+            <Border Classes="row">
+              <TextBlock Text="{Binding SystemLoadResourceSummary}" Classes="muted" TextWrapping="Wrap" />
+            </Border>
+            <Border Classes="row">
+              <TextBlock Text="{Binding SystemLoadPressureSummary}" Classes="muted" TextWrapping="Wrap" />
+            </Border>
+            <Border Classes="row">
+              <TextBlock Text="{Binding SystemLoadTickSummary}" Classes="muted" TextWrapping="Wrap" />
+            </Border>
+          </StackPanel>
+        </Border>
+
         <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
           <Border Classes="card" Grid.Column="0">
             <StackPanel Spacing="8">
@@ -200,7 +216,7 @@
                             <TextBlock Text="{Binding Address}" Classes="muted" />
                             <TextBlock Text="{Binding RootActor}" Classes="muted" />
                             <TextBlock Text="{Binding PlacementDetail}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasPlacementDetail}" />
-                            <TextBlock Text="{Binding BrainHints, StringFormat='Brains: {0}'}" Classes="muted" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding BrainHintSummary}" Classes="muted" TextWrapping="Wrap" />
                           </StackPanel>
                           <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
                         </Grid>

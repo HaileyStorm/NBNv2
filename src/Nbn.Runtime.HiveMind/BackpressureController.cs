@@ -22,12 +22,17 @@ public sealed record BackpressureDecision(
 
 public sealed class BackpressureController
 {
+    private const int RecentTickWindow = 64;
+
     private readonly HiveMindOptions _options;
     private readonly float _defaultTargetTickHz;
     private readonly float _defaultMinTickHz;
+    private readonly Queue<RecentTickHealth> _recentTicks = new();
     private float _targetTickHz;
     private int _timeoutStreak;
     private int _lateStreak;
+    private int _recentTimeoutTickCount;
+    private int _recentLateTickCount;
     private float? _tickRateOverrideHz;
 
     public BackpressureController(HiveMindOptions options)
@@ -39,9 +44,14 @@ public sealed class BackpressureController
     }
 
     public float TargetTickHz => _targetTickHz;
+    public float ConfiguredTargetTickHz => _defaultTargetTickHz;
     public int TimeoutStreak => _timeoutStreak;
     public bool HasTickRateOverride => _tickRateOverrideHz.HasValue;
     public float TickRateOverrideHz => _tickRateOverrideHz ?? 0f;
+    public int RecentTickSampleCount => _recentTicks.Count;
+    public int RecentTimeoutTickCount => _recentTimeoutTickCount;
+    public int RecentLateTickCount => _recentLateTickCount;
+    public bool AutomaticBackpressureActive => _targetTickHz + 0.001f < ControlTargetTickHz();
 
     public bool TrySetTickRateOverride(float? targetTickHz, out string message)
     {
@@ -76,6 +86,13 @@ public sealed class BackpressureController
         var maxTickHz = CurrentMaxTickHz();
         var timedOut = outcome.ComputeTimedOut || outcome.DeliverTimedOut;
         var lateDetected = outcome.LateComputeCount > 0 || outcome.LateDeliverCount > 0;
+
+        RecordRecentTickHealth(
+            timedOut
+                ? RecentTickHealth.Timeout
+                : lateDetected
+                    ? RecentTickHealth.Late
+                    : RecentTickHealth.Healthy);
 
         if (timedOut)
         {
@@ -132,6 +149,43 @@ public sealed class BackpressureController
             ? MathF.Min(_defaultMinTickHz, _tickRateOverrideHz.Value)
             : _defaultMinTickHz;
 
-    private float CurrentMaxTickHz()
+    private float ControlTargetTickHz()
         => _tickRateOverrideHz ?? _defaultTargetTickHz;
+
+    private float CurrentMaxTickHz()
+        => ControlTargetTickHz();
+
+    private void RecordRecentTickHealth(RecentTickHealth health)
+    {
+        _recentTicks.Enqueue(health);
+        switch (health)
+        {
+            case RecentTickHealth.Timeout:
+                _recentTimeoutTickCount++;
+                break;
+            case RecentTickHealth.Late:
+                _recentLateTickCount++;
+                break;
+        }
+
+        while (_recentTicks.Count > RecentTickWindow)
+        {
+            switch (_recentTicks.Dequeue())
+            {
+                case RecentTickHealth.Timeout:
+                    _recentTimeoutTickCount = Math.Max(0, _recentTimeoutTickCount - 1);
+                    break;
+                case RecentTickHealth.Late:
+                    _recentLateTickCount = Math.Max(0, _recentLateTickCount - 1);
+                    break;
+            }
+        }
+    }
+
+    private enum RecentTickHealth
+    {
+        Healthy = 0,
+        Late = 1,
+        Timeout = 2
+    }
 }

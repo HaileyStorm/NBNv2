@@ -121,6 +121,14 @@ public class ProtoCompatibilityTests
         var status = descriptor.MessageTypes.Single(message => message.Name == "HiveMindStatus");
         AssertField(status, "has_tick_rate_override", 9, FieldType.Bool);
         AssertField(status, "tick_rate_override_hz", 10, FieldType.Float);
+        AssertField(status, "configured_target_tick_hz", 11, FieldType.Float);
+        AssertField(status, "automatic_backpressure_active", 12, FieldType.Bool);
+        AssertField(status, "recent_tick_sample_count", 13, FieldType.UInt32);
+        AssertField(status, "recent_timeout_tick_count", 14, FieldType.UInt32);
+        AssertField(status, "recent_late_tick_count", 15, FieldType.UInt32);
+        AssertField(status, "worker_pressure_window", 16, FieldType.UInt32);
+        AssertField(status, "current_pressure_worker_count", 17, FieldType.UInt32);
+        AssertField(status, "recent_pressure_worker_count", 18, FieldType.UInt32);
     }
 
     [Fact]

@@ -541,6 +541,14 @@ message HiveMindStatus {
   uint32 registered_shards = 8;
   bool has_tick_rate_override = 9;
   float tick_rate_override_hz = 10;
+  float configured_target_tick_hz = 11;
+  bool automatic_backpressure_active = 12;
+  uint32 recent_tick_sample_count = 13;
+  uint32 recent_timeout_tick_count = 14;
+  uint32 recent_late_tick_count = 15;
+  uint32 worker_pressure_window = 16;
+  uint32 current_pressure_worker_count = 17;
+  uint32 recent_pressure_worker_count = 18;
 }
 
 message GetBrainRouting {

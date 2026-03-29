@@ -748,6 +748,65 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshHistoryCommand_BuildsEpochInventory_And_SelectedEpochRefreshesPane()
+    {
+        var history = new[]
+        {
+            new SpeciationMembershipRecord { EpochId = 10, SpeciesId = "species.a", SpeciesDisplayName = "Alpha", AssignedMs = 1000, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 10, SpeciesId = "species.b", SpeciesDisplayName = "Beta", AssignedMs = 1001, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 11, SpeciesId = "species.a", SpeciesDisplayName = "Alpha", AssignedMs = 2000, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 11, SpeciesId = "species.a", SpeciesDisplayName = "Alpha", AssignedMs = 2001, BrainId = Guid.NewGuid().ToProtoUuid() },
+            new SpeciationMembershipRecord { EpochId = 11, SpeciesId = "species.b", SpeciesDisplayName = "Beta", AssignedMs = 2002, BrainId = Guid.NewGuid().ToProtoUuid() }
+        };
+        var client = new FakeWorkbenchClient
+        {
+            GetStatusResponse = new SpeciationStatusResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                Status = new SpeciationStatusSnapshot
+                {
+                    EpochId = 11,
+                    MembershipCount = 3,
+                    SpeciesCount = 2,
+                    LineageEdgeCount = 1
+                },
+                CurrentEpoch = new SpeciationEpochInfo { EpochId = 11 },
+                Config = new SpeciationRuntimeConfig
+                {
+                    PolicyVersion = "default",
+                    ConfigSnapshotJson = "{}",
+                    DefaultSpeciesId = "species.default",
+                    DefaultSpeciesDisplayName = "Default species",
+                    StartupReconcileDecisionReason = "startup_reconcile"
+                }
+            },
+            HistoryResponse = new SpeciationListHistoryResponse
+            {
+                FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+                TotalRecords = (uint)history.Length,
+                History = { history }
+            }
+        };
+
+        var vm = CreateViewModel(client);
+        vm.CurrentEpochId = 11;
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.EpochOptions.Count == 3 && vm.SelectedEpochOption is not null);
+
+        Assert.Equal("Epochs: 2 total. Active: 11. Viewing: all loaded epochs.", vm.EpochInventorySummary);
+        Assert.Equal(0L, vm.SelectedEpochOption!.EpochId);
+        Assert.Contains("Epochs 10..11", vm.PopulationChartRangeLabel, StringComparison.Ordinal);
+
+        vm.SelectedEpochOption = vm.EpochOptions.Single(option => option.EpochId == 10);
+        await WaitForAsync(() => client.HistoryCallCount == 2 && client.LastMembershipEpochFilter == 10);
+        await WaitForAsync(() => vm.PopulationChartRangeLabel.Contains("Epoch 10", StringComparison.Ordinal));
+
+        Assert.Equal("Epochs: 2 total. Active: 11. Viewing: 10.", vm.EpochInventorySummary);
+        Assert.Equal(10L, vm.SelectedEpochOption!.EpochId);
+    }
+
+    [Fact]
     public async Task UpdateFlowChartHover_ShowsSpeciesPopulationAndShareForHoveredSample()
     {
         var history = new[]
@@ -1659,6 +1718,8 @@ public class SpeciationPanelViewModelTests
         vm.CurrentEpochId = 81;
 
         vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.EpochOptions.Count == 3 && vm.SelectedEpochOption is not null);
+        vm.SelectedEpochOption = vm.EpochOptions.Single(option => option.EpochId == 0);
         await WaitForAsync(() => vm.SplitProximityChartSeries.Count == 2);
 
         Assert.Equal("+0.17", vm.SplitProximityChartYAxisTopLabel);

@@ -10,7 +10,11 @@ namespace Nbn.Runtime.HiveMind;
 public sealed partial class HiveMindActor
 {
     private ProtoControl.HiveMindStatus BuildStatus()
-        => new()
+    {
+        RefreshWorkerCatalogFreshness(NowMs());
+        var (currentPressureWorkerCount, recentPressureWorkerCount) = BuildWorkerPressureSummary();
+
+        return new ProtoControl.HiveMindStatus
         {
             LastCompletedTickId = _lastCompletedTickId,
             TickLoopEnabled = _tickLoopEnabled,
@@ -21,8 +25,42 @@ public sealed partial class HiveMindActor
             RegisteredBrains = (uint)_brains.Count,
             RegisteredShards = (uint)_brains.Values.Sum(brain => brain.Shards.Count),
             HasTickRateOverride = _backpressure.HasTickRateOverride,
-            TickRateOverrideHz = _backpressure.TickRateOverrideHz
+            TickRateOverrideHz = _backpressure.TickRateOverrideHz,
+            ConfiguredTargetTickHz = _backpressure.ConfiguredTargetTickHz,
+            AutomaticBackpressureActive = _backpressure.AutomaticBackpressureActive,
+            RecentTickSampleCount = (uint)Math.Max(0, _backpressure.RecentTickSampleCount),
+            RecentTimeoutTickCount = (uint)Math.Max(0, _backpressure.RecentTimeoutTickCount),
+            RecentLateTickCount = (uint)Math.Max(0, _backpressure.RecentLateTickCount),
+            WorkerPressureWindow = (uint)Math.Max(1, _workerPressureRebalanceWindow),
+            CurrentPressureWorkerCount = (uint)Math.Max(0, currentPressureWorkerCount),
+            RecentPressureWorkerCount = (uint)Math.Max(0, recentPressureWorkerCount)
         };
+    }
+
+    private (int CurrentPressureWorkerCount, int RecentPressureWorkerCount) BuildWorkerPressureSummary()
+    {
+        var current = 0;
+        var recent = 0;
+
+        foreach (var worker in _workerCatalog.Values.Where(entry =>
+                     entry.IsAlive
+                     && entry.IsReady
+                     && entry.IsFresh
+                     && IsPlacementWorkerCandidate(entry.LogicalName, entry.WorkerRootActorName)))
+        {
+            if (IsWorkerPressureViolation(worker))
+            {
+                current++;
+            }
+
+            if (worker.PressureSamples.Count > 0 && worker.PressureViolationCount > 0)
+            {
+                recent++;
+            }
+        }
+
+        return (current, recent);
+    }
 
     private void HandleSetTickRateOverride(IContext context, ProtoControl.SetTickRateOverride message)
     {
