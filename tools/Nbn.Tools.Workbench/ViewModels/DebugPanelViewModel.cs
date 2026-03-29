@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Nbn.Proto.Viz;
 using Nbn.Shared;
@@ -11,14 +13,25 @@ using Nbn.Tools.Workbench.Services;
 
 namespace Nbn.Tools.Workbench.ViewModels;
 
-public sealed class DebugPanelViewModel : ViewModelBase
+public sealed class DebugPanelViewModel : ViewModelBase, IAsyncDisposable
 {
     private const int MaxEvents = 400;
+    private static readonly TimeSpan SystemLoadRefreshInterval = TimeSpan.FromSeconds(3);
+    private static readonly HashSet<string> SystemLoadRefreshTriggerProperties =
+    [
+        nameof(ConnectionViewModel.SettingsConnected),
+        nameof(ConnectionViewModel.SettingsStatus),
+        nameof(ConnectionViewModel.HiveMindConnected),
+        nameof(ConnectionViewModel.HiveMindDiscoverable),
+        nameof(ConnectionViewModel.HiveMindStatus)
+    ];
     private readonly UiDispatcher _dispatcher;
     private readonly WorkbenchClient _client;
     private readonly ConnectionViewModel? _connections;
     private readonly List<DebugEventItem> _allEvents = new();
     private readonly List<VizEventItem> _allVizEvents = new();
+    private CancellationTokenSource? _systemLoadRefreshCts;
+    private int _systemLoadRefreshInFlight;
     private bool _streamEnabled;
     private SeverityOption _selectedSeverity;
     private string _contextRegex = string.Empty;
@@ -36,6 +49,9 @@ public sealed class DebugPanelViewModel : ViewModelBase
     private string _vizStatus = "Streaming";
     private VizEventItem? _selectedVizEvent;
     private string _selectedVizPayload = string.Empty;
+    private string _systemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
+    private string _systemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
+    private string _systemLoadTickSummary = "Tick health: awaiting HiveMind status.";
 
     public DebugPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher, ConnectionViewModel? connections = null)
     {
@@ -54,6 +70,13 @@ public sealed class DebugPanelViewModel : ViewModelBase
         ClearCommand = new RelayCommand(Clear);
         ExportVizCommand = new AsyncRelayCommand(ExportVizAsync, () => VizEvents.Count > 0);
         ClearVizCommand = new RelayCommand(ClearViz);
+
+        if (_connections is not null)
+        {
+            _connections.PropertyChanged += OnConnectionsPropertyChanged;
+            StartSystemLoadPolling();
+            RequestSystemLoadRefresh();
+        }
     }
 
     public ObservableCollection<DebugEventItem> DebugEvents { get; }
@@ -141,6 +164,24 @@ public sealed class DebugPanelViewModel : ViewModelBase
         set => SetProperty(ref _vizStatus, value);
     }
 
+    public string SystemLoadResourceSummary
+    {
+        get => _systemLoadResourceSummary;
+        set => SetProperty(ref _systemLoadResourceSummary, value);
+    }
+
+    public string SystemLoadPressureSummary
+    {
+        get => _systemLoadPressureSummary;
+        set => SetProperty(ref _systemLoadPressureSummary, value);
+    }
+
+    public string SystemLoadTickSummary
+    {
+        get => _systemLoadTickSummary;
+        set => SetProperty(ref _systemLoadTickSummary, value);
+    }
+
     public DebugEventItem? SelectedEvent
     {
         get => _selectedEvent;
@@ -222,6 +263,18 @@ public sealed class DebugPanelViewModel : ViewModelBase
     public AsyncRelayCommand ExportVizCommand { get; }
 
     public RelayCommand ClearVizCommand { get; }
+
+    public ValueTask DisposeAsync()
+    {
+        if (_connections is not null)
+        {
+            _connections.PropertyChanged -= OnConnectionsPropertyChanged;
+        }
+
+        _systemLoadRefreshCts?.Cancel();
+        _systemLoadRefreshCts = null;
+        return ValueTask.CompletedTask;
+    }
 
     /// <summary>
     /// Records a debug event and reapplies the active text filter.
@@ -607,6 +660,112 @@ public sealed class DebugPanelViewModel : ViewModelBase
         while (collection.Count > MaxEvents && collection is IList<T> list)
         {
             list.RemoveAt(list.Count - 1);
+        }
+    }
+
+    private void OnConnectionsPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (string.IsNullOrWhiteSpace(args.PropertyName)
+            || !SystemLoadRefreshTriggerProperties.Contains(args.PropertyName))
+        {
+            return;
+        }
+
+        RequestSystemLoadRefresh();
+    }
+
+    private void StartSystemLoadPolling()
+    {
+        if (_connections is null)
+        {
+            return;
+        }
+
+        _systemLoadRefreshCts?.Cancel();
+        _systemLoadRefreshCts = new CancellationTokenSource();
+        _ = PollSystemLoadAsync(_systemLoadRefreshCts.Token);
+    }
+
+    private void RequestSystemLoadRefresh()
+    {
+        if (Interlocked.Exchange(ref _systemLoadRefreshInFlight, 1) != 0)
+        {
+            return;
+        }
+
+        _ = RefreshSystemLoadSnapshotAsync();
+    }
+
+    private async Task PollSystemLoadAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(SystemLoadRefreshInterval, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            RequestSystemLoadRefresh();
+        }
+    }
+
+    private async Task RefreshSystemLoadSnapshotAsync()
+    {
+        try
+        {
+            if (_connections is null)
+            {
+                return;
+            }
+
+            var settingsReady = _connections.IsSettingsServiceReady();
+            var hiveReady = _connections.IsHiveMindServiceReady();
+            if (!settingsReady && !hiveReady)
+            {
+                _dispatcher.Post(() =>
+                {
+                    SystemLoadResourceSummary = "Resource usage: connect Settings to load worker telemetry.";
+                    SystemLoadPressureSummary = "Pressure: connect HiveMind to view current and recent worker pressure.";
+                    SystemLoadTickSummary = "Tick health: connect HiveMind to view recent timeout and cadence pressure.";
+                });
+                return;
+            }
+
+            var inventoryTask = settingsReady
+                ? _client.ListWorkerInventorySnapshotAsync()
+                : Task.FromResult<Nbn.Proto.Settings.WorkerInventorySnapshotResponse?>(null);
+            var hiveMindTask = hiveReady
+                ? _client.GetHiveMindStatusAsync()
+                : Task.FromResult<Nbn.Proto.Control.HiveMindStatus?>(null);
+
+            var inventory = await inventoryTask.ConfigureAwait(false);
+            var hiveMindStatus = await hiveMindTask.ConfigureAwait(false);
+            var referenceMs = inventory is not null && inventory.SnapshotMs > 0
+                ? (long)inventory.SnapshotMs
+                : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var workers = inventory?.Workers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.WorkerReadinessCapability>();
+            var filteredWorkers = WorkbenchSystemLoadSummaryBuilder.FilterWorkers(workers, referenceMs);
+            var summary = WorkbenchSystemLoadSummaryBuilder.Build(filteredWorkers, hiveMindStatus);
+
+            _dispatcher.Post(() =>
+            {
+                SystemLoadResourceSummary = summary.ResourceSummary;
+                SystemLoadPressureSummary = summary.PressureSummary;
+                SystemLoadTickSummary = summary.TickSummary;
+            });
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _systemLoadRefreshInFlight, 0);
         }
     }
 }

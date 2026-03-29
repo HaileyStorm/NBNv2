@@ -25,6 +25,7 @@ Runtime behavior:
 * When `tick.cadence.hz` changes externally, Workbench re-queries HiveMind status so the visualizer continues to show both the configured cadence target and the current authoritative runtime target when they temporarily diverge.
 * When stream throttling is active (`target tick cadence faster than configured stream interval`), RegionShards sample visualization work in deterministic region phases across ticks to spread CPU cost without changing simulation compute/deliver semantics.
 * Workbench Orchestrator exposes settings-backed worker policy controls for capability refresh cadence and pressure-rebalance thresholds, aggregate worker resource-usage summaries from SettingsMonitor capability snapshots, recent worker-pressure/tick-health summaries from HiveMind status, and `Profile Current System` for attached perf-probe runs against the currently running deployment.
+* Workbench Debug mirrors that same system-load summary so operators can correlate debug streams with current worker quota usage, recent worker pressure, and automatic tick-cadence backpressure without leaving the debug surface.
 * Workbench Speciation surfaces total epoch count, current active epoch, and a pane-wide epoch selector so memberships and history visualizations stay aligned to one epoch scope when the operator drills into historical taxonomy state.
 
 ### 15.2 OpenTelemetry (NBN-managed)

@@ -281,6 +281,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     public async ValueTask DisposeAsync()
     {
         await Speciation.DisposeAsync();
+        await Debug.DisposeAsync();
         await Orchestrator.StopAllAsyncForShutdown();
         _connectCts?.Cancel();
         _connectCts = null;

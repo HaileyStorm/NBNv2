@@ -45,6 +45,22 @@
       </Border>
 
       <Border Classes="card">
+        <StackPanel Spacing="8">
+          <TextBlock Text="System Load" Classes="card-title" />
+          <TextBlock Text="Mirrors the Orchestrator load summary from SettingsMonitor worker inventory and HiveMind status so runtime pressure is visible while staying in Debug." Classes="muted" TextWrapping="Wrap" />
+          <Border Classes="row">
+            <TextBlock Text="{Binding SystemLoadResourceSummary}" Classes="muted" TextWrapping="Wrap" />
+          </Border>
+          <Border Classes="row">
+            <TextBlock Text="{Binding SystemLoadPressureSummary}" Classes="muted" TextWrapping="Wrap" />
+          </Border>
+          <Border Classes="row">
+            <TextBlock Text="{Binding SystemLoadTickSummary}" Classes="muted" TextWrapping="Wrap" />
+          </Border>
+        </StackPanel>
+      </Border>
+
+      <Border Classes="card">
         <Grid ColumnDefinitions="1.4*,1*" ColumnSpacing="16">
           <StackPanel Spacing="8">
             <TextBlock Text="Debug Stream" Classes="card-title" />

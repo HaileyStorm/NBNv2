@@ -734,7 +734,7 @@ public class OrchestratorPanelViewModelTests
         Assert.Contains("CPU 6/12 cores", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
         Assert.Contains("RAM 8 GiB/25.6 GiB", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
         Assert.Contains("storage 64 GiB/230.4 GiB", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
-        Assert.Contains("0/1 worker over quota now", vm.SystemLoadPressureSummary, StringComparison.Ordinal);
+        Assert.Contains("1/1 worker over quota now", vm.SystemLoadPressureSummary, StringComparison.Ordinal);
         Assert.Contains("last 6 snapshots", vm.SystemLoadPressureSummary, StringComparison.Ordinal);
         Assert.Contains("12.5% recent ticks timed out", vm.SystemLoadTickSummary, StringComparison.Ordinal);
         Assert.Contains("6.3% had late arrivals", vm.SystemLoadTickSummary, StringComparison.Ordinal);

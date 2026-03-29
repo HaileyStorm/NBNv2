@@ -1,4 +1,6 @@
 using Nbn.Proto;
+using Nbn.Proto.Control;
+using Nbn.Proto.Settings;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
@@ -139,6 +141,99 @@ public sealed class DebugPanelViewModelTests
         Assert.Equal("true", client.Settings[DebugSettingsKeys.EnabledKey]);
     }
 
+    [Fact]
+    public async Task SystemLoadRefresh_WhenServicesReady_PopulatesSummaries()
+    {
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var client = new RecordingWorkbenchClient(new NullWorkbenchEventSink())
+        {
+            WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)nowMs,
+                Workers =
+                {
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = Guid.NewGuid().ToProtoUuid(),
+                        LogicalName = "nbn.worker",
+                        Address = "worker-a:12040",
+                        RootActorName = "worker-node",
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)nowMs,
+                        HasCapabilities = true,
+                        CapabilityTimeMs = (ulong)nowMs,
+                        Capabilities = new NodeCapabilities
+                        {
+                            CpuCores = 16,
+                            CpuLimitPercent = 75,
+                            ProcessCpuLoadPercent = 37.5f,
+                            RamTotalBytes = 32UL * 1024 * 1024 * 1024,
+                            RamLimitPercent = 80,
+                            ProcessRamUsedBytes = 8UL * 1024 * 1024 * 1024,
+                            StorageTotalBytes = 256UL * 1024 * 1024 * 1024,
+                            StorageFreeBytes = 192UL * 1024 * 1024 * 1024,
+                            StorageLimitPercent = 90
+                        }
+                    }
+                }
+            },
+            HiveMindStatusResponse = new HiveMindStatus
+            {
+                TargetTickHz = 15f,
+                ConfiguredTargetTickHz = 30f,
+                AutomaticBackpressureActive = true,
+                RecentTickSampleCount = 32,
+                RecentTimeoutTickCount = 4,
+                RecentLateTickCount = 2,
+                WorkerPressureWindow = 6,
+                CurrentPressureWorkerCount = 0,
+                RecentPressureWorkerCount = 1
+            }
+        };
+        var connections = new ConnectionViewModel
+        {
+            SettingsStatus = "Ready",
+            HiveMindStatus = "Connected"
+        };
+
+        await using var viewModel = new DebugPanelViewModel(client, new UiDispatcher(), connections);
+
+        var updated = SpinWait.SpinUntil(
+            () => viewModel.SystemLoadResourceSummary.Contains("CPU 6/12 cores", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(3));
+
+        Assert.True(updated);
+        Assert.Contains("RAM 8 GiB/25.6 GiB", viewModel.SystemLoadResourceSummary, StringComparison.Ordinal);
+        Assert.Contains("storage 64 GiB/230.4 GiB", viewModel.SystemLoadResourceSummary, StringComparison.Ordinal);
+        Assert.Contains("0/1 worker over quota now", viewModel.SystemLoadPressureSummary, StringComparison.Ordinal);
+        Assert.Contains("last 6 snapshots", viewModel.SystemLoadPressureSummary, StringComparison.Ordinal);
+        Assert.Contains("12.5% recent ticks timed out", viewModel.SystemLoadTickSummary, StringComparison.Ordinal);
+        Assert.Contains("6.3% had late arrivals", viewModel.SystemLoadTickSummary, StringComparison.Ordinal);
+        Assert.Contains("auto-reduced to 15 Hz from 30 Hz", viewModel.SystemLoadTickSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SystemLoadRefresh_WhenServicesNotReady_ShowsGuidance()
+    {
+        var client = new RecordingWorkbenchClient(new NullWorkbenchEventSink());
+        var connections = new ConnectionViewModel
+        {
+            SettingsStatus = "Disconnected",
+            HiveMindStatus = "Disconnected"
+        };
+
+        await using var viewModel = new DebugPanelViewModel(client, new UiDispatcher(), connections);
+
+        var updated = SpinWait.SpinUntil(
+            () => viewModel.SystemLoadResourceSummary.Contains("connect Settings", StringComparison.OrdinalIgnoreCase),
+            TimeSpan.FromSeconds(3));
+
+        Assert.True(updated);
+        Assert.Contains("connect HiveMind", viewModel.SystemLoadPressureSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("connect HiveMind", viewModel.SystemLoadTickSummary, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static DebugPanelViewModel CreateViewModel()
         => new(new WorkbenchClient(new NullWorkbenchEventSink()), new UiDispatcher());
 
@@ -166,6 +261,8 @@ public sealed class DebugPanelViewModelTests
         }
 
         public Dictionary<string, string> Settings { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public WorkerInventorySnapshotResponse? WorkerInventoryResponse { get; set; }
+        public HiveMindStatus? HiveMindStatusResponse { get; set; }
 
         public override Task<Nbn.Proto.Settings.SettingValue?> SetSettingAsync(string key, string value)
         {
@@ -177,5 +274,11 @@ public sealed class DebugPanelViewModelTests
                     Value = value
                 });
         }
+
+        public override Task<WorkerInventorySnapshotResponse?> ListWorkerInventorySnapshotAsync()
+            => Task.FromResult(WorkerInventoryResponse);
+
+        public override Task<HiveMindStatus?> GetHiveMindStatusAsync()
+            => Task.FromResult(HiveMindStatusResponse);
     }
 }
