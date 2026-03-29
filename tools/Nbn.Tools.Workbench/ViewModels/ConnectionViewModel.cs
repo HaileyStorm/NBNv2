@@ -7,7 +7,7 @@ namespace Nbn.Tools.Workbench.ViewModels;
 public sealed class ConnectionViewModel : ViewModelBase
 {
     private string _localBindHost = NetworkAddressDefaults.DefaultBindHost;
-    private string _localAdvertiseHost = Environment.GetEnvironmentVariable("NBN_DEFAULT_ADVERTISE_HOST") ?? string.Empty;
+    private string _localAdvertiseHost = NetworkAddressDefaults.ResolveDefaultAdvertisedHost();
     private string _localPort = "12090";
     private string _ioHost = "127.0.0.1";
     private string _ioPort = "12050";

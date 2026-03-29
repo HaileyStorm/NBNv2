@@ -152,6 +152,16 @@ public sealed class ConnectionViewModelTests
     }
 
     [Fact]
+    public void Constructor_SeedsLocalAdvertiseHost_FromDefaultAdvertiseResolver()
+    {
+        using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", null));
+
+        var viewModel = new ConnectionViewModel();
+
+        Assert.Equal(NetworkAddressDefaults.ResolveDefaultAdvertisedHost(), viewModel.LocalAdvertiseHost);
+    }
+
+    [Fact]
     public void Constructor_SeedsLocalAdvertiseHost_FromEnvironmentOverride()
     {
         using var _ = new EnvironmentVariableScope(("NBN_DEFAULT_ADVERTISE_HOST", "198.51.100.17"));
