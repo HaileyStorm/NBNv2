@@ -123,6 +123,16 @@ enum OutputVectorSource {
   OUTPUT_VECTOR_SOURCE_BUFFER = 1;
 }
 
+message SetOutputVectorSource {
+  OutputVectorSource output_vector_source = 1;
+}
+
+message SetOutputVectorSourceAck {
+  bool accepted = 1;
+  string message = 2;
+  OutputVectorSource output_vector_source = 3;
+}
+
 message UpdateShardOutputSink {
   nbn.Uuid brain_id = 1;
   uint32 region_id = 2;

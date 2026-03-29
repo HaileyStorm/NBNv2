@@ -839,6 +839,7 @@ When a brain terminates (energy exhaustion, explicit kill from External World or
 * Outputs are delivered with tick correlation, but External World is not required to use it.
 * External World may query placement-ready worker capacity through IO when it needs runtime-sizing hints for environment orchestration; the returned snapshot reflects HiveMind's placement-eligible worker view rather than raw SettingsMonitor rows.
 * External World may explicitly terminate a running brain through IO; it does not need a separate HiveMind control-plane connection for ordinary brain-lifecycle teardown.
+* External World may switch the global continuous vector source between `potential` and `buffer` through IO; sparse `OutputEvent` subscriptions remain a separate transport choice.
 
 ### 13.2 IO Gateway and per-brain coordinators
 
@@ -2923,6 +2924,17 @@ message KillBrainViaIOAck {
   bool accepted = 1;
   string failure_reason_code = 2;
   string failure_message = 3;
+}
+
+message SetOutputVectorSource {
+  nbn.control.OutputVectorSource output_vector_source = 1;
+}
+
+message SetOutputVectorSourceAck {
+  bool success = 1;
+  string failure_reason_code = 2;
+  string failure_message = 3;
+  nbn.control.OutputVectorSource output_vector_source = 4;
 }
 
 message InputWrite {

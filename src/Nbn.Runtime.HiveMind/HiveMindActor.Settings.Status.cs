@@ -48,6 +48,32 @@ public sealed partial class HiveMindActor
         });
     }
 
+    private void HandleSetOutputVectorSource(IContext context, ProtoControl.SetOutputVectorSource message)
+    {
+        var normalized = message.OutputVectorSource switch
+        {
+            ProtoControl.OutputVectorSource.Buffer => ProtoControl.OutputVectorSource.Buffer,
+            _ => ProtoControl.OutputVectorSource.Potential
+        };
+
+        var changed = _outputVectorSource != normalized;
+        _outputVectorSource = normalized;
+        if (changed)
+        {
+            UpdateAllShardRuntimeConfig(context);
+            RegisterAllBrainsWithIo(context);
+            PersistOutputVectorSourceSetting(context);
+            EmitDebug(context, ProtoSeverity.SevInfo, "io.output_vector_source", $"Output vector source set to {FormatOutputVectorSource(_outputVectorSource)}.");
+        }
+
+        context.Respond(new ProtoControl.SetOutputVectorSourceAck
+        {
+            Accepted = true,
+            Message = changed ? "applied" : "unchanged",
+            OutputVectorSource = _outputVectorSource
+        });
+    }
+
     private void PersistTickRateOverrideSetting(IContext context)
     {
         if (_settingsPid is null)
@@ -64,5 +90,28 @@ public sealed partial class HiveMindActor
             Key = TickSettingsKeys.CadenceHzKey,
             Value = value
         });
+    }
+
+    private void PersistOutputVectorSourceSetting(IContext context)
+    {
+        if (_settingsPid is null)
+        {
+            return;
+        }
+
+        context.Send(_settingsPid, new ProtoSettings.SettingSet
+        {
+            Key = IoCoordinatorSettingsKeys.OutputVectorSourceKey,
+            Value = FormatOutputVectorSource(_outputVectorSource)
+        });
+    }
+
+    private static string FormatOutputVectorSource(ProtoControl.OutputVectorSource source)
+    {
+        return source switch
+        {
+            ProtoControl.OutputVectorSource.Buffer => "buffer",
+            _ => "potential"
+        };
     }
 }

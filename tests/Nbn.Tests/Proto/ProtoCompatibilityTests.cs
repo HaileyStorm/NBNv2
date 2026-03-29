@@ -166,6 +166,14 @@ public class ProtoCompatibilityTests
         AssertEnumValue(outputVectorSource, "OUTPUT_VECTOR_SOURCE_POTENTIAL", 0);
         AssertEnumValue(outputVectorSource, "OUTPUT_VECTOR_SOURCE_BUFFER", 1);
 
+        var setOutputVectorSource = descriptor.MessageTypes.Single(message => message.Name == "SetOutputVectorSource");
+        AssertField(setOutputVectorSource, "output_vector_source", 1, FieldType.Enum, "nbn.control.OutputVectorSource");
+
+        var setOutputVectorSourceAck = descriptor.MessageTypes.Single(message => message.Name == "SetOutputVectorSourceAck");
+        AssertField(setOutputVectorSourceAck, "accepted", 1, FieldType.Bool);
+        AssertField(setOutputVectorSourceAck, "message", 2, FieldType.String);
+        AssertField(setOutputVectorSourceAck, "output_vector_source", 3, FieldType.Enum, "nbn.control.OutputVectorSource");
+
         var shardVisualization = descriptor.MessageTypes.Single(message => message.Name == "UpdateShardVisualization");
         AssertField(shardVisualization, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(shardVisualization, "region_id", 2, FieldType.UInt32);
@@ -477,6 +485,18 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoIo_SetOutputVectorSourceAck_Fields_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+        var ack = descriptor.MessageTypes.Single(message => message.Name == "SetOutputVectorSourceAck");
+
+        AssertField(ack, "success", 1, FieldType.Bool);
+        AssertField(ack, "failure_reason_code", 2, FieldType.String);
+        AssertField(ack, "failure_message", 3, FieldType.String);
+        AssertField(ack, "output_vector_source", 4, FieldType.Enum, "nbn.control.OutputVectorSource");
+    }
+
+    [Fact]
     public void ProtoIo_ConnectionAndLifecycleFields_AreStable()
     {
         var descriptor = NbnIoReflection.Descriptor;
@@ -509,6 +529,9 @@ public class ProtoCompatibilityTests
 
         var killBrainViaIo = descriptor.MessageTypes.Single(message => message.Name == "KillBrainViaIO");
         AssertField(killBrainViaIo, "request", 1, FieldType.Message, "nbn.control.KillBrain");
+
+        var setOutputVectorSource = descriptor.MessageTypes.Single(message => message.Name == "SetOutputVectorSource");
+        AssertField(setOutputVectorSource, "output_vector_source", 1, FieldType.Enum, "nbn.control.OutputVectorSource");
 
         var unregisterBrain = descriptor.MessageTypes.Single(message => message.Name == "UnregisterBrain");
         AssertField(unregisterBrain, "brain_id", 1, FieldType.Message, "nbn.Uuid");

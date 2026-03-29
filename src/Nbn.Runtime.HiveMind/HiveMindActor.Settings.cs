@@ -23,6 +23,9 @@ public sealed partial class HiveMindActor
             case ProtoControl.SetTickRateOverride message:
                 HandleSetTickRateOverride(context, message);
                 return true;
+            case ProtoControl.SetOutputVectorSource message:
+                HandleSetOutputVectorSource(context, message);
+                return true;
             default:
                 return false;
         }

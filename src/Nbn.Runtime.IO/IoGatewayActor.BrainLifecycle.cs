@@ -103,6 +103,62 @@ public sealed partial class IoGatewayActor
         }
     }
 
+    private async Task HandleSetOutputVectorSourceAsync(IContext context, SetOutputVectorSource message)
+    {
+        if (_hiveMindPid is null)
+        {
+            context.Respond(new SetOutputVectorSourceAck
+            {
+                Success = false,
+                FailureReasonCode = "output_vector_source_unavailable",
+                FailureMessage = "Output vector source update failed: HiveMind endpoint is not configured.",
+                OutputVectorSource = DefaultOutputVectorSource
+            });
+            return;
+        }
+
+        try
+        {
+            var ack = await context.RequestAsync<ProtoControl.SetOutputVectorSourceAck>(
+                _hiveMindPid,
+                new ProtoControl.SetOutputVectorSource
+                {
+                    OutputVectorSource = message.OutputVectorSource
+                },
+                DefaultRequestTimeout);
+            if (ack is null)
+            {
+                context.Respond(new SetOutputVectorSourceAck
+                {
+                    Success = false,
+                    FailureReasonCode = "output_vector_source_empty_response",
+                    FailureMessage = "Output vector source update failed: HiveMind returned an empty acknowledgment.",
+                    OutputVectorSource = DefaultOutputVectorSource
+                });
+                return;
+            }
+
+            context.Respond(new SetOutputVectorSourceAck
+            {
+                Success = ack.Accepted,
+                FailureReasonCode = ack.Accepted ? string.Empty : "output_vector_source_rejected",
+                FailureMessage = ack.Message ?? string.Empty,
+                OutputVectorSource = ack.OutputVectorSource
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SetOutputVectorSource failed: {ex.Message}");
+            context.Respond(new SetOutputVectorSourceAck
+            {
+                Success = false,
+                FailureReasonCode = "output_vector_source_request_failed",
+                FailureMessage = $"Output vector source update failed: request forwarding to HiveMind failed ({ex.GetBaseException().Message}).",
+                OutputVectorSource = DefaultOutputVectorSource
+            });
+        }
+    }
+
     private async Task HandleBrainInfoAsync(IContext context, BrainInfoRequest message)
     {
         if (!TryGetBrainId(message.BrainId, out var brainId))

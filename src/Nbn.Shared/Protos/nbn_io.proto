@@ -162,6 +162,17 @@ message KillBrainViaIOAck {
   string failure_message = 3;
 }
 
+message SetOutputVectorSource {
+  nbn.control.OutputVectorSource output_vector_source = 1;
+}
+
+message SetOutputVectorSourceAck {
+  bool success = 1;
+  string failure_reason_code = 2;
+  string failure_message = 3;
+  nbn.control.OutputVectorSource output_vector_source = 4;
+}
+
 message InputWrite {
   nbn.Uuid brain_id = 1;
   uint32 input_index = 2;

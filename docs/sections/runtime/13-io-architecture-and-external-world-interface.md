@@ -8,6 +8,7 @@
 * Outputs are delivered with tick correlation, but External World is not required to use it.
 * External World may query placement-ready worker capacity through IO when it needs runtime-sizing hints for environment orchestration; the returned snapshot reflects HiveMind's placement-eligible worker view rather than raw SettingsMonitor rows.
 * External World may explicitly terminate a running brain through IO; it does not need a separate HiveMind control-plane connection for ordinary brain-lifecycle teardown.
+* External World may switch the global continuous vector source between `potential` and `buffer` through IO; sparse `OutputEvent` subscriptions remain a separate transport choice.
 
 ### 13.2 IO Gateway and per-brain coordinators
 

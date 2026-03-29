@@ -367,6 +367,53 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task SetOutputVectorSource_Forwards_To_HiveMind_And_AcksSuccess()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var forwarded = new TaskCompletionSource<ProtoControl.SetOutputVectorSource>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveOutputVectorSourceProbe(forwarded, accepted: true)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var response = await root.RequestAsync<SetOutputVectorSourceAck>(
+            gateway,
+            new SetOutputVectorSource
+            {
+                OutputVectorSource = ProtoControl.OutputVectorSource.Buffer
+            });
+
+        Assert.True(response.Success);
+        Assert.True(string.IsNullOrWhiteSpace(response.FailureReasonCode));
+        Assert.Equal(ProtoControl.OutputVectorSource.Buffer, response.OutputVectorSource);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var request = await forwarded.Task.WaitAsync(cts.Token);
+        Assert.Equal(ProtoControl.OutputVectorSource.Buffer, request.OutputVectorSource);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SetOutputVectorSource_Returns_Actionable_Failure_When_HiveMind_Is_Unavailable()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var response = await root.RequestAsync<SetOutputVectorSourceAck>(
+            gateway,
+            new SetOutputVectorSource
+            {
+                OutputVectorSource = ProtoControl.OutputVectorSource.Buffer
+            });
+
+        Assert.False(response.Success);
+        Assert.Equal("output_vector_source_unavailable", response.FailureReasonCode);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ExportBrainDefinition_Returns_Registered_BaseDefinition()
     {
         var system = new ActorSystem();
@@ -2693,6 +2740,41 @@ public class IoGatewayArtifactReferenceTests
                     {
                         _secondKill.TrySetResult(kill);
                     }
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class HiveOutputVectorSourceProbe : IActor
+    {
+        private readonly TaskCompletionSource<ProtoControl.SetOutputVectorSource> _request;
+        private readonly bool _accepted;
+
+        public HiveOutputVectorSourceProbe(
+            TaskCompletionSource<ProtoControl.SetOutputVectorSource> request,
+            bool accepted)
+        {
+            _request = request;
+            _accepted = accepted;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoControl.GetBrainRouting:
+                    context.Respond(new ProtoControl.BrainRoutingInfo());
+                    break;
+                case ProtoControl.SetOutputVectorSource message:
+                    _request.TrySetResult(message);
+                    context.Respond(new ProtoControl.SetOutputVectorSourceAck
+                    {
+                        Accepted = _accepted,
+                        Message = _accepted ? "applied" : "rejected",
+                        OutputVectorSource = message.OutputVectorSource
+                    });
                     break;
             }
 

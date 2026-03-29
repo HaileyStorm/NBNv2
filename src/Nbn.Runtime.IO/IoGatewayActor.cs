@@ -90,6 +90,9 @@ public sealed partial class IoGatewayActor : IActor
             case KillBrainViaIO message:
                 HandleKillBrain(context, message);
                 break;
+            case SetOutputVectorSource message:
+                await HandleSetOutputVectorSourceAsync(context, message);
+                break;
             case BrainInfoRequest message:
                 await HandleBrainInfoAsync(context, message);
                 break;
