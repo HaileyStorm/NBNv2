@@ -577,6 +577,63 @@ public sealed class HiveMindPlacementPlannerTests
     }
 
     [Fact]
+    public void PlacementPlanner_Prefers_LowerHostedBrainCount_Over_MinorCpuLoad_For_SameLocality_Workers()
+    {
+        var workerA = Guid.Parse("11000000-0000-0000-0000-000000000001");
+        var workerB = Guid.Parse("11000000-0000-0000-0000-000000000002");
+
+        var workers = new[]
+        {
+            CreateWorkerCandidate(
+                workerA,
+                "192.168.0.14:12041",
+                averagePeerLatencyMs: 1.5f,
+                peerLatencySampleCount: 2,
+                hostedBrainCount: 3,
+                processCpuLoadPercent: 10f),
+            CreateWorkerCandidate(
+                workerB,
+                "192.168.0.14:12042",
+                averagePeerLatencyMs: 1.5f,
+                peerLatencySampleCount: 2,
+                hostedBrainCount: 0,
+                processCpuLoadPercent: 12f)
+        };
+
+        var plannerInputs = new PlacementPlanner.PlannerInputs(
+            BrainId: Guid.NewGuid(),
+            PlacementEpoch: 9,
+            RequestId: "same-host-balance",
+            RequestedMs: 100,
+            PlannedMs: 101,
+            WorkerSnapshotMs: 99,
+            ShardStride: 1024,
+            RequestedShardPlan: new ShardPlan
+            {
+                Mode = (ShardPlanMode)1,
+                ShardCount = 1
+            },
+            Regions: new[]
+            {
+                new PlacementPlanner.RegionSpan(0, 4),
+                new PlacementPlanner.RegionSpan(1, 4096),
+                new PlacementPlanner.RegionSpan(31, 2)
+            },
+            CurrentWorkerNodeIds: Array.Empty<Guid>());
+
+        var built = PlacementPlanner.TryBuildPlan(
+            plannerInputs,
+            workers,
+            out var plan,
+            out var failureReason,
+            out var failureMessage);
+
+        Assert.True(built, failureMessage);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, failureReason);
+        Assert.All(plan.Assignments, assignment => Assert.Equal(workerB, AssignmentWorkerId(assignment)));
+    }
+
+    [Fact]
     public void PlacementPlanner_Rejects_Pressured_And_VramLimited_GpuWorkers()
     {
         var goodWorker = Guid.Parse("50000000-0000-0000-0000-000000000001");
