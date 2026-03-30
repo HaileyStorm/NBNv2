@@ -152,6 +152,17 @@ message SpawnBrainViaIOAck {
   string failure_message = 3;
 }
 
+message AwaitSpawnPlacementViaIO {
+  nbn.Uuid brain_id = 1;
+  fixed64 timeout_ms = 2;
+}
+
+message AwaitSpawnPlacementViaIOAck {
+  nbn.control.SpawnBrainAck ack = 1;
+  string failure_reason_code = 2;
+  string failure_message = 3;
+}
+
 message KillBrainViaIO {
   nbn.control.KillBrain request = 1;
 }

@@ -36,7 +36,8 @@ public sealed partial class DesignerPanelViewModel : ViewModelBase
     private const string NoDocumentStatus = "No file loaded.";
     private const string NoDesignStatus = "Create or import a .nbn to edit.";
     private const long StaleControllerMs = 15000;
-    private static readonly TimeSpan SpawnRegistrationTimeout = TimeSpan.FromSeconds(12);
+    private const ulong PlacementWaitTimeoutMs = 5_000;
+    private static readonly TimeSpan SpawnRegistrationTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan SpawnRegistrationPollInterval = TimeSpan.FromMilliseconds(300);
     private static readonly bool LogSpawnDiagnostics = IsEnvTrue("NBN_WORKBENCH_SPAWN_DIAGNOSTICS_ENABLED");
     private const int DefaultActivationFunctionId = 11; // ACT_TANH (internal)

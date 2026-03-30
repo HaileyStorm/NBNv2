@@ -187,5 +187,10 @@ public sealed class SettingsMonitorDefaultsTests
             WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey,
             out var pressureTolerance));
         Assert.Equal(WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureLimitTolerancePercent), pressureTolerance);
+
+        Assert.True(SettingsMonitorDefaults.DefaultSettings.TryGetValue(
+            WorkerCapabilitySettingsKeys.RegionShardGpuNeuronThresholdKey,
+            out var gpuNeuronThreshold));
+        Assert.Equal(WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold.ToString(), gpuNeuronThreshold);
     }
 }

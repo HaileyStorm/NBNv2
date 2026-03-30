@@ -87,6 +87,9 @@ public sealed partial class IoGatewayActor : IActor
             case SpawnBrainViaIO message:
                 await HandleSpawnBrain(context, message);
                 break;
+            case AwaitSpawnPlacementViaIO message:
+                await HandleAwaitSpawnPlacementAsync(context, message);
+                break;
             case KillBrainViaIO message:
                 HandleKillBrain(context, message);
                 break;

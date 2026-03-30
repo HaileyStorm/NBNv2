@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics;
 using System.Reflection;
 using Nbn.Proto.Control;
 using Nbn.Proto.Debug;
@@ -380,12 +381,13 @@ public sealed class HiveMindPlacementOrchestrationTests
                     var deferred = await root.RequestAsync<DeferredAssignmentAckSnapshot>(
                         workerBPid,
                         new GetDeferredAssignmentAckSnapshot());
-                    return deferred.AssignmentIds.Count >= 7;
+                    return deferred.AssignmentIds.Count > 0;
                 },
                 timeoutMs: 5_000);
 
-            root.Send(workerBPid, new ReleaseDeferredAssignmentAcks());
-            await WaitForAsync(
+            await DrainDeferredAssignmentAcksUntilAsync(
+                root,
+                workerBPid,
                 () => Task.FromResult(workerB.ReconcileRequestCount >= 1),
                 timeoutMs: 5_000);
             root.Send(workerBPid, new ReleaseDeferredReconcileReports());
@@ -1094,9 +1096,9 @@ public sealed class HiveMindPlacementOrchestrationTests
         Assert.Equal(PlacementLifecycleState.PlacementLifecycleAssigning, inFlightStatus.LifecycleState);
         Assert.Equal(PlacementFailureReason.PlacementFailureNone, inFlightStatus.FailureReason);
 
-        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
-
-        await WaitForAsync(
+        await DrainDeferredAssignmentAcksUntilAsync(
+            root,
+            workerPid,
             async () =>
             {
                 var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
@@ -1217,9 +1219,9 @@ public sealed class HiveMindPlacementOrchestrationTests
         Assert.Equal(PlacementLifecycleState.PlacementLifecycleAssigning, assigningStatus.LifecycleState);
         Assert.Equal(PlacementFailureReason.PlacementFailureNone, assigningStatus.FailureReason);
 
-        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
-
-        await WaitForAsync(
+        await DrainDeferredAssignmentAcksUntilAsync(
+            root,
+            workerPid,
             async () =>
             {
                 var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
@@ -1344,9 +1346,9 @@ public sealed class HiveMindPlacementOrchestrationTests
         Assert.Equal(PlacementLifecycleState.PlacementLifecycleAssigning, assigningStatus.LifecycleState);
         Assert.Equal(PlacementFailureReason.PlacementFailureNone, assigningStatus.FailureReason);
 
-        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
-
-        await WaitForAsync(
+        await DrainDeferredAssignmentAcksUntilAsync(
+            root,
+            workerPid,
             async () =>
             {
                 var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
@@ -1472,9 +1474,9 @@ public sealed class HiveMindPlacementOrchestrationTests
         Assert.Equal(PlacementFailureReason.PlacementFailureNone, assigningStatus.FailureReason);
         Assert.Equal(0, workerProbe.ReconcileRequestCount);
 
-        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
-
-        await WaitForAsync(
+        await DrainDeferredAssignmentAcksUntilAsync(
+            root,
+            workerPid,
             async () =>
             {
                 var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
@@ -1561,9 +1563,9 @@ public sealed class HiveMindPlacementOrchestrationTests
         var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
         var responseMismatchBefore = baselineDebug.Count("placement.reconcile.response_mismatch");
 
-        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
-
-        await WaitForAsync(
+        await DrainDeferredAssignmentAcksUntilAsync(
+            root,
+            workerPid,
             async () =>
             {
                 var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
@@ -1687,9 +1689,9 @@ public sealed class HiveMindPlacementOrchestrationTests
         var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
         var responseMismatchBefore = baselineDebug.Count("placement.reconcile.response_mismatch");
 
-        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
-
-        await WaitForAsync(
+        await DrainDeferredAssignmentAcksUntilAsync(
+            root,
+            workerPid,
             async () =>
             {
                 var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
@@ -1824,9 +1826,9 @@ public sealed class HiveMindPlacementOrchestrationTests
         var ignoredBefore = baselineDebug.Count("placement.reconcile.ignored");
         var responseMismatchBefore = baselineDebug.Count("placement.reconcile.response_mismatch");
 
-        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
-
-        await WaitForAsync(
+        await DrainDeferredAssignmentAcksUntilAsync(
+            root,
+            workerPid,
             async () =>
             {
                 var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
@@ -1982,9 +1984,9 @@ public sealed class HiveMindPlacementOrchestrationTests
         Assert.Equal(PlacementLifecycleState.PlacementLifecycleAssigning, assigningStatus.LifecycleState);
         Assert.Equal(PlacementFailureReason.PlacementFailureNone, assigningStatus.FailureReason);
 
-        root.Send(workerPid, new ReleaseDeferredAssignmentAcks());
-
-        await WaitForAsync(
+        await DrainDeferredAssignmentAcksUntilAsync(
+            root,
+            workerPid,
             async () =>
             {
                 var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
@@ -2142,6 +2144,99 @@ public sealed class HiveMindPlacementOrchestrationTests
             var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
             Assert.True(debugSnapshot.Count("brain.recovering") >= 1);
             Assert.True(debugSnapshot.Count("brain.recovered") >= 1);
+        }
+        finally
+        {
+            if (system is not null)
+            {
+                await system.ShutdownAsync();
+            }
+            artifactRoot.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RequestPlacement_Queues_SameWorker_Assignments_Without_Starting_All_Timeouts_At_Once()
+    {
+        var artifactRoot = TempDirectoryScope.Create("nbn-hivemind-worker-dispatch-queue", clearSqlitePools: true);
+        ActorSystem? system = null;
+
+        try
+        {
+            var baseRef = await StoreRichBaseDefinitionAsync(artifactRoot);
+            system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var workerProbe = new PlacementWorkerProbe(
+                workerId,
+                dropAcks: false,
+                failFirstRetryable: false,
+                autoRespondAssignments: false,
+                autoRespondReconcile: true);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 200,
+                    retryBackoffMs: 10,
+                    maxRetries: 0,
+                    reconcileTimeoutMs: 500))));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            async Task<Guid> RequestPlacementAsync(Guid brainId)
+            {
+                var ack = await root.RequestAsync<PlacementAck>(
+                    hiveMind,
+                    new RequestPlacement
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        BaseDef = baseRef,
+                        InputWidth = 3,
+                        OutputWidth = 2,
+                        ShardPlan = new ShardPlan
+                        {
+                            Mode = ShardPlanMode.ShardPlanFixed,
+                            ShardCount = 2
+                        }
+                    });
+                Assert.True(ack.Accepted);
+                return brainId;
+            }
+
+            var brainA = await RequestPlacementAsync(Guid.NewGuid());
+            var brainB = await RequestPlacementAsync(Guid.NewGuid());
+
+            for (var iteration = 0; iteration < 40; iteration++)
+            {
+                var deferred = await root.RequestAsync<DeferredAssignmentAckSnapshot>(
+                    workerPid,
+                    new GetDeferredAssignmentAckSnapshot());
+                var deferredBrains = deferred.Entries.Select(static entry => entry.BrainId).Distinct().ToArray();
+                Assert.True(
+                    deferredBrains.Length <= 1,
+                    $"Expected queued dispatches from at most one brain at a time, saw {deferredBrains.Length}: {string.Join(", ", deferredBrains.Select(static brainId => brainId.ToString("D")))}");
+
+                var statusA = await GetPlacementLifecycleAsync(root, hiveMind, brainA);
+                var statusB = await GetPlacementLifecycleAsync(root, hiveMind, brainB);
+                var aStable = statusA.LifecycleState is PlacementLifecycleState.PlacementLifecycleAssigned or PlacementLifecycleState.PlacementLifecycleRunning;
+                var bStable = statusB.LifecycleState is PlacementLifecycleState.PlacementLifecycleAssigned or PlacementLifecycleState.PlacementLifecycleRunning;
+                if (aStable && bStable)
+                {
+                    AssertPlacementStable(statusA);
+                    AssertPlacementStable(statusB);
+                    await system.ShutdownAsync();
+                    return;
+                }
+
+                var released = await root.RequestAsync<ReleaseNextDeferredAssignmentAckResult>(
+                    workerPid,
+                    new ReleaseNextDeferredAssignmentAck());
+                Assert.True(released.Released, "Expected a deferred placement assignment ack to be available.");
+                await Task.Delay(25);
+            }
+
+            throw new Xunit.Sdk.XunitException("Queued placement assignments did not drain to stable placement for both brains.");
         }
         finally
         {
@@ -2536,6 +2631,34 @@ public sealed class HiveMindPlacementOrchestrationTests
             timeoutMs: timeoutMs);
     }
 
+    private static async Task DrainDeferredAssignmentAcksUntilAsync(
+        IRootContext root,
+        PID workerPid,
+        Func<Task<bool>> completionPredicate,
+        int timeoutMs,
+        int idleDelayMs = 25)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            if (await completionPredicate())
+            {
+                return;
+            }
+
+            var released = await root.RequestAsync<ReleaseNextDeferredAssignmentAckResult>(workerPid, new ReleaseNextDeferredAssignmentAck());
+            if (!released.Released)
+            {
+                await Task.Delay(idleDelayMs);
+                continue;
+            }
+
+            await Task.Delay(idleDelayMs);
+        }
+
+        throw new Xunit.Sdk.XunitException("Deferred placement assignment acknowledgements did not drain before the timeout elapsed.");
+    }
+
     private static async Task<PlacementLifecycleInfo> GetPlacementLifecycleAsync(IRootContext root, PID hiveMind, Guid brainId)
         => await root.RequestAsync<PlacementLifecycleInfo>(
             hiveMind,
@@ -2859,7 +2982,10 @@ public sealed class HiveMindPlacementOrchestrationTests
     private sealed record ReleaseNextDeferredAssignmentAck;
     private sealed record ReleaseNextDeferredAssignmentAckResult(string AssignmentId, bool Released);
     private sealed record GetDeferredAssignmentAckSnapshot;
-    private sealed record DeferredAssignmentAckSnapshot(IReadOnlyList<string> AssignmentIds);
+    private sealed record DeferredAssignmentAckEntry(Guid BrainId, string AssignmentId);
+    private sealed record DeferredAssignmentAckSnapshot(
+        IReadOnlyList<string> AssignmentIds,
+        IReadOnlyList<DeferredAssignmentAckEntry> Entries);
     private sealed record ReleaseDeferredAssignmentAcks;
     private sealed record ReleaseDeferredReconcileReports;
     private sealed record RegisterHostedShard(PID HiveMind, Guid BrainId, uint RegionId, uint ShardIndex, uint NeuronStart, uint NeuronCount);
@@ -3056,6 +3182,7 @@ public sealed class HiveMindPlacementOrchestrationTests
         private readonly List<ulong> _unassignmentEpochs = new();
         private readonly List<(PID Sender, PlacementAssignmentAck Ack)> _deferredAssignmentAcks = new();
         private readonly List<(PID Sender, PlacementReconcileReport Report)> _deferredReconcileReports = new();
+        private bool _drainDeferredAssignmentAcks;
 
         public PlacementWorkerProbe(
             Guid workerId,
@@ -3111,6 +3238,12 @@ public sealed class HiveMindPlacementOrchestrationTests
                         _deferredAssignmentAcks
                             .Select(static pending => pending.Ack.AssignmentId ?? string.Empty)
                             .Where(static assignmentId => !string.IsNullOrWhiteSpace(assignmentId))
+                            .ToArray(),
+                        _deferredAssignmentAcks
+                            .Select(static pending => pending.Ack.BrainId.TryToGuid(out var brainId)
+                                ? new DeferredAssignmentAckEntry(brainId, pending.Ack.AssignmentId ?? string.Empty)
+                                : new DeferredAssignmentAckEntry(Guid.Empty, pending.Ack.AssignmentId ?? string.Empty))
+                            .Where(static entry => entry.BrainId != Guid.Empty && !string.IsNullOrWhiteSpace(entry.AssignmentId))
                             .ToArray()));
                     break;
                 case ReleaseDeferredAssignmentAcks:
@@ -3221,7 +3354,7 @@ public sealed class HiveMindPlacementOrchestrationTests
                 return;
             }
 
-            if (_autoRespondAssignments)
+            if (_autoRespondAssignments || _drainDeferredAssignmentAcks)
             {
                 context.Request(context.Sender, ack);
             }
@@ -3315,6 +3448,7 @@ public sealed class HiveMindPlacementOrchestrationTests
 
         private void FlushDeferredAssignmentAcks(IContext context)
         {
+            _drainDeferredAssignmentAcks = true;
             foreach (var pending in _deferredAssignmentAcks)
             {
                 context.Request(pending.Sender, pending.Ack.Clone());

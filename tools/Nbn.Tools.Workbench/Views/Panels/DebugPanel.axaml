@@ -57,6 +57,19 @@
           <Border Classes="row">
             <TextBlock Text="{Binding SystemLoadTickSummary}" Classes="muted" TextWrapping="Wrap" />
           </Border>
+          <Border Classes="row">
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding SystemLoadHealthSummary}" Classes="muted" TextWrapping="Wrap" />
+              <Viewbox Height="32" HorizontalAlignment="Stretch">
+                <Grid Width="180" Height="32">
+                  <Path Data="M 0 29 L 180 29" Stroke="#223043" StrokeThickness="1" />
+                  <Path Data="{Binding SystemLoadSparklinePathData}"
+                        Stroke="{Binding SystemLoadSparklineStroke}"
+                        StrokeThickness="2" />
+                </Grid>
+              </Viewbox>
+            </StackPanel>
+          </Border>
         </StackPanel>
       </Border>
 

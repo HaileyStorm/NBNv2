@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using System.Reflection;
 using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Runtime.Artifacts;
@@ -17,6 +18,24 @@ namespace Nbn.Tests.HiveMind;
 
 public sealed class HiveMindSpawnBrainTests
 {
+    [Fact]
+    public void SenderMatchesPid_Treats_AddresslessSender_AsEquivalent_WhenActorIdMatches()
+    {
+        var sender = new PID(string.Empty, "worker-node-1/brain-root");
+        var expected = new PID("192.168.0.14:12041", "worker-node-1/brain-root");
+
+        Assert.True(InvokeSenderMatchesPid(sender, expected));
+    }
+
+    [Fact]
+    public void SenderMatchesPid_DoesNotMatch_AddresslessSender_WhenActorIdDiffers()
+    {
+        var sender = new PID(string.Empty, "worker-node-2/brain-root");
+        var expected = new PID("192.168.0.14:12041", "worker-node-1/brain-root");
+
+        Assert.False(InvokeSenderMatchesPid(sender, expected));
+    }
+
     [Fact]
     public async Task SpawnBrain_Returns_BrainId_After_Placement_Completes_And_Registers_ControllerPids()
     {
@@ -85,8 +104,18 @@ public sealed class HiveMindSpawnBrainTests
                 $"Expected non-empty brain id but received failure={spawnAck.FailureReasonCode} message={spawnAck.FailureMessage}; hivemindTickLoop={status.TickLoopEnabled} brains={status.RegisteredBrains} pendingCompute={status.PendingCompute} pendingDeliver={status.PendingDeliver} workerAssignments={workerStatus.TrackedAssignmentCount} workerPid={workerPid.Address}/{workerPid.Id}");
             Assert.True(string.IsNullOrWhiteSpace(spawnAck.FailureReasonCode));
             Assert.True(string.IsNullOrWhiteSpace(spawnAck.FailureMessage));
+            Assert.True(spawnAck.AcceptedForPlacement);
+            Assert.False(spawnAck.PlacementReady);
             Assert.True(string.IsNullOrWhiteSpace(response.FailureReasonCode));
             Assert.True(string.IsNullOrWhiteSpace(response.FailureMessage));
+
+            var readyAck = await AwaitSpawnPlacementAsync(root, hiveMind, brainId);
+            Assert.True(readyAck.BrainId.TryToGuid(out var readyBrainId));
+            Assert.Equal(brainId, readyBrainId);
+            Assert.True(readyAck.AcceptedForPlacement);
+            Assert.True(readyAck.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(readyAck.FailureReasonCode));
+            Assert.True(string.IsNullOrWhiteSpace(readyAck.FailureMessage));
 
             await WaitForAsync(
                 async () =>
@@ -153,7 +182,7 @@ public sealed class HiveMindSpawnBrainTests
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(artifactRoot))
             {
-                Directory.Delete(artifactRoot, recursive: true);
+                DeleteDirectoryWithRetries(artifactRoot);
             }
         }
     }
@@ -232,7 +261,386 @@ public sealed class HiveMindSpawnBrainTests
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(artifactRoot))
             {
-                Directory.Delete(artifactRoot, recursive: true);
+                DeleteDirectoryWithRetries(artifactRoot);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SpawnBrain_BurstOnSameWorker_DoesNot_FalseTimeout_While_Queued_Assignments_Drain()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+	            var system = new ActorSystem();
+	            var root = system.Root;
+	
+	            var workerId = Guid.NewGuid();
+	            var workerProbe = new SpawnPlacementWorkerProbe(
+	                workerId,
+	                dropAcks: false,
+	                autoRespondAssignments: false);
+	            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 250,
+                    retryBackoffMs: 0,
+                    maxRetries: 0,
+                    reconcileTimeoutMs: 100))));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            async Task<Guid> SpawnAsync()
+            {
+                var ack = await root.RequestAsync<SpawnBrainAck>(
+                    hiveMind,
+                    new SpawnBrain
+                    {
+                        BrainDef = brainDef
+                    },
+                    TimeSpan.FromSeconds(10));
+                Assert.True(ack.BrainId.TryToGuid(out var brainId));
+                Assert.True(ack.AcceptedForPlacement);
+                Assert.False(ack.PlacementReady);
+                Assert.True(string.IsNullOrWhiteSpace(ack.FailureReasonCode), ack.FailureMessage);
+                return brainId;
+            }
+
+            var brainA = await SpawnAsync();
+            var brainB = await SpawnAsync();
+
+            var awaitPlacementA = AwaitSpawnPlacementAsync(root, hiveMind, brainA, timeoutMs: 0);
+            var awaitPlacementB = AwaitSpawnPlacementAsync(root, hiveMind, brainB, timeoutMs: 0);
+            await Task.Delay(50);
+            Assert.True(
+                workerProbe.AssignmentRequestCount < 9,
+                $"Expected the worker lane to avoid dispatching the full brain batch immediately, but saw {workerProbe.AssignmentRequestCount} assignment requests.");
+
+            for (var iteration = 0; iteration < 80 && (!awaitPlacementA.IsCompleted || !awaitPlacementB.IsCompleted); iteration++)
+            {
+                var released = await root.RequestAsync<ReleaseNextDeferredSpawnAssignmentAckResult>(
+                    workerPid,
+                    new ReleaseNextDeferredSpawnAssignmentAck());
+                if (!released.Released)
+                {
+                    await Task.Delay(25);
+                    continue;
+                }
+
+                await Task.Delay(60);
+            }
+
+            var readyAckA = await awaitPlacementA.WaitAsync(TimeSpan.FromSeconds(5));
+            var readyAckB = await awaitPlacementB.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.True(readyAckA.AcceptedForPlacement);
+            Assert.True(readyAckA.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(readyAckA.FailureReasonCode), readyAckA.FailureMessage);
+
+            Assert.True(readyAckB.AcceptedForPlacement);
+            Assert.True(readyAckB.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(readyAckB.FailureReasonCode), readyAckB.FailureMessage);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                DeleteDirectoryWithRetries(artifactRoot);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SpawnBrain_RetryableAssignmentTimeout_DoesNot_Advance_To_Later_Assignments_Before_Retrying_Current()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var workerProbe = new SpawnPlacementWorkerProbe(
+                workerId,
+                dropAcks: true);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 120,
+                    retryBackoffMs: 10,
+                    maxRetries: 3,
+                    reconcileTimeoutMs: 500))));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef
+                },
+                TimeSpan.FromSeconds(10));
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            Assert.True(spawnAck.AcceptedForPlacement);
+            Assert.False(spawnAck.PlacementReady);
+
+            await Task.Delay(420);
+
+            var observedBeforeRelease = await root.RequestAsync<ObservedSpawnAssignmentIdsResult>(
+                workerPid,
+                new GetObservedSpawnAssignmentIds(),
+                TimeSpan.FromSeconds(5));
+            Assert.NotEmpty(observedBeforeRelease.AssignmentIds);
+            _ = Assert.Single(observedBeforeRelease.AssignmentIds.Distinct(StringComparer.Ordinal));
+
+            root.Send(workerPid, new SetSpawnPlacementWorkerDropAcks(false));
+
+            var placementAck = await AwaitSpawnPlacementAsync(root, hiveMind, brainId, timeoutMs: 10_000);
+            Assert.True(placementAck.AcceptedForPlacement);
+            Assert.True(placementAck.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(placementAck.FailureReasonCode), placementAck.FailureMessage);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                DeleteDirectoryWithRetries(artifactRoot);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SpawnBrainViaIo_AfterFailedSpawnTimeout_CanStillPlaceANewBrain()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var metadataName = $"brain-info-{Guid.NewGuid():N}";
+            var ioPid = new PID(string.Empty, ioName);
+            var workerProbe = new SpawnPlacementWorkerProbe(workerId, dropAcks: true);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 150,
+                    retryBackoffMs: 0,
+                    maxRetries: 0,
+                    reconcileTimeoutMs: 500),
+                ioPid: ioPid)));
+            var ioGateway = root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(CreateIoOptions(), hiveMindPid: hiveMind)),
+                ioName);
+            _ = root.SpawnNamed(
+                Props.FromProducer(() => new FixedBrainInfoActor(brainDef, inputWidth: 4, outputWidth: 4)),
+                metadataName);
+
+            PrimeWorkerDiscoveryEndpoints(root, workerPid, hiveMind.Id, metadataName);
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var failedSpawn = await root.RequestAsync<ProtoIo.SpawnBrainViaIOAck>(
+                ioGateway,
+                new ProtoIo.SpawnBrainViaIO
+                {
+                    Request = new SpawnBrain
+                    {
+                        BrainDef = brainDef
+                    }
+                },
+                TimeSpan.FromSeconds(10));
+            Assert.NotNull(failedSpawn.Ack);
+            Assert.True(failedSpawn.Ack.BrainId.TryToGuid(out var failedBrainId));
+            Assert.NotEqual(Guid.Empty, failedBrainId);
+
+            var failedPlacement = await AwaitSpawnPlacementViaIoAsync(root, ioGateway, failedBrainId, timeoutMs: 2_000);
+            Assert.NotNull(failedPlacement.Ack);
+            Assert.True(failedPlacement.Ack.AcceptedForPlacement);
+            Assert.False(failedPlacement.Ack.PlacementReady);
+            Assert.False(string.IsNullOrWhiteSpace(failedPlacement.Ack.FailureReasonCode));
+
+            root.Send(workerPid, new SetSpawnPlacementWorkerDropAcks(false));
+
+            var successfulSpawn = await root.RequestAsync<ProtoIo.SpawnBrainViaIOAck>(
+                ioGateway,
+                new ProtoIo.SpawnBrainViaIO
+                {
+                    Request = new SpawnBrain
+                    {
+                        BrainDef = brainDef
+                    }
+                },
+                TimeSpan.FromSeconds(10));
+            Assert.NotNull(successfulSpawn.Ack);
+            Assert.True(successfulSpawn.Ack.BrainId.TryToGuid(out var successfulBrainId));
+            Assert.NotEqual(Guid.Empty, successfulBrainId);
+            Assert.NotEqual(failedBrainId, successfulBrainId);
+
+            var successfulPlacement = await AwaitSpawnPlacementViaIoAsync(root, ioGateway, successfulBrainId, timeoutMs: 5_000);
+            Assert.NotNull(successfulPlacement.Ack);
+            Assert.True(successfulPlacement.Ack.AcceptedForPlacement);
+            Assert.True(successfulPlacement.Ack.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(successfulPlacement.Ack.FailureReasonCode), successfulPlacement.Ack.FailureMessage);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                DeleteDirectoryWithRetries(artifactRoot);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SpawnBrain_Respects_WorkerPlacementAccepted_Then_Ready()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var metadataName = $"brain-info-{Guid.NewGuid():N}";
+            var ioPid = new PID(string.Empty, ioName);
+            var workerProbe = new SpawnPlacementWorkerProbe(
+                workerId,
+                dropAcks: false,
+                autoRespondAssignments: false,
+                acceptBeforeReady: true);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 250,
+                    retryBackoffMs: 0,
+                    maxRetries: 0,
+                    reconcileTimeoutMs: 500),
+                ioPid: ioPid)));
+            var ioGateway = root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(CreateIoOptions(), hiveMindPid: hiveMind)),
+                ioName);
+            _ = root.SpawnNamed(
+                Props.FromProducer(() => new FixedBrainInfoActor(brainDef, inputWidth: 4, outputWidth: 4)),
+                metadataName);
+
+            PrimeWorkerDiscoveryEndpoints(root, workerPid, hiveMind.Id, metadataName);
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var response = await root.RequestAsync<ProtoIo.SpawnBrainViaIOAck>(
+                ioGateway,
+                new ProtoIo.SpawnBrainViaIO
+                {
+                    Request = new SpawnBrain
+                    {
+                        BrainDef = brainDef
+                    }
+                },
+                TimeSpan.FromSeconds(10));
+
+            Assert.NotNull(response.Ack);
+            Assert.True(response.Ack.BrainId.TryToGuid(out var brainId));
+
+            var awaitPlacement = AwaitSpawnPlacementAsync(root, hiveMind, brainId, timeoutMs: 0);
+            await Task.Delay(150);
+            Assert.False(awaitPlacement.IsCompleted);
+
+            for (var iteration = 0; iteration < 20 && !awaitPlacement.IsCompleted; iteration++)
+            {
+                var released = await root.RequestAsync<ReleaseNextDeferredSpawnAssignmentAckResult>(
+                    workerPid,
+                    new ReleaseNextDeferredSpawnAssignmentAck());
+                if (!released.Released)
+                {
+                    await Task.Delay(25);
+                    continue;
+                }
+
+                await Task.Delay(25);
+            }
+
+            var readyAck = await awaitPlacement.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(readyAck.AcceptedForPlacement);
+            Assert.True(readyAck.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(readyAck.FailureReasonCode), readyAck.FailureMessage);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                DeleteDirectoryWithRetries(artifactRoot);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SpawnBrain_IncludesExplicitReplyPid_OnPlacementAssignmentRequests()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var workerProbe = new SpawnPlacementWorkerProbe(workerId, dropAcks: false);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 250,
+                    retryBackoffMs: 0,
+                    maxRetries: 0,
+                    reconcileTimeoutMs: 500))));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef
+                },
+                TimeSpan.FromSeconds(10));
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            var readyAck = await AwaitSpawnPlacementAsync(root, hiveMind, brainId, timeoutMs: 5_000);
+            Assert.True(readyAck.PlacementReady);
+
+            var observedReplyPids = await root.RequestAsync<ObservedSpawnReplyPidsResult>(
+                workerPid,
+                new GetObservedSpawnReplyPids(),
+                TimeSpan.FromSeconds(5));
+
+            Assert.NotEmpty(observedReplyPids.ReplyPids);
+            Assert.All(observedReplyPids.ReplyPids, replyPid =>
+            {
+                Assert.False(string.IsNullOrWhiteSpace(replyPid));
+                Assert.Contains(hiveMind.Id, replyPid, StringComparison.Ordinal);
+            });
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                DeleteDirectoryWithRetries(artifactRoot);
             }
         }
     }
@@ -343,7 +751,7 @@ public sealed class HiveMindSpawnBrainTests
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(artifactRoot))
             {
-                Directory.Delete(artifactRoot, recursive: true);
+                DeleteDirectoryWithRetries(artifactRoot);
             }
         }
     }
@@ -411,12 +819,25 @@ public sealed class HiveMindSpawnBrainTests
             Assert.NotNull(response.Ack);
             var spawnAck = response.Ack;
             Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
-            Assert.Equal(Guid.Empty, brainId);
-            Assert.Equal("spawn_assignment_rejected", spawnAck.FailureReasonCode);
-            Assert.Contains("service role 'brain-root'", spawnAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("disabled", spawnAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal("spawn_assignment_rejected", response.FailureReasonCode);
-            Assert.Equal(spawnAck.FailureMessage, response.FailureMessage);
+            Assert.NotEqual(Guid.Empty, brainId);
+            Assert.True(spawnAck.AcceptedForPlacement);
+            Assert.False(spawnAck.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(spawnAck.FailureReasonCode));
+            Assert.True(string.IsNullOrWhiteSpace(spawnAck.FailureMessage));
+            Assert.True(string.IsNullOrWhiteSpace(response.FailureReasonCode));
+            Assert.True(string.IsNullOrWhiteSpace(response.FailureMessage));
+
+            var waitResponse = await AwaitSpawnPlacementViaIoAsync(root, ioGateway, brainId);
+            Assert.NotNull(waitResponse.Ack);
+            Assert.True(waitResponse.Ack.BrainId.TryToGuid(out var waitedBrainId));
+            Assert.Equal(brainId, waitedBrainId);
+            Assert.True(waitResponse.Ack.AcceptedForPlacement);
+            Assert.False(waitResponse.Ack.PlacementReady);
+            Assert.Equal("spawn_assignment_rejected", waitResponse.Ack.FailureReasonCode);
+            Assert.Contains("service role 'brain-root'", waitResponse.Ack.FailureMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("disabled", waitResponse.Ack.FailureMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("spawn_assignment_rejected", waitResponse.FailureReasonCode);
+            Assert.Equal(waitResponse.Ack.FailureMessage, waitResponse.FailureMessage);
 
             var workerSnapshot = await root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
                 workerPid,
@@ -431,7 +852,7 @@ public sealed class HiveMindSpawnBrainTests
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(artifactRoot))
             {
-                Directory.Delete(artifactRoot, recursive: true);
+                DeleteDirectoryWithRetries(artifactRoot);
             }
         }
     }
@@ -471,7 +892,7 @@ public sealed class HiveMindSpawnBrainTests
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(artifactRoot))
             {
-                Directory.Delete(artifactRoot, recursive: true);
+                DeleteDirectoryWithRetries(artifactRoot);
             }
         }
     }
@@ -535,9 +956,19 @@ public sealed class HiveMindSpawnBrainTests
                 });
 
             Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
-            Assert.Equal(Guid.Empty, brainId);
-            Assert.Equal("spawn_assignment_timeout", spawnAck.FailureReasonCode);
-            Assert.Contains("timed out", spawnAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.NotEqual(Guid.Empty, brainId);
+            Assert.True(spawnAck.AcceptedForPlacement);
+            Assert.False(spawnAck.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(spawnAck.FailureReasonCode));
+            Assert.True(string.IsNullOrWhiteSpace(spawnAck.FailureMessage));
+
+            var failureAck = await AwaitSpawnPlacementAsync(root, hiveMind, brainId);
+            Assert.True(failureAck.BrainId.TryToGuid(out var failedBrainId));
+            Assert.Equal(brainId, failedBrainId);
+            Assert.True(failureAck.AcceptedForPlacement);
+            Assert.False(failureAck.PlacementReady);
+            Assert.Equal("spawn_assignment_timeout", failureAck.FailureReasonCode);
+            Assert.Contains("timed out", failureAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
             Assert.True(workerProbe.AssignmentRequestCount >= 2);
 
             await WaitForAsync(
@@ -555,7 +986,7 @@ public sealed class HiveMindSpawnBrainTests
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(artifactRoot))
             {
-                Directory.Delete(artifactRoot, recursive: true);
+                DeleteDirectoryWithRetries(artifactRoot);
             }
         }
     }
@@ -592,9 +1023,17 @@ public sealed class HiveMindSpawnBrainTests
                 });
 
             Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
-            Assert.Equal(Guid.Empty, brainId);
-            Assert.Equal("spawn_reconcile_mismatch", spawnAck.FailureReasonCode);
-            Assert.Contains("mismatch", spawnAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.NotEqual(Guid.Empty, brainId);
+            Assert.True(spawnAck.AcceptedForPlacement);
+            Assert.False(spawnAck.PlacementReady);
+
+            var failureAck = await AwaitSpawnPlacementAsync(root, hiveMind, brainId);
+            Assert.True(failureAck.BrainId.TryToGuid(out var failedBrainId));
+            Assert.Equal(brainId, failedBrainId);
+            Assert.True(failureAck.AcceptedForPlacement);
+            Assert.False(failureAck.PlacementReady);
+            Assert.Equal("spawn_reconcile_mismatch", failureAck.FailureReasonCode);
+            Assert.Contains("mismatch", failureAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
 
             await system.ShutdownAsync();
         }
@@ -603,7 +1042,7 @@ public sealed class HiveMindSpawnBrainTests
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(artifactRoot))
             {
-                Directory.Delete(artifactRoot, recursive: true);
+                DeleteDirectoryWithRetries(artifactRoot);
             }
         }
     }
@@ -640,9 +1079,17 @@ public sealed class HiveMindSpawnBrainTests
                 });
 
             Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
-            Assert.Equal(Guid.Empty, brainId);
-            Assert.Equal("spawn_reconcile_timeout", spawnAck.FailureReasonCode);
-            Assert.Contains("timed out", spawnAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.NotEqual(Guid.Empty, brainId);
+            Assert.True(spawnAck.AcceptedForPlacement);
+            Assert.False(spawnAck.PlacementReady);
+
+            var failureAck = await AwaitSpawnPlacementAsync(root, hiveMind, brainId);
+            Assert.True(failureAck.BrainId.TryToGuid(out var failedBrainId));
+            Assert.Equal(brainId, failedBrainId);
+            Assert.True(failureAck.AcceptedForPlacement);
+            Assert.False(failureAck.PlacementReady);
+            Assert.Equal("spawn_reconcile_timeout", failureAck.FailureReasonCode);
+            Assert.Contains("timed out", failureAck.FailureMessage, StringComparison.OrdinalIgnoreCase);
 
             await system.ShutdownAsync();
         }
@@ -651,7 +1098,7 @@ public sealed class HiveMindSpawnBrainTests
             SqliteConnection.ClearAllPools();
             if (Directory.Exists(artifactRoot))
             {
-                Directory.Delete(artifactRoot, recursive: true);
+                DeleteDirectoryWithRetries(artifactRoot);
             }
         }
     }
@@ -803,6 +1250,42 @@ public sealed class HiveMindSpawnBrainTests
             PlacementAssignmentMaxRetries: maxRetries,
             PlacementReconcileTimeoutMs: reconcileTimeoutMs);
 
+    private static bool InvokeSenderMatchesPid(PID sender, PID expected)
+    {
+        var method = typeof(HiveMindActor).GetMethod(
+            "SenderMatchesPid",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        return Assert.IsType<bool>(method!.Invoke(null, new object?[] { sender, expected }));
+    }
+
+    private static void DeleteDirectoryWithRetries(string artifactRoot)
+    {
+        if (!Directory.Exists(artifactRoot))
+        {
+            return;
+        }
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 4)
+            {
+                SqliteConnection.ClearAllPools();
+                Thread.Sleep(50);
+            }
+            catch (UnauthorizedAccessException) when (attempt < 4)
+            {
+                SqliteConnection.ClearAllPools();
+                Thread.Sleep(50);
+            }
+        }
+    }
+
     private static async Task WaitForAsync(Func<Task<bool>> predicate, int timeoutMs)
     {
         using var cts = new CancellationTokenSource(timeoutMs);
@@ -825,6 +1308,34 @@ public sealed class HiveMindSpawnBrainTests
 
         throw new XunitException($"Condition was not met within {timeoutMs} ms.");
     }
+
+    private static Task<SpawnBrainAck> AwaitSpawnPlacementAsync(
+        IRootContext root,
+        PID hiveMind,
+        Guid brainId,
+        ulong timeoutMs = 5_000)
+        => root.RequestAsync<SpawnBrainAck>(
+            hiveMind,
+            new AwaitSpawnPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TimeoutMs = timeoutMs
+            },
+            TimeSpan.FromMilliseconds((double)Math.Max((ulong)100, timeoutMs + 1_000)));
+
+    private static Task<ProtoIo.AwaitSpawnPlacementViaIOAck> AwaitSpawnPlacementViaIoAsync(
+        IRootContext root,
+        PID ioGateway,
+        Guid brainId,
+        ulong timeoutMs = 5_000)
+        => root.RequestAsync<ProtoIo.AwaitSpawnPlacementViaIOAck>(
+            ioGateway,
+            new ProtoIo.AwaitSpawnPlacementViaIO
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TimeoutMs = timeoutMs
+            },
+            TimeSpan.FromMilliseconds((double)Math.Max((ulong)100, timeoutMs + 1_000)));
 
     private sealed class FixedBrainInfoActor : IActor
     {
@@ -866,21 +1377,44 @@ public sealed class HiveMindSpawnBrainTests
         Drop
     }
 
+    private sealed record ReleaseNextDeferredSpawnAssignmentAck;
+
+    private sealed record ReleaseNextDeferredSpawnAssignmentAckResult(bool Released);
+
+    private sealed record SetSpawnPlacementWorkerDropAcks(bool DropAcks);
+
+    private sealed record GetObservedSpawnAssignmentIds;
+
+    private sealed record ObservedSpawnAssignmentIdsResult(IReadOnlyList<string> AssignmentIds);
+
+    private sealed record GetObservedSpawnReplyPids;
+
+    private sealed record ObservedSpawnReplyPidsResult(IReadOnlyList<string> ReplyPids);
+
     private sealed class SpawnPlacementWorkerProbe : IActor
     {
         private readonly Guid _workerId;
-        private readonly bool _dropAcks;
+        private bool _dropAcks;
         private readonly SpawnReconcileBehavior _reconcileBehavior;
+        private readonly bool _autoRespondAssignments;
+        private readonly bool _acceptBeforeReady;
         private readonly Dictionary<string, PlacementAssignment> _knownAssignments = new(StringComparer.Ordinal);
+        private readonly List<(PID Sender, PlacementAssignmentAck Ack)> _deferredAssignmentAcks = new();
+        private readonly List<string> _observedAssignmentIds = new();
+        private readonly List<string> _observedReplyPids = new();
 
         public SpawnPlacementWorkerProbe(
             Guid workerId,
             bool dropAcks,
-            SpawnReconcileBehavior reconcileBehavior = SpawnReconcileBehavior.Matched)
+            SpawnReconcileBehavior reconcileBehavior = SpawnReconcileBehavior.Matched,
+            bool autoRespondAssignments = true,
+            bool acceptBeforeReady = false)
         {
             _workerId = workerId;
             _dropAcks = dropAcks;
             _reconcileBehavior = reconcileBehavior;
+            _autoRespondAssignments = autoRespondAssignments;
+            _acceptBeforeReady = acceptBeforeReady;
         }
 
         public int AssignmentRequestCount { get; private set; }
@@ -895,6 +1429,18 @@ public sealed class HiveMindSpawnBrainTests
                     break;
                 case PlacementReconcileRequest request:
                     HandlePlacementReconcileRequest(context, request);
+                    break;
+                case ReleaseNextDeferredSpawnAssignmentAck:
+                    FlushNextDeferredAssignmentAck(context);
+                    break;
+                case SetSpawnPlacementWorkerDropAcks update:
+                    _dropAcks = update.DropAcks;
+                    break;
+                case GetObservedSpawnAssignmentIds:
+                    context.Respond(new ObservedSpawnAssignmentIdsResult(_observedAssignmentIds.ToArray()));
+                    break;
+                case GetObservedSpawnReplyPids:
+                    context.Respond(new ObservedSpawnReplyPidsResult(_observedReplyPids.ToArray()));
                     break;
             }
 
@@ -911,6 +1457,8 @@ public sealed class HiveMindSpawnBrainTests
             var assignment = request.Assignment.Clone();
             AssignmentRequestCount++;
             _knownAssignments[assignment.AssignmentId] = assignment;
+            _observedAssignmentIds.Add(assignment.AssignmentId);
+            _observedReplyPids.Add(request.ReplyPid ?? string.Empty);
 
             if (_dropAcks)
             {
@@ -922,7 +1470,22 @@ public sealed class HiveMindSpawnBrainTests
                 return;
             }
 
-            context.Request(context.Sender, new PlacementAssignmentAck
+            if (_acceptBeforeReady)
+            {
+                context.Request(context.Sender, new PlacementAssignmentAck
+                {
+                    AssignmentId = assignment.AssignmentId,
+                    BrainId = assignment.BrainId,
+                    PlacementEpoch = assignment.PlacementEpoch,
+                    State = PlacementAssignmentState.PlacementAssignmentAccepted,
+                    Accepted = true,
+                    Retryable = false,
+                    FailureReason = PlacementFailureReason.PlacementFailureNone,
+                    Message = "accepted"
+                });
+            }
+
+            var ack = new PlacementAssignmentAck
             {
                 AssignmentId = assignment.AssignmentId,
                 BrainId = assignment.BrainId,
@@ -932,7 +1495,16 @@ public sealed class HiveMindSpawnBrainTests
                 Retryable = false,
                 FailureReason = PlacementFailureReason.PlacementFailureNone,
                 Message = "ready"
-            });
+            };
+
+            if (_autoRespondAssignments)
+            {
+                context.Request(context.Sender, ack);
+            }
+            else
+            {
+                _deferredAssignmentAcks.Add((context.Sender, ack));
+            }
         }
 
         private void HandlePlacementReconcileRequest(IContext context, PlacementReconcileRequest request)
@@ -984,6 +1556,20 @@ public sealed class HiveMindSpawnBrainTests
             }
 
             context.Request(context.Sender, report);
+        }
+
+        private void FlushNextDeferredAssignmentAck(IContext context)
+        {
+            if (_deferredAssignmentAcks.Count == 0)
+            {
+                context.Respond(new ReleaseNextDeferredSpawnAssignmentAckResult(false));
+                return;
+            }
+
+            var pending = _deferredAssignmentAcks[0];
+            _deferredAssignmentAcks.RemoveAt(0);
+            context.Request(pending.Sender, pending.Ack.Clone());
+            context.Respond(new ReleaseNextDeferredSpawnAssignmentAckResult(true));
         }
     }
 

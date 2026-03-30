@@ -56,6 +56,102 @@ public sealed partial class IoGatewayActor
         }
     }
 
+    private async Task HandleAwaitSpawnPlacementAsync(IContext context, AwaitSpawnPlacementViaIO message)
+    {
+        if (_hiveMindPid is null)
+        {
+            var ack = BuildSpawnFailureAck(
+                reasonCode: "spawn_unavailable",
+                failureMessage: "Spawn wait failed: HiveMind endpoint is not configured.");
+            context.Respond(new AwaitSpawnPlacementViaIOAck
+            {
+                Ack = ack,
+                FailureReasonCode = ack.FailureReasonCode,
+                FailureMessage = ack.FailureMessage
+            });
+            return;
+        }
+
+        if (!TryGetBrainId(message.BrainId, out var brainId))
+        {
+            var ack = BuildSpawnFailureAck(
+                reasonCode: "spawn_invalid_request",
+                failureMessage: "Spawn wait failed: brain_id is required.");
+            context.Respond(new AwaitSpawnPlacementViaIOAck
+            {
+                Ack = ack,
+                FailureReasonCode = ack.FailureReasonCode,
+                FailureMessage = ack.FailureMessage
+            });
+            return;
+        }
+
+        try
+        {
+            var requestedTimeoutMs = message.TimeoutMs;
+            var transportTimeoutMs = requestedTimeoutMs >= (ulong)int.MaxValue - 1_000
+                ? int.MaxValue
+                : requestedTimeoutMs == 0
+                ? (int)Math.Max(100, TimeSpan.FromMinutes(10).TotalMilliseconds)
+                : (int)Math.Max(100, requestedTimeoutMs + 1_000UL);
+            var ack = await context.RequestAsync<ProtoControl.SpawnBrainAck>(
+                _hiveMindPid,
+                new ProtoControl.AwaitSpawnPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    TimeoutMs = requestedTimeoutMs
+                },
+                TimeSpan.FromMilliseconds(transportTimeoutMs)).ConfigureAwait(false);
+            if (ack is null)
+            {
+                ack = BuildSpawnFailureAck(
+                    reasonCode: "spawn_empty_response",
+                    failureMessage: "Spawn wait failed: HiveMind returned an empty placement acknowledgment.");
+            }
+            else if (ack.AcceptedForPlacement
+                     && ack.PlacementReady
+                     && ack.BrainId.TryToGuid(out var awaitedBrainId)
+                     && awaitedBrainId != Guid.Empty)
+            {
+                var brainEntry = _brains.TryGetValue(awaitedBrainId, out var existing)
+                    ? existing
+                    : await EnsureBrainEntryAsync(
+                            context,
+                            awaitedBrainId,
+                            BrainInfoResolveTimeout,
+                            bootstrapOnly: true)
+                        .ConfigureAwait(false);
+                if (brainEntry is null)
+                {
+                    ack.FailureReasonCode = "spawn_brain_info_timeout";
+                    ack.FailureMessage = $"Spawn wait failed: brain {awaitedBrainId} became placed but IO metadata was not visible in time.";
+                    ack.AcceptedForPlacement = true;
+                    ack.PlacementReady = false;
+                }
+            }
+
+            context.Respond(new AwaitSpawnPlacementViaIOAck
+            {
+                Ack = ack,
+                FailureReasonCode = ack.FailureReasonCode,
+                FailureMessage = ack.FailureMessage
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"AwaitSpawnPlacementViaIO failed: {ex.Message}");
+            var ack = BuildSpawnFailureAck(
+                reasonCode: "spawn_request_failed",
+                failureMessage: $"Spawn wait failed: request forwarding to HiveMind failed ({ex.GetBaseException().Message}).");
+            context.Respond(new AwaitSpawnPlacementViaIOAck
+            {
+                Ack = ack,
+                FailureReasonCode = ack.FailureReasonCode,
+                FailureMessage = ack.FailureMessage
+            });
+        }
+    }
+
     private void HandleKillBrain(IContext context, KillBrainViaIO message)
     {
         if (_hiveMindPid is null)
@@ -83,7 +179,7 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            context.Send(_hiveMindPid, request);
+            context.Request(_hiveMindPid, request);
             context.Respond(new KillBrainViaIOAck
             {
                 Accepted = true,
@@ -279,7 +375,7 @@ public sealed partial class IoGatewayActor
         }
     }
 
-    private async Task RegisterBrainAsync(IContext context, RegisterBrain message)
+    private async Task RegisterBrainAsync(IContext context, RegisterBrain message, bool bootstrapOnly = false)
     {
         if (!TryGetBrainId(message.BrainId, out var brainId))
         {
@@ -378,33 +474,45 @@ public sealed partial class IoGatewayActor
                 existing.OwnsOutputCoordinator = updatedOwnsOutputCoordinator;
             }
 
-            await SynchronizeCoordinatorConfigurationAsync(
-                    context,
-                    existing,
-                    updateInputWidth: inputWidthChanged || inputCoordinatorChanged,
-                    updateInputMode: inputModeChanged || inputCoordinatorChanged,
-                    updateOutputWidth: outputWidthChanged || outputCoordinatorChanged)
-                .ConfigureAwait(false);
-
-            if (inputCoordinatorChanged)
+            if (!bootstrapOnly)
             {
-                await ReplayInputStateAsync(context, existing).ConfigureAwait(false);
+                await SynchronizeCoordinatorConfigurationAsync(
+                        context,
+                        existing,
+                        updateInputWidth: inputWidthChanged || inputCoordinatorChanged,
+                        updateInputMode: inputModeChanged || inputCoordinatorChanged,
+                        updateOutputWidth: outputWidthChanged || outputCoordinatorChanged)
+                    .ConfigureAwait(false);
+
+                if (inputCoordinatorChanged)
+                {
+                    await ReplayInputStateAsync(context, existing).ConfigureAwait(false);
+                }
+
+                if (outputCoordinatorChanged)
+                {
+                    await ReplayOutputSubscriptionsAsync(context, existing).ConfigureAwait(false);
+                }
+
+                if (MergePendingOutputSubscriptions(existing))
+                {
+                    await ReplayOutputSubscriptionsAsync(context, existing).ConfigureAwait(false);
+                }
             }
-
-            if (outputCoordinatorChanged)
+            else
             {
-                await ReplayOutputSubscriptionsAsync(context, existing).ConfigureAwait(false);
-            }
-
-            if (MergePendingOutputSubscriptions(existing))
-            {
-                await ReplayOutputSubscriptionsAsync(context, existing).ConfigureAwait(false);
+                MergePendingOutputSubscriptions(existing);
             }
 
             if (LogMetadataDiagnostics)
             {
                 Console.WriteLine(
                     $"[IoGatewayMeta] RegisterBrain update brain={brainId} input={existing.InputWidth} output={existing.OutputWidth} base={ArtifactLabel(existing.BaseDefinition)} snapshot={ArtifactLabel(existing.LastSnapshot)} runtimeConfig={message.HasRuntimeConfig}");
+            }
+
+            if (bootstrapOnly)
+            {
+                return;
             }
 
             await EnsureIoGatewayRegisteredAsync(context, brainId);
@@ -449,6 +557,16 @@ public sealed partial class IoGatewayActor
         };
 
         _brains.Add(brainId, entry);
+
+        if (bootstrapOnly)
+        {
+            if (LogMetadataDiagnostics)
+            {
+                Console.WriteLine(
+                    $"[IoGatewayMeta] RegisterBrain bootstrap add brain={brainId} input={entry.InputWidth} output={entry.OutputWidth} base={ArtifactLabel(entry.BaseDefinition)} snapshot={ArtifactLabel(entry.LastSnapshot)}");
+            }
+            return;
+        }
 
         await SynchronizeCoordinatorConfigurationAsync(
                 context,
@@ -808,7 +926,12 @@ public sealed partial class IoGatewayActor
         {
             BrainId = Guid.Empty.ToProtoUuid(),
             FailureReasonCode = normalizedReasonCode,
-            FailureMessage = normalizedFailureMessage
+            FailureMessage = normalizedFailureMessage,
+            AcceptedForPlacement = false,
+            PlacementReady = false,
+            PlacementEpoch = 0,
+            LifecycleState = ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
+            ReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileFailed
         };
     }
 

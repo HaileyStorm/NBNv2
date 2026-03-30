@@ -203,14 +203,16 @@ public sealed partial class HiveMindActor
 
     private sealed class PendingSpawnState
     {
-        public PendingSpawnState(Guid brainId, ulong placementEpoch)
+        public PendingSpawnState(Guid brainId, ulong placementEpoch, int defaultWaitTimeoutMs)
         {
             BrainId = brainId;
             PlacementEpoch = placementEpoch;
+            DefaultWaitTimeoutMs = Math.Max(50, defaultWaitTimeoutMs);
         }
 
         public Guid BrainId { get; }
         public ulong PlacementEpoch { get; }
+        public int DefaultWaitTimeoutMs { get; }
         public string FailureReasonCode { get; private set; } = "spawn_failed";
         public string FailureMessage { get; private set; } = "Spawn failed before placement completed.";
         public TaskCompletionSource<bool> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -223,6 +225,18 @@ public sealed partial class HiveMindActor
                 : failureMessage.Trim();
         }
     }
+
+    private readonly record struct PendingSpawnAwaitResult(bool Completed, bool TimedOut);
+
+    private readonly record struct CompletedSpawnState(
+        Guid BrainId,
+        ulong PlacementEpoch,
+        bool AcceptedForPlacement,
+        bool PlacementReady,
+        ProtoControl.PlacementLifecycleState LifecycleState,
+        ProtoControl.PlacementReconcileState ReconcileState,
+        string FailureReasonCode,
+        string FailureMessage);
 
     private enum EndpointHostClass
     {
@@ -308,6 +322,40 @@ public sealed partial class HiveMindActor
         public long AcceptedMs { get; set; }
         public long ReadyMs { get; set; }
     }
+
+    private sealed class WorkerPlacementDispatchState
+    {
+        public Queue<QueuedPlacementDispatchBatch> Pending { get; } = new();
+        public ActiveWorkerPlacementDispatch? Active { get; set; }
+    }
+
+    private sealed class ActiveWorkerPlacementDispatch
+    {
+        public ActiveWorkerPlacementDispatch(Guid brainId, ulong placementEpoch, Guid workerNodeId, IEnumerable<QueuedPlacementDispatchAttempt> assignments)
+        {
+            BrainId = brainId;
+            PlacementEpoch = placementEpoch;
+            WorkerNodeId = workerNodeId;
+            PendingAssignments = new Queue<QueuedPlacementDispatchAttempt>(assignments);
+        }
+
+        public Guid BrainId { get; }
+        public ulong PlacementEpoch { get; }
+        public Guid WorkerNodeId { get; }
+        public Queue<QueuedPlacementDispatchAttempt> PendingAssignments { get; }
+        public HashSet<string> InFlightAssignmentIds { get; } = new(StringComparer.Ordinal);
+        public int RemainingAssignmentCount => PendingAssignments.Count + InFlightAssignmentIds.Count;
+    }
+
+    private readonly record struct QueuedPlacementDispatchBatch(
+        Guid BrainId,
+        ulong PlacementEpoch,
+        Guid WorkerNodeId,
+        IReadOnlyList<QueuedPlacementDispatchAttempt> Assignments);
+
+    private readonly record struct QueuedPlacementDispatchAttempt(
+        string AssignmentId,
+        int Attempt);
 
     private sealed record PlacementStateSnapshot(
         ulong PlacementEpoch,

@@ -81,6 +81,14 @@ public sealed partial class WorkerNodeActor
         public static HostingResult Failed(PlacementAssignmentAck failedAck)
             => new(false, null, null, failedAck);
     }
+
+    private readonly record struct PreparedRegionShardHosting(
+        PlacementAssignment Assignment,
+        SharedShardId32 ShardId,
+        int NeuronStart,
+        int NeuronCount,
+        string ActorName,
+        Props Props);
 }
 
 internal static class WorkerNodeUuidExtensions

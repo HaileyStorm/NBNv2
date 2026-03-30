@@ -37,9 +37,25 @@ public sealed partial class HiveMindActor
             ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning,
             ProtoControl.PlacementFailureReason.PlacementFailureNone);
 
-        foreach (var assignment in brain.PlacementExecution.Assignments.Values.OrderBy(static entry => entry.Assignment.AssignmentId, StringComparer.Ordinal))
+        foreach (var workerAssignments in brain.PlacementExecution.Assignments.Values
+                     .OrderBy(static entry => entry.Assignment.AssignmentId, StringComparer.Ordinal)
+                     .GroupBy(entry => TryGetGuid(entry.Assignment.WorkerNodeId, out var workerNodeId) ? workerNodeId : Guid.Empty))
         {
-            DispatchPlacementAssignment(context, brain, assignment, 1);
+            if (workerAssignments.Key == Guid.Empty)
+            {
+                foreach (var assignment in workerAssignments)
+                {
+                    DispatchPlacementAssignment(context, brain, assignment, 1, Guid.Empty);
+                }
+
+                continue;
+            }
+
+            EnqueuePlacementAssignments(
+                context,
+                brain,
+                workerAssignments.Key,
+                workerAssignments.Select(static assignment => new QueuedPlacementDispatchAttempt(assignment.Assignment.AssignmentId, 1)));
         }
     }
 
@@ -60,7 +76,22 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        DispatchPlacementAssignment(context, brain, assignment, message.Attempt);
+        if (!TryGetGuid(assignment.Assignment.WorkerNodeId, out var workerNodeId))
+        {
+            DispatchPlacementAssignment(context, brain, assignment, message.Attempt, Guid.Empty);
+            return;
+        }
+
+        if (TryRetryActiveWorkerPlacementAssignment(context, brain, workerNodeId, assignment, message.Attempt))
+        {
+            return;
+        }
+
+        EnqueuePlacementAssignments(
+            context,
+            brain,
+            workerNodeId,
+            new[] { new QueuedPlacementDispatchAttempt(assignment.Assignment.AssignmentId, message.Attempt) });
     }
 
     private void HandlePlacementAssignmentTimeout(IContext context, PlacementAssignmentTimeout message)
@@ -115,6 +146,11 @@ public sealed partial class HiveMindActor
                 TimeSpan.FromMilliseconds(Math.Max(0, _options.PlacementAssignmentRetryBackoffMs)),
                 new RetryPlacementAssignment(brain.BrainId, brain.PlacementEpoch, assignment.Assignment.AssignmentId, nextAttempt));
             return;
+        }
+
+        if (assignmentWorkerId.HasValue)
+        {
+            ReleaseWorkerPlacementDispatch(context, assignmentWorkerId.Value, brain.BrainId, brain.PlacementEpoch, assignment.Assignment.AssignmentId);
         }
 
         HiveMindTelemetry.RecordPlacementAssignmentTimeout(
@@ -206,11 +242,14 @@ public sealed partial class HiveMindActor
                 $"Ignored reconcile report for brain {brain.BrainId}; reason={attributionReason} sender={senderLabel} epoch={message.PlacementEpoch}.");
             if (IsReconcileAttributionMismatchReason(attributionReason))
             {
+                var mismatchMessage =
+                    $"Reconcile attribution mismatch for brain {brain.BrainId}; reason={attributionReason} sender={senderLabel} epoch={message.PlacementEpoch}.";
                 EmitDebug(
                     context,
                     ProtoSeverity.SevWarn,
                     "placement.reconcile.response_mismatch",
-                    $"Reconcile attribution mismatch for brain {brain.BrainId}; reason={attributionReason} sender={senderLabel} epoch={message.PlacementEpoch}.");
+                    mismatchMessage);
+                LogError(mismatchMessage);
             }
             return;
         }
@@ -371,11 +410,41 @@ public sealed partial class HiveMindActor
         }
     }
 
+    private void EnqueuePlacementAssignments(
+        IContext context,
+        BrainState brain,
+        Guid workerNodeId,
+        IEnumerable<QueuedPlacementDispatchAttempt> assignments)
+    {
+        if (brain.PlacementExecution is null)
+        {
+            return;
+        }
+
+        var dispatchAttempts = assignments
+            .Where(static attempt => !string.IsNullOrWhiteSpace(attempt.AssignmentId))
+            .ToArray();
+        if (dispatchAttempts.Length == 0)
+        {
+            return;
+        }
+
+        var queue = GetOrCreateWorkerPlacementDispatch(workerNodeId);
+        queue.Pending.Enqueue(new QueuedPlacementDispatchBatch(
+            brain.BrainId,
+            brain.PlacementEpoch,
+            workerNodeId,
+            dispatchAttempts));
+        TryDrainWorkerPlacementDispatch(context, workerNodeId);
+    }
+
     private void DispatchPlacementAssignment(
         IContext context,
         BrainState brain,
         PlacementAssignmentExecutionState assignment,
-        int attempt)
+        int attempt,
+        Guid workerNodeId,
+        int serialWindowMultiplier = 1)
     {
         if (brain.PlacementExecution is null)
         {
@@ -383,7 +452,7 @@ public sealed partial class HiveMindActor
         }
 
         var target = ToPlacementTargetLabel(assignment.Assignment.Target);
-        var hasWorkerNodeId = TryGetGuid(assignment.Assignment.WorkerNodeId, out var workerNodeId);
+        var hasWorkerNodeId = workerNodeId != Guid.Empty || TryGetGuid(assignment.Assignment.WorkerNodeId, out workerNodeId);
         var telemetryWorkerNodeId = hasWorkerNodeId ? workerNodeId : (Guid?)null;
         if (!hasWorkerNodeId
             || !brain.PlacementExecution.WorkerTargets.TryGetValue(workerNodeId, out var workerPid))
@@ -428,11 +497,13 @@ public sealed partial class HiveMindActor
 
         try
         {
+            var replyPid = PidLabel(ResolveSendTargetPid(context, context.Self));
             context.Request(
                 workerPid,
                 new ProtoControl.PlacementAssignmentRequest
                 {
-                    Assignment = assignment.Assignment.Clone()
+                    Assignment = assignment.Assignment.Clone(),
+                    ReplyPid = replyPid
                 });
         }
         catch (Exception ex)
@@ -462,14 +533,238 @@ public sealed partial class HiveMindActor
             return;
         }
 
+        var assignmentTimeoutMs = (long)ComputePerAssignmentPlacementWindowMs() * Math.Max(1, serialWindowMultiplier);
         ScheduleSelf(
             context,
-            TimeSpan.FromMilliseconds(Math.Max(100, _options.PlacementAssignmentTimeoutMs)),
+            TimeSpan.FromMilliseconds(Math.Min(int.MaxValue, assignmentTimeoutMs)),
             new PlacementAssignmentTimeout(
                 brain.BrainId,
                 brain.PlacementEpoch,
                 assignment.Assignment.AssignmentId,
                 assignment.Attempt));
+    }
+
+    private WorkerPlacementDispatchState GetOrCreateWorkerPlacementDispatch(Guid workerNodeId)
+    {
+        if (!_workerPlacementDispatches.TryGetValue(workerNodeId, out var queue))
+        {
+            queue = new WorkerPlacementDispatchState();
+            _workerPlacementDispatches[workerNodeId] = queue;
+        }
+
+        return queue;
+    }
+
+    private void TryDrainWorkerPlacementDispatch(IContext context, Guid workerNodeId)
+    {
+        if (!_workerPlacementDispatches.TryGetValue(workerNodeId, out var queue))
+        {
+            return;
+        }
+
+        if (queue.Active is { } activeDispatch)
+        {
+            if (TryDispatchNextActiveWorkerPlacementAssignment(context, workerNodeId, activeDispatch))
+            {
+                return;
+            }
+
+            if (activeDispatch.InFlightAssignmentIds.Count > 0)
+            {
+                return;
+            }
+
+            queue.Active = null;
+        }
+
+        while (queue.Pending.Count > 0)
+        {
+            var pending = queue.Pending.Dequeue();
+            if (!_brains.TryGetValue(pending.BrainId, out var brain)
+                || brain.PlacementExecution is null
+                || brain.PlacementExecution.PlacementEpoch != pending.PlacementEpoch
+                || brain.PlacementExecution.Completed)
+            {
+                continue;
+            }
+
+            var dispatchBatch = new List<(QueuedPlacementDispatchAttempt Attempt, PlacementAssignmentExecutionState Assignment)>(pending.Assignments.Count);
+            foreach (var attempt in pending.Assignments)
+            {
+                if (!brain.PlacementExecution.Assignments.TryGetValue(attempt.AssignmentId, out var assignment)
+                    || assignment.Ready
+                    || assignment.Failed
+                    || assignment.AwaitingAck)
+                {
+                    continue;
+                }
+
+                dispatchBatch.Add((attempt, assignment));
+            }
+
+            if (dispatchBatch.Count == 0)
+            {
+                continue;
+            }
+
+            var newActiveDispatch = new ActiveWorkerPlacementDispatch(
+                pending.BrainId,
+                pending.PlacementEpoch,
+                workerNodeId,
+                dispatchBatch.Select(static item => item.Attempt));
+            queue.Active = newActiveDispatch;
+
+            TryDispatchNextActiveWorkerPlacementAssignment(context, workerNodeId, newActiveDispatch);
+            return;
+        }
+
+        if (queue.Pending.Count == 0 && queue.Active is null)
+        {
+            _workerPlacementDispatches.Remove(workerNodeId);
+        }
+    }
+
+    private void ReleaseWorkerPlacementDispatch(
+        IContext context,
+        Guid workerNodeId,
+        Guid brainId,
+        ulong placementEpoch,
+        string assignmentId)
+    {
+        if (!_workerPlacementDispatches.TryGetValue(workerNodeId, out var queue))
+        {
+            return;
+        }
+
+        if (queue.Active is { } active
+            && active.BrainId == brainId
+            && active.PlacementEpoch == placementEpoch)
+        {
+            active.InFlightAssignmentIds.Remove(assignmentId);
+            if (active.RemainingAssignmentCount == 0)
+            {
+                queue.Active = null;
+            }
+        }
+
+        TryDrainWorkerPlacementDispatch(context, workerNodeId);
+    }
+
+    private bool TryDispatchNextActiveWorkerPlacementAssignment(
+        IContext context,
+        Guid workerNodeId,
+        ActiveWorkerPlacementDispatch activeDispatch)
+    {
+        if (activeDispatch.InFlightAssignmentIds.Count > 0)
+        {
+            return true;
+        }
+
+        while (activeDispatch.PendingAssignments.Count > 0)
+        {
+            var attempt = activeDispatch.PendingAssignments.Dequeue();
+            if (!_brains.TryGetValue(activeDispatch.BrainId, out var brain)
+                || brain.PlacementExecution is null
+                || brain.PlacementExecution.PlacementEpoch != activeDispatch.PlacementEpoch
+                || brain.PlacementExecution.Completed)
+            {
+                return false;
+            }
+
+            if (!brain.PlacementExecution.Assignments.TryGetValue(attempt.AssignmentId, out var assignment)
+                || assignment.Ready
+                || assignment.Failed
+                || assignment.AwaitingAck)
+            {
+                continue;
+            }
+
+            activeDispatch.InFlightAssignmentIds.Add(attempt.AssignmentId);
+            DispatchPlacementAssignment(
+                context,
+                brain,
+                assignment,
+                attempt.Attempt,
+                workerNodeId,
+                serialWindowMultiplier: 1);
+            if (!_workerPlacementDispatches.TryGetValue(workerNodeId, out var currentQueue)
+                || !ReferenceEquals(currentQueue.Active, activeDispatch))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryRetryActiveWorkerPlacementAssignment(
+        IContext context,
+        BrainState brain,
+        Guid workerNodeId,
+        PlacementAssignmentExecutionState assignment,
+        int attempt)
+    {
+        if (!_workerPlacementDispatches.TryGetValue(workerNodeId, out var queue)
+            || queue.Active is not { } active
+            || active.BrainId != brain.BrainId
+            || active.PlacementEpoch != brain.PlacementEpoch
+            || !active.InFlightAssignmentIds.Contains(assignment.Assignment.AssignmentId))
+        {
+            return false;
+        }
+
+        DispatchPlacementAssignment(
+            context,
+            brain,
+            assignment,
+            attempt,
+            workerNodeId,
+            serialWindowMultiplier: 1);
+        return true;
+    }
+
+    private void RemoveQueuedPlacementDispatches(IContext context, Guid brainId, ulong placementEpoch)
+    {
+        foreach (var (workerNodeId, queue) in _workerPlacementDispatches.ToArray())
+        {
+            if (queue.Pending.Count > 0)
+            {
+                var retained = new Queue<QueuedPlacementDispatchBatch>(queue.Pending.Count);
+                while (queue.Pending.Count > 0)
+                {
+                    var pending = queue.Pending.Dequeue();
+                    if (pending.BrainId == brainId && pending.PlacementEpoch == placementEpoch)
+                    {
+                        continue;
+                    }
+
+                    retained.Enqueue(pending);
+                }
+
+                while (retained.Count > 0)
+                {
+                    queue.Pending.Enqueue(retained.Dequeue());
+                }
+            }
+
+            if (queue.Active is { } active
+                && active.BrainId == brainId
+                && active.PlacementEpoch == placementEpoch)
+            {
+                queue.Active = null;
+            }
+
+            if (queue.Pending.Count == 0 && queue.Active is null)
+            {
+                _workerPlacementDispatches.Remove(workerNodeId);
+            }
+            else if (queue.Active is null)
+            {
+                TryDrainWorkerPlacementDispatch(context, workerNodeId);
+            }
+        }
     }
 
     private void MaybeStartReconcile(IContext context, BrainState brain)
@@ -590,9 +885,7 @@ public sealed partial class HiveMindActor
     {
         if (sender is null)
         {
-            workerId = Guid.Empty;
-            reason = "sender_missing";
-            return false;
+            return TryResolveReconcileWorkerNodeIdFromPayload(execution, message, out workerId, out reason);
         }
 
         var senderWorkerId = Guid.Empty;
@@ -645,6 +938,62 @@ public sealed partial class HiveMindActor
         workerId = senderWorkerId;
         reason = string.Empty;
         return true;
+    }
+
+    private static bool TryResolveReconcileWorkerNodeIdFromPayload(
+        PlacementExecutionState execution,
+        ProtoControl.PlacementReconcileReport message,
+        out Guid workerId,
+        out string reason)
+    {
+        var payloadWorkerId = Guid.Empty;
+        var payloadWorkerCount = 0;
+        foreach (var observed in message.Assignments)
+        {
+            if (observed.WorkerNodeId is null)
+            {
+                continue;
+            }
+
+            if (!TryGetGuid(observed.WorkerNodeId, out var observedWorkerId))
+            {
+                workerId = Guid.Empty;
+                reason = "payload_worker_invalid";
+                return false;
+            }
+
+            if (payloadWorkerCount == 0)
+            {
+                payloadWorkerId = observedWorkerId;
+                payloadWorkerCount = 1;
+                continue;
+            }
+
+            if (observedWorkerId != payloadWorkerId)
+            {
+                workerId = Guid.Empty;
+                reason = "payload_worker_ambiguous";
+                return false;
+            }
+        }
+
+        if (payloadWorkerCount == 1 && execution.PendingReconcileWorkers.Contains(payloadWorkerId))
+        {
+            workerId = payloadWorkerId;
+            reason = "sender_missing_payload_worker";
+            return true;
+        }
+
+        if (payloadWorkerCount == 0 && execution.PendingReconcileWorkers.Count == 1)
+        {
+            workerId = execution.PendingReconcileWorkers.First();
+            reason = "sender_missing_single_pending_worker";
+            return true;
+        }
+
+        workerId = Guid.Empty;
+        reason = payloadWorkerCount > 1 ? "payload_worker_ambiguous" : "sender_missing";
+        return false;
     }
 
     private static string ResolveReconcileTargetLabel(ProtoControl.PlacementReconcileReport message)
@@ -824,6 +1173,8 @@ public sealed partial class HiveMindActor
             }
         }
 
+        RemoveQueuedPlacementDispatches(context, brain.BrainId, brain.PlacementEpoch);
+
         UpdatePlacementLifecycle(
             brain,
             ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
@@ -844,6 +1195,16 @@ public sealed partial class HiveMindActor
             reasonCode: "spawn_timeout",
             failureMessage: "Spawn timed out while waiting for placement completion.");
         pending.Completion.TrySetResult(false);
+        RemoveQueuedPlacementDispatches(context, message.BrainId, message.PlacementEpoch);
+        RememberCompletedSpawn(new CompletedSpawnState(
+            message.BrainId,
+            pending.PlacementEpoch,
+            AcceptedForPlacement: true,
+            PlacementReady: false,
+            ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
+            ProtoControl.PlacementReconcileState.PlacementReconcileFailed,
+            pending.FailureReasonCode,
+            pending.FailureMessage));
         if (_brains.ContainsKey(message.BrainId))
         {
             UnregisterBrain(context, message.BrainId, reason: "spawn_timeout");
@@ -885,6 +1246,15 @@ public sealed partial class HiveMindActor
             || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning)
         {
             _pendingSpawns.Remove(brain.BrainId);
+            RememberCompletedSpawn(new CompletedSpawnState(
+                brain.BrainId,
+                pending.PlacementEpoch,
+                AcceptedForPlacement: true,
+                PlacementReady: true,
+                brain.PlacementLifecycleState,
+                brain.PlacementReconcileState,
+                FailureReasonCode: string.Empty,
+                FailureMessage: string.Empty));
             pending.Completion.TrySetResult(true);
             return;
         }
@@ -893,25 +1263,128 @@ public sealed partial class HiveMindActor
             || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleTerminated)
         {
             _pendingSpawns.Remove(brain.BrainId);
-            pending.SetFailure(
-                reasonCode: string.IsNullOrWhiteSpace(brain.SpawnFailureReasonCode)
-                    ? ToSpawnFailureReasonCode(brain.PlacementFailureReason)
-                    : brain.SpawnFailureReasonCode,
-                failureMessage: string.IsNullOrWhiteSpace(brain.SpawnFailureMessage)
-                    ? BuildSpawnFailureMessage(brain.PlacementFailureReason, detail: null)
-                    : brain.SpawnFailureMessage);
+            var reasonCode = string.IsNullOrWhiteSpace(brain.SpawnFailureReasonCode)
+                ? ToSpawnFailureReasonCode(brain.PlacementFailureReason)
+                : brain.SpawnFailureReasonCode;
+            var failureMessage = string.IsNullOrWhiteSpace(brain.SpawnFailureMessage)
+                ? BuildSpawnFailureMessage(brain.PlacementFailureReason, detail: null)
+                : brain.SpawnFailureMessage;
+            pending.SetFailure(reasonCode, failureMessage);
+            RememberCompletedSpawn(new CompletedSpawnState(
+                brain.BrainId,
+                pending.PlacementEpoch,
+                AcceptedForPlacement: true,
+                PlacementReady: false,
+                brain.PlacementLifecycleState,
+                brain.PlacementReconcileState,
+                reasonCode,
+                failureMessage));
             pending.Completion.TrySetResult(false);
             UnregisterBrain(context, brain.BrainId, reason: "spawn_failed");
         }
     }
 
-    private int ComputeSpawnCompletionTimeoutMs()
+    private int ComputeSpawnCompletionTimeoutMs(BrainState? brain = null)
+    {
+        var assignmentWindow = (long)ComputePerAssignmentPlacementWindowMs() * EstimateSerialPlacementWindowAssignments(brain);
+        var reconcileWindow = Math.Max(100, _options.PlacementReconcileTimeoutMs);
+        var timeoutMs = assignmentWindow + reconcileWindow + 250L;
+        return (int)Math.Min(int.MaxValue, Math.Max(500L, timeoutMs));
+    }
+
+    private async Task<PendingSpawnAwaitResult> AwaitPendingSpawnAsync(PendingSpawnState pending, int timeoutMs)
+    {
+        if (timeoutMs <= 0)
+        {
+            var completed = await pending.Completion.Task.ConfigureAwait(false);
+            return new PendingSpawnAwaitResult(completed, TimedOut: false);
+        }
+
+        try
+        {
+            var completed = await pending.Completion.Task
+                .WaitAsync(TimeSpan.FromMilliseconds(timeoutMs))
+                .ConfigureAwait(false);
+            return new PendingSpawnAwaitResult(completed, TimedOut: false);
+        }
+        catch (TimeoutException)
+        {
+            return new PendingSpawnAwaitResult(Completed: false, TimedOut: true);
+        }
+    }
+
+    private int NormalizeAwaitSpawnTimeoutMs(ulong requestedTimeoutMs, PendingSpawnState? pending = null)
+    {
+        if (requestedTimeoutMs == 0)
+        {
+            return pending?.DefaultWaitTimeoutMs ?? ComputeSpawnCompletionTimeoutMs();
+        }
+
+        return (int)Math.Min(int.MaxValue, Math.Max(50UL, requestedTimeoutMs));
+    }
+
+    private int ComputePerAssignmentPlacementWindowMs()
     {
         var attempts = Math.Max(1, _options.PlacementAssignmentMaxRetries + 1);
-        var assignmentWindow = (long)Math.Max(100, _options.PlacementAssignmentTimeoutMs) * attempts;
+        var assignmentTimeoutWindow = (long)Math.Max(100, _options.PlacementAssignmentTimeoutMs) * attempts;
         var retryWindow = (long)Math.Max(0, _options.PlacementAssignmentRetryBackoffMs) * Math.Max(0, attempts - 1);
-        var reconcileWindow = Math.Max(100, _options.PlacementReconcileTimeoutMs);
-        var timeoutMs = assignmentWindow + retryWindow + reconcileWindow + 250L;
-        return (int)Math.Min(int.MaxValue, Math.Max(500L, timeoutMs));
+        return (int)Math.Min(int.MaxValue, Math.Max(100L, assignmentTimeoutWindow + retryWindow));
+    }
+
+    private int EstimateSerialPlacementWindowAssignments(BrainState? brain)
+    {
+        if (brain is null)
+        {
+            return 1;
+        }
+
+        var execution = brain.PlacementExecution;
+        if (execution is null || execution.Assignments.Count == 0)
+        {
+            return 1;
+        }
+
+        var brainId = brain.BrainId;
+        var placementEpoch = brain.PlacementEpoch;
+
+        var workerAssignmentCounts = new Dictionary<Guid, int>();
+        var fallbackAssignments = 0;
+        foreach (var assignment in execution.Assignments.Values)
+        {
+            if (TryGetGuid(assignment.Assignment.WorkerNodeId, out var workerNodeId))
+            {
+                workerAssignmentCounts[workerNodeId] = workerAssignmentCounts.TryGetValue(workerNodeId, out var existingCount)
+                    ? existingCount + 1
+                    : 1;
+            }
+            else
+            {
+                fallbackAssignments++;
+            }
+        }
+
+        var maxSerialAssignments = Math.Max(1, fallbackAssignments);
+        foreach (var (workerNodeId, ownAssignmentCount) in workerAssignmentCounts)
+        {
+            var queuedAheadAssignments = 0;
+            if (_workerPlacementDispatches.TryGetValue(workerNodeId, out var dispatchState)
+                && dispatchState is not null)
+            {
+                queuedAheadAssignments = dispatchState.Pending
+                    .Where(pending => pending.BrainId != brainId || pending.PlacementEpoch != placementEpoch)
+                    .Sum(static pending => pending.Assignments.Count);
+                if (dispatchState.Active is { } active
+                    && (active.BrainId != brainId || active.PlacementEpoch != placementEpoch))
+                {
+                    queuedAheadAssignments += active.RemainingAssignmentCount;
+                }
+            }
+
+            maxSerialAssignments = Math.Max(maxSerialAssignments, queuedAheadAssignments + ownAssignmentCount);
+        }
+
+        return Math.Max(
+            Math.Max(1, maxSerialAssignments),
+            execution.Assignments.Count);
     }
 }

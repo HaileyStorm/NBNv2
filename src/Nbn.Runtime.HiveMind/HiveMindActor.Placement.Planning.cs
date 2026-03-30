@@ -132,7 +132,12 @@ public sealed partial class HiveMindActor
             brain.RequestedShardPlan,
             regions,
             currentWorkerNodeIds,
-            RegionShardComputeBackendPreferenceResolver.Resolve());
+            brain.BaseDefinition,
+            brain.LastSnapshot,
+            brain.InputWidth,
+            brain.OutputWidth,
+            RegionShardComputeBackendPreferenceResolver.Resolve(),
+            _workerRegionShardGpuNeuronThreshold);
         var planned = PlacementPlanner.TryBuildPlan(
             plannerInputs,
             workers,

@@ -275,10 +275,10 @@ public static partial class PerfProbeRunner
         => config.HiddenRegionNeurons >= ResolvePlannerMaxNeuronsPerShard();
 
     private static int ResolvePlannerMaxNeuronsPerShard()
-        => Math.Max(4096, NbnConstants.DefaultAxonStride * 2);
+        => WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold;
 
     private static int ResolveRuntimeGpuNeuronThreshold()
-        => Math.Max(4096, NbnConstants.DefaultAxonStride * 2);
+        => WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold;
 
     private static LocalhostStressConfig BuildGpuLocalhostStressConfig(LocalhostStressConfig config)
     {

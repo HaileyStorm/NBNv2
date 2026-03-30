@@ -1,4 +1,5 @@
 using System.Reflection;
+using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Runtime.HiveMind;
 using Nbn.Runtime.WorkerNode;
@@ -334,7 +335,7 @@ public sealed class HiveMindPlacementPlannerTests
             Regions: new[]
             {
                 new PlacementPlanner.RegionSpan(0, 4),
-                new PlacementPlanner.RegionSpan(1, 4096),
+                new PlacementPlanner.RegionSpan(1, 2048),
                 new PlacementPlanner.RegionSpan(31, 2)
             },
             CurrentWorkerNodeIds: Array.Empty<Guid>());
@@ -374,6 +375,62 @@ public sealed class HiveMindPlacementPlannerTests
             assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard
             && assignment.RegionId == 1
             && AssignmentWorkerId(assignment) == workerA));
+    }
+
+    [Fact]
+    public void PlacementPlanner_Embeds_RuntimeMetadataHints_On_Assignments()
+    {
+        var workerId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var brainId = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        var baseDefinition = new string('1', 64).ToArtifactRef(128, "application/x-nbn", "memory+planner://base");
+        var lastSnapshot = new string('2', 64).ToArtifactRef(64, "application/x-nbs", "memory+planner://snapshot");
+        var workers = new[]
+        {
+            CreateWorkerCandidate(workerId, "worker-a:12040", isAlive: true, isReady: true, isFresh: true, cpuCores: 8, ramFreeBytes: 8L * 1024 * 1024 * 1024, storageFreeBytes: 80L * 1024 * 1024 * 1024, hasGpu: false, vramFreeBytes: 0, cpuScore: 20f, gpuScore: 0f)
+        };
+
+        var plannerInputs = new PlacementPlanner.PlannerInputs(
+            BrainId: brainId,
+            PlacementEpoch: 7,
+            RequestId: "metadata-hint",
+            RequestedMs: 100,
+            PlannedMs: 101,
+            WorkerSnapshotMs: 99,
+            ShardStride: 1024,
+            RequestedShardPlan: null,
+            Regions: new[]
+            {
+                new PlacementPlanner.RegionSpan(0, 3),
+                new PlacementPlanner.RegionSpan(1, 16),
+                new PlacementPlanner.RegionSpan(31, 2)
+            },
+            CurrentWorkerNodeIds: Array.Empty<Guid>(),
+            BaseDefinition: baseDefinition,
+            LastSnapshot: lastSnapshot,
+            InputWidth: 3,
+            OutputWidth: 2,
+            RegionShardGpuNeuronThreshold: 12345);
+
+        var built = PlacementPlanner.TryBuildPlan(
+            plannerInputs,
+            workers,
+            out var plan,
+            out var failureReason,
+            out var failureMessage);
+
+        Assert.True(built, failureMessage);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, failureReason);
+        Assert.NotEmpty(plan.Assignments);
+        Assert.All(
+            plan.Assignments,
+            assignment =>
+            {
+                Assert.Equal((uint)3, assignment.InputWidth);
+                Assert.Equal((uint)2, assignment.OutputWidth);
+                Assert.Equal((uint)12345, assignment.GpuNeuronThreshold);
+                Assert.Equal(baseDefinition.ToSha256Hex(), assignment.BaseDefinition.ToSha256Hex());
+                Assert.Equal(lastSnapshot.ToSha256Hex(), assignment.LastSnapshot.ToSha256Hex());
+            });
     }
 
     [Fact]
@@ -419,7 +476,7 @@ public sealed class HiveMindPlacementPlannerTests
             Regions: new[]
             {
                 new PlacementPlanner.RegionSpan(0, 4),
-                new PlacementPlanner.RegionSpan(1, 8192),
+                new PlacementPlanner.RegionSpan(1, WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold),
                 new PlacementPlanner.RegionSpan(31, 2)
             },
             CurrentWorkerNodeIds: Array.Empty<Guid>(),
@@ -496,7 +553,8 @@ public sealed class HiveMindPlacementPlannerTests
                 new PlacementPlanner.RegionSpan(31, 2)
             },
             CurrentWorkerNodeIds: Array.Empty<Guid>(),
-            ComputeBackendPreference: computeBackendPreference);
+            ComputeBackendPreference: computeBackendPreference,
+            RegionShardGpuNeuronThreshold: 8192);
 
         var built = PlacementPlanner.TryBuildPlan(
             plannerInputs,
@@ -616,7 +674,7 @@ public sealed class HiveMindPlacementPlannerTests
             Regions: new[]
             {
                 new PlacementPlanner.RegionSpan(0, 4),
-                new PlacementPlanner.RegionSpan(1, 4096),
+                new PlacementPlanner.RegionSpan(1, WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold),
                 new PlacementPlanner.RegionSpan(31, 2)
             },
             CurrentWorkerNodeIds: Array.Empty<Guid>());

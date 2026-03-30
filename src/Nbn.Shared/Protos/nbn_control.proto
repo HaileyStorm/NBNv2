@@ -16,6 +16,16 @@ message SpawnBrainAck {
   nbn.Uuid brain_id = 1;
   string failure_reason_code = 2;
   string failure_message = 3;
+  bool accepted_for_placement = 4;
+  bool placement_ready = 5;
+  fixed64 placement_epoch = 6;
+  PlacementLifecycleState lifecycle_state = 7;
+  PlacementReconcileState reconcile_state = 8;
+}
+
+message AwaitSpawnPlacement {
+  nbn.Uuid brain_id = 1;
+  fixed64 timeout_ms = 2;
 }
 
 message PauseBrain {
@@ -368,10 +378,16 @@ message PlacementAssignment {
   uint32 neuron_start = 8;
   uint32 neuron_count = 9;
   string actor_name = 10;
+  nbn.ArtifactRef base_definition = 11;
+  nbn.ArtifactRef last_snapshot = 12;
+  uint32 input_width = 13;
+  uint32 output_width = 14;
+  uint32 gpu_neuron_threshold = 15;
 }
 
 message PlacementAssignmentRequest {
   PlacementAssignment assignment = 1;
+  string reply_pid = 2; // "address/id" or "id" if local
 }
 
 message PlacementAssignmentAck {

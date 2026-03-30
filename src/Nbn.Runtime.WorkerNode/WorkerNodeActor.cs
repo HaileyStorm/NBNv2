@@ -80,52 +80,103 @@ public sealed partial class WorkerNodeActor : IActor
     /// </summary>
     public async Task ReceiveAsync(IContext context)
     {
+        try
+        {
+            switch (context.Message)
+            {
+                case DiscoverySnapshotApplied snapshot:
+                    ApplyDiscoverySnapshot(snapshot);
+                    break;
+                case EndpointStateObserved endpointState:
+                    ApplyObservedEndpoint(endpointState.Observation, source: "update");
+                    break;
+                case EndpointRegistrationObserved endpoint:
+                    ApplyEndpoint(endpoint.Registration, source: "update");
+                    break;
+                case PlacementAssignmentRequest request:
+                    await HandlePlacementAssignmentAsync(context, request).ConfigureAwait(false);
+                    break;
+                case PlacementUnassignmentRequest request:
+                    HandlePlacementUnassignment(context, request);
+                    break;
+                case PlacementReconcileRequest request:
+                    HandlePlacementReconcile(context, request);
+                    break;
+                case PlacementPeerLatencyRequest request:
+                    BeginHandlePlacementPeerLatency(context, request);
+                    break;
+                case PlacementLatencyEchoRequest:
+                    context.Respond(new PlacementLatencyEchoAck());
+                    break;
+                case WorkerCapabilityRefreshRequest request:
+                    HandleWorkerCapabilityRefresh(context, request);
+                    break;
+                case TickComputeDone computeDone:
+                    ForwardTickCompletion(context, computeDone);
+                    break;
+                case TickDeliverDone deliverDone:
+                    ForwardTickCompletion(context, deliverDone);
+                    break;
+                case GetWorkerNodeSnapshot:
+                    context.Respond(BuildSnapshot());
+                    break;
+                case GetHostedBrainSnapshot request:
+                    context.Respond(BuildHostedBrainSnapshot(request.BrainId));
+                    break;
+                case GetHostedRegionShardBackendExecutionInfo request:
+                    BeginHandleGetHostedRegionShardBackendExecutionInfo(context, request);
+                    break;
+                case Terminated terminated:
+                    HandleTerminated(terminated);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            HandleUnhandledReceiveException(context, ex);
+        }
+    }
+
+    private void HandleUnhandledReceiveException(IContext context, Exception ex)
+    {
+        var detail = ex.GetBaseException().Message;
+        var messageType = context.Message?.GetType().Name ?? "<null>";
+        Console.WriteLine($"[WorkerNode][ERROR] Unhandled {messageType}: {detail}");
+
         switch (context.Message)
         {
-            case DiscoverySnapshotApplied snapshot:
-                ApplyDiscoverySnapshot(snapshot);
+            case PlacementAssignmentRequest request when request.Assignment is not null:
+                RespondFailedPlacement(
+                    context,
+                    FailedAck(
+                        request.Assignment.AssignmentId,
+                        request.Assignment.BrainId,
+                        request.Assignment.PlacementEpoch,
+                        PlacementFailureReason.PlacementFailureInternalError,
+                        $"worker placement handler crashed ({detail})"),
+                    request.Assignment.Target);
                 break;
-            case EndpointStateObserved endpointState:
-                ApplyObservedEndpoint(endpointState.Observation, source: "update");
-                break;
-            case EndpointRegistrationObserved endpoint:
-                ApplyEndpoint(endpoint.Registration, source: "update");
-                break;
-            case PlacementAssignmentRequest request:
-                await HandlePlacementAssignmentAsync(context, request).ConfigureAwait(false);
-                break;
-            case PlacementUnassignmentRequest request:
-                HandlePlacementUnassignment(context, request);
+            case PlacementUnassignmentRequest request when request.Assignment is not null:
+                ReplyToSender(
+                    context,
+                    FailedUnassignmentAck(
+                        request.Assignment.AssignmentId,
+                        request.Assignment.BrainId,
+                        request.Assignment.PlacementEpoch,
+                        PlacementFailureReason.PlacementFailureInternalError,
+                        $"worker unassignment handler crashed ({detail})"));
                 break;
             case PlacementReconcileRequest request:
-                HandlePlacementReconcile(context, request);
-                break;
-            case PlacementPeerLatencyRequest request:
-                await HandlePlacementPeerLatencyAsync(context, request).ConfigureAwait(false);
-                break;
-            case PlacementLatencyEchoRequest:
-                context.Respond(new PlacementLatencyEchoAck());
-                break;
-            case WorkerCapabilityRefreshRequest request:
-                HandleWorkerCapabilityRefresh(context, request);
-                break;
-            case TickComputeDone computeDone:
-                ForwardTickCompletion(context, computeDone);
-                break;
-            case TickDeliverDone deliverDone:
-                ForwardTickCompletion(context, deliverDone);
-                break;
-            case GetWorkerNodeSnapshot:
-                context.Respond(BuildSnapshot());
-                break;
-            case GetHostedBrainSnapshot request:
-                context.Respond(BuildHostedBrainSnapshot(request.BrainId));
-                break;
-            case GetHostedRegionShardBackendExecutionInfo request:
-                await HandleGetHostedRegionShardBackendExecutionInfoAsync(context, request).ConfigureAwait(false);
-                break;
-            case Terminated terminated:
-                HandleTerminated(terminated);
+                ReplyToSender(
+                    context,
+                    new PlacementReconcileReport
+                    {
+                        BrainId = request.BrainId,
+                        PlacementEpoch = request.PlacementEpoch,
+                        ReconcileState = PlacementReconcileState.PlacementReconcileFailed,
+                        FailureReason = PlacementFailureReason.PlacementFailureInternalError,
+                        Message = $"worker reconcile handler crashed ({detail})"
+                    });
                 break;
         }
     }

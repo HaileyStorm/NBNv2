@@ -149,10 +149,10 @@
               <TextBlock Text="Worker Policy" Classes="card-title" />
               <Button Grid.Column="1" Content="Apply" Command="{Binding ApplyWorkerPolicyCommand}" Classes="accent" />
             </Grid>
-            <TextBlock Text="Settings-backed worker capability refresh and pressure-rebalance policy. These values apply even when Workbench is not running."
+            <TextBlock Text="Settings-backed worker capability refresh, pressure-rebalance policy, and RegionShard auto-GPU cutoff. Use 'auto' for the scored default or a positive integer neuron count. These values apply even when Workbench is not running."
                        Classes="muted"
                        TextWrapping="Wrap" />
-            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="8">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="8">
               <TextBlock Text="Capability Refresh (s)" Classes="muted" />
               <TextBox Grid.Column="1" Text="{Binding WorkerCapabilityRefreshSecondsText}" Width="100" />
               <TextBlock Grid.Column="2" Text="Pressure Window" Classes="muted" />
@@ -162,6 +162,10 @@
               <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding WorkerPressureViolationRatioText}" Width="100" />
               <TextBlock Grid.Row="1" Grid.Column="2" Text="Limit Tolerance %" Classes="muted" />
               <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding WorkerPressureTolerancePercentText}" Width="100" />
+
+              <TextBlock Grid.Row="2" Text="GPU Threshold" Classes="muted" />
+              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding WorkerRegionShardGpuNeuronThresholdText}" Width="100" />
+              <TextBlock Grid.Row="2" Grid.Column="2" Text="neurons / non-IO shard" Classes="muted" />
             </Grid>
             <TextBlock Text="{Binding WorkerPolicyStatus}" Classes="muted" TextWrapping="Wrap" />
           </StackPanel>
@@ -179,6 +183,19 @@
             </Border>
             <Border Classes="row">
               <TextBlock Text="{Binding SystemLoadTickSummary}" Classes="muted" TextWrapping="Wrap" />
+            </Border>
+            <Border Classes="row">
+              <StackPanel Spacing="6">
+                <TextBlock Text="{Binding SystemLoadHealthSummary}" Classes="muted" TextWrapping="Wrap" />
+                <Viewbox Height="32" HorizontalAlignment="Stretch">
+                  <Grid Width="180" Height="32">
+                    <Path Data="M 0 29 L 180 29" Stroke="#223043" StrokeThickness="1" />
+                    <Path Data="{Binding SystemLoadSparklinePathData}"
+                          Stroke="{Binding SystemLoadSparklineStroke}"
+                          StrokeThickness="2" />
+                  </Grid>
+                </Viewbox>
+              </StackPanel>
             </Border>
           </StackPanel>
         </Border>

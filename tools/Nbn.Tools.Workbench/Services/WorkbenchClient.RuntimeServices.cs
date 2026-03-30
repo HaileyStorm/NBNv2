@@ -9,6 +9,8 @@ using Nbn.Proto.Speciation;
 using Nbn.Proto.Settings;
 using Nbn.Proto.Viz;
 using Nbn.Proto.Control;
+using Nbn.Runtime.RegionHost;
+using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
 using Nbn.Tools.Workbench.Models;
 using Proto;
@@ -141,6 +143,35 @@ public partial class WorkbenchClient
         }
     }
 
+    public virtual async Task<RegionShardBackendExecutionInfo?> GetHostedRegionShardBackendExecutionInfoAsync(
+        string workerAddress,
+        string workerRootActor,
+        Guid brainId,
+        int regionId,
+        int shardIndex)
+    {
+        if (_root is null
+            || brainId == Guid.Empty
+            || string.IsNullOrWhiteSpace(workerAddress)
+            || string.IsNullOrWhiteSpace(workerRootActor))
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _root.RequestAsync<RegionShardBackendExecutionInfo>(
+                    new PID(workerAddress.Trim(), workerRootActor.Trim()),
+                    new WorkerNodeActor.GetHostedRegionShardBackendExecutionInfo(brainId, regionId, shardIndex),
+                    TimeSpan.FromSeconds(2))
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public virtual async Task<SpawnBrainAck?> SpawnBrainViaIoAsync(SpawnBrain request)
     {
         if (_root is null)
@@ -198,6 +229,123 @@ public partial class WorkbenchClient
         }
     }
 
+    public virtual async Task<SpawnBrainAck?> AwaitSpawnPlacementViaIoAsync(Guid brainId, ulong timeoutMs = 0)
+    {
+        if (_root is null)
+        {
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_unavailable",
+                failureMessage: "Spawn wait failed: Workbench client is not initialized.");
+        }
+
+        if (_ioGatewayPid is null)
+        {
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_unavailable",
+                failureMessage: "Spawn wait failed: IO gateway is not connected.");
+        }
+
+        if (brainId == Guid.Empty)
+        {
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_invalid_request",
+                failureMessage: "Spawn wait failed: brain_id is required.");
+        }
+
+        try
+        {
+            var effectiveTimeoutMs = timeoutMs;
+            var transportTimeoutMs = effectiveTimeoutMs == 0
+                ? (int)Math.Max(100, TimeSpan.FromMinutes(10).TotalMilliseconds)
+                : effectiveTimeoutMs >= (ulong)int.MaxValue - 1_000
+                ? int.MaxValue
+                : (int)Math.Max(100, effectiveTimeoutMs + 1_000UL);
+            var response = await _root.RequestAsync<AwaitSpawnPlacementViaIOAck>(
+                    _ioGatewayPid,
+                    new AwaitSpawnPlacementViaIO
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        TimeoutMs = effectiveTimeoutMs
+                    },
+                    TimeSpan.FromMilliseconds(transportTimeoutMs))
+                .ConfigureAwait(false);
+
+            if (response?.Ack is not null)
+            {
+                return response.Ack;
+            }
+
+            if (!string.IsNullOrWhiteSpace(response?.FailureReasonCode)
+                || !string.IsNullOrWhiteSpace(response?.FailureMessage))
+            {
+                return BuildSpawnFailureAck(
+                    reasonCode: response?.FailureReasonCode,
+                    failureMessage: response?.FailureMessage);
+            }
+
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_empty_response",
+                failureMessage: "Spawn wait failed: IO returned an empty placement acknowledgment.");
+        }
+        catch (Exception ex)
+        {
+            _sink.OnIoStatus($"Spawn wait failed: {ex.Message}", true);
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_request_failed",
+                failureMessage: $"Spawn wait failed: request to IO gateway failed ({ex.GetBaseException().Message}).");
+        }
+    }
+
+    public virtual async Task<SpawnBrainAck?> AwaitSpawnPlacementAsync(Guid brainId, ulong timeoutMs = 0)
+    {
+        if (_root is null)
+        {
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_unavailable",
+                failureMessage: "Spawn wait failed: Workbench client is not initialized.");
+        }
+
+        if (_hiveMindPid is null)
+        {
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_unavailable",
+                failureMessage: "Spawn wait failed: HiveMind is not connected.");
+        }
+
+        if (brainId == Guid.Empty)
+        {
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_invalid_request",
+                failureMessage: "Spawn wait failed: brain_id is required.");
+        }
+
+        try
+        {
+            var effectiveTimeoutMs = timeoutMs;
+            var transportTimeoutMs = effectiveTimeoutMs == 0
+                ? (int)Math.Max(100, TimeSpan.FromMinutes(10).TotalMilliseconds)
+                : effectiveTimeoutMs >= (ulong)int.MaxValue - 1_000
+                ? int.MaxValue
+                : (int)Math.Max(100, effectiveTimeoutMs + 1_000UL);
+            return await _root.RequestAsync<SpawnBrainAck>(
+                    _hiveMindPid,
+                    new AwaitSpawnPlacement
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        TimeoutMs = effectiveTimeoutMs
+                    },
+                    TimeSpan.FromMilliseconds(transportTimeoutMs))
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _sink.OnHiveMindStatus($"Spawn wait failed: {ex.Message}", true);
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_request_failed",
+                failureMessage: $"Spawn wait failed: request to HiveMind failed ({ex.GetBaseException().Message}).");
+        }
+    }
+
     private static SpawnBrainAck BuildSpawnFailureAck(string? reasonCode, string? failureMessage)
     {
         var normalizedReasonCode = string.IsNullOrWhiteSpace(reasonCode)
@@ -214,27 +362,56 @@ public partial class WorkbenchClient
         };
     }
 
-    public virtual Task<bool> KillBrainAsync(Guid brainId, string reason)
+    public virtual async Task<bool> KillBrainAsync(Guid brainId, string reason)
     {
-        if (_root is null || _hiveMindPid is null || brainId == Guid.Empty)
+        if (brainId == Guid.Empty)
         {
-            return Task.FromResult(false);
+            return false;
         }
 
         try
         {
-            _root.Send(_hiveMindPid, new KillBrain
+            var response = await RequestKillBrainViaIoAsync(
+                    new KillBrain
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        Reason = reason ?? string.Empty
+                    })
+                .ConfigureAwait(false);
+            if (response?.Accepted == true)
             {
-                BrainId = brainId.ToProtoUuid(),
-                Reason = reason ?? string.Empty
-            });
-            return Task.FromResult(true);
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(response?.FailureMessage))
+            {
+                _sink.OnIoStatus($"Kill request failed: {response.FailureMessage}", true);
+            }
+
+            return false;
         }
         catch (Exception ex)
         {
-            _sink.OnHiveMindStatus($"Kill request failed: {ex.Message}", true);
-            return Task.FromResult(false);
+            _sink.OnIoStatus($"Kill request failed: {ex.Message}", true);
+            return false;
         }
+    }
+
+    protected virtual async Task<KillBrainViaIOAck?> RequestKillBrainViaIoAsync(KillBrain request)
+    {
+        if (_root is null || _ioGatewayPid is null)
+        {
+            return null;
+        }
+
+        return await _root.RequestAsync<KillBrainViaIOAck>(
+                _ioGatewayPid,
+                new KillBrainViaIO
+                {
+                    Request = request
+                },
+                DefaultTimeout)
+            .ConfigureAwait(false);
     }
 
     public virtual async Task<HiveMindStatus?> GetHiveMindStatusAsync()

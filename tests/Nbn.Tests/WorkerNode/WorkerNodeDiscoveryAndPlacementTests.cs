@@ -1,4 +1,8 @@
+using System.Collections;
+using System.Diagnostics;
+using System.Reflection;
 using Microsoft.Data.Sqlite;
+using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.IO;
@@ -16,6 +20,100 @@ namespace Nbn.Tests.WorkerNode;
 
 public sealed class WorkerNodeDiscoveryAndPlacementTests
 {
+    [Fact]
+    public void NormalizeReplyTarget_PrefersKnownRemoteEndpoint_ForAddresslessHiveMindAlias()
+    {
+        var resolved = InvokeNormalizeReplyTarget(
+            new PID("nonhost", "HiveMind"),
+            "127.0.0.1:12041",
+            new PID("127.0.0.1:12020", "HiveMind"),
+            [new PID("127.0.0.1:12020", "HiveMind")]);
+
+        Assert.Equal("127.0.0.1:12020", resolved.Address);
+        Assert.Equal("HiveMind", resolved.Id);
+    }
+
+    [Fact]
+    public void NormalizeReplyTarget_FallsBackToLocalSystemAddress_WhenNoRemoteMatchExists()
+    {
+        var resolved = InvokeNormalizeReplyTarget(
+            new PID(string.Empty, "local-probe"),
+            "127.0.0.1:12041",
+            hintedReplyPid: null,
+            []);
+
+        Assert.Equal("127.0.0.1:12041", resolved.Address);
+        Assert.Equal("local-probe", resolved.Id);
+    }
+
+    [Fact]
+    public void ResolvePlacementReplyTarget_PrefersAuthoritativeHiveMindEndpoint_OverRawSenderAddress()
+    {
+        var resolved = InvokeResolvePlacementReplyTarget(
+            new PID("127.0.0.1:12041", "HiveMind"),
+            new PID("127.0.0.1:12020", "HiveMind"));
+
+        Assert.Equal("127.0.0.1:12020", resolved.Address);
+        Assert.Equal("HiveMind", resolved.Id);
+    }
+
+    [Fact]
+    public void ResolvePlacementReplyTarget_DoesNotHijack_NonHiveMindAliases()
+    {
+        var resolved = InvokeResolvePlacementReplyTarget(
+            new PID("nonhost", "placement-sender-alias"),
+            new PID("127.0.0.1:12020", "HiveMind"));
+
+        Assert.Equal("nonhost", resolved.Address);
+        Assert.Equal("placement-sender-alias", resolved.Id);
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_ExplicitReplyPid_RoutesAck_ToSpecifiedTarget()
+    {
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+
+        var ackCompletion = new TaskCompletionSource<PlacementAssignmentAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replyTargetPid = harness.Root.SpawnNamed(
+            Props.FromProducer(() => new PlacementAckCaptureActor(ackCompletion)),
+            $"worker-reply-capture-{Guid.NewGuid():N}");
+
+        var request = new PlacementAssignmentRequest
+        {
+            Assignment = BuildAssignment(
+                assignmentId: "explicit-reply",
+                brainId: Guid.NewGuid(),
+                workerNodeId: workerNodeId,
+                placementEpoch: 1,
+                regionId: 0,
+                shardIndex: 0,
+                target: PlacementAssignmentTarget.PlacementTargetBrainRoot,
+                actorName: $"brain-{Guid.NewGuid():N}-root"),
+            ReplyPid = PidLabel(replyTargetPid)
+        };
+
+        var senderPid = harness.Root.SpawnNamed(
+            Props.FromProducer(() => new FireAndForgetPlacementRequestActor(workerPid, request)),
+            $"worker-reply-sender-{Guid.NewGuid():N}");
+
+        try
+        {
+            var ack = await ackCompletion.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("explicit-reply", ack.AssignmentId);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, ack.State);
+            Assert.True(ack.Accepted);
+        }
+        finally
+        {
+            harness.Root.Stop(senderPid);
+            harness.Root.Stop(replyTargetPid);
+        }
+    }
+
     [Fact]
     public async Task DiscoveryBootstrap_And_LiveUpdate_AppliesKnownEndpoints()
     {
@@ -400,6 +498,77 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         Assert.NotNull(response);
 
         await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task GetHostedRegionShardBackendExecutionInfo_DoesNot_Block_Concurrent_PlacementAssignment()
+    {
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerActor = new WorkerNodeActor(workerNodeId, "127.0.0.1:12041");
+        var workerPid = harness.Root.Spawn(Props.FromProducer(() => workerActor));
+
+        var hostedBrainId = Guid.NewGuid();
+        var shardAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+            workerPid,
+            new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "hosted-region-shard",
+                    brainId: hostedBrainId,
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 1,
+                    regionId: 1,
+                    shardIndex: 0)
+            },
+            TimeSpan.FromSeconds(5));
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, shardAck.State);
+
+        var delayedBackendActor = new DelayedBackendExecutionInfoActor(TimeSpan.FromMilliseconds(900));
+        var delayedBackendPid = harness.Root.Spawn(Props.FromProducer(() => delayedBackendActor));
+        ReplaceHostedRegionShardPid(
+            workerActor,
+            hostedBrainId,
+            regionId: 1,
+            shardIndex: 0,
+            delayedBackendPid,
+            assignmentId: "hosted-region-shard");
+
+        var backendQueryTask = harness.Root.RequestAsync<RegionShardBackendExecutionInfo>(
+            workerPid,
+            new WorkerNodeActor.GetHostedRegionShardBackendExecutionInfo(hostedBrainId, 1, 0),
+            TimeSpan.FromSeconds(5));
+        await delayedBackendActor.RequestObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var controlBrainId = Guid.NewGuid();
+        var placementTimer = Stopwatch.StartNew();
+        var controlAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+            workerPid,
+            new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "concurrent-brain-root",
+                    brainId: controlBrainId,
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 1,
+                    regionId: 0,
+                    shardIndex: 0,
+                    target: PlacementAssignmentTarget.PlacementTargetBrainRoot,
+                    actorName: $"brain-{controlBrainId:N}-root")
+            },
+            TimeSpan.FromSeconds(5));
+        placementTimer.Stop();
+
+        Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, controlAck.State);
+        Assert.True(
+            placementTimer.Elapsed < TimeSpan.FromMilliseconds(500),
+            $"Expected concurrent placement to avoid waiting on backend query, but it took {placementTimer.Elapsed}.");
+
+        var backendInfo = await backendQueryTask;
+        Assert.True(backendInfo.HasExecuted);
+        Assert.Equal("cpu", backendInfo.BackendName);
+        Assert.False(backendInfo.UsedGpu);
     }
 
     [Fact]
@@ -1434,6 +1603,145 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     }
 
     [Fact]
+    public async Task PlacementAssignmentRequest_RuntimeMetadataHint_Allows_ArtifactBackedShard_WithoutIoBootstrap()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-metadata-hint-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+            var artifactStore = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+
+            var richNbn = NbnTestVectors.CreateRichNbnVector().Bytes;
+            var manifest = await artifactStore.StoreAsync(new MemoryStream(richNbn), "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var brainId = Guid.NewGuid();
+            var workerNodeId = Guid.NewGuid();
+            var workerName = $"worker-{Guid.NewGuid():N}";
+            var workerPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactStore: artifactStore)),
+                workerName);
+
+            var ack = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = BuildAssignment(
+                        assignmentId: "assign-metadata-hint",
+                        brainId: brainId,
+                        workerNodeId: workerNodeId,
+                        placementEpoch: 1,
+                        regionId: 1,
+                        shardIndex: 0,
+                        target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                        neuronStart: 0,
+                        neuronCount: 4,
+                        baseDefinition: brainDef,
+                        inputWidth: 3,
+                        outputWidth: 2)
+                });
+
+            Assert.True(ack.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, ack.State);
+
+            var reconcile = await harness.Root.RequestAsync<PlacementReconcileReport>(
+                workerPid,
+                new PlacementReconcileRequest
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    PlacementEpoch = 1
+                });
+            _ = Assert.Single(reconcile.Assignments, static assignment => assignment.AssignmentId == "assign-metadata-hint");
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_NamedSender_RegionShard_ReturnsAcceptedThenReady()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-accepted-ready-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+            var artifactStore = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+
+            var richNbn = NbnTestVectors.CreateRichNbnVector().Bytes;
+            var manifest = await artifactStore.StoreAsync(new MemoryStream(richNbn), "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var brainId = Guid.NewGuid();
+            var workerNodeId = Guid.NewGuid();
+            var workerName = $"worker-{Guid.NewGuid():N}";
+            var workerPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactStore: artifactStore)),
+                workerName);
+
+            var request = new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "assign-accepted-ready",
+                    brainId: brainId,
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 1,
+                    regionId: 1,
+                    shardIndex: 0,
+                    target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                    neuronStart: 0,
+                    neuronCount: 4,
+                    baseDefinition: brainDef,
+                    inputWidth: 3,
+                    outputWidth: 2)
+            };
+
+            var (acceptedAck, readyAck) = await SendPlacementRequestViaNamedSenderAndAwaitSecondAckAsync(
+                harness.System,
+                workerPid,
+                request);
+
+            Assert.True(acceptedAck.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentAccepted, acceptedAck.State);
+            Assert.True(readyAck.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, readyAck.State);
+
+            var reconcile = await harness.Root.RequestAsync<PlacementReconcileReport>(
+                workerPid,
+                new PlacementReconcileRequest
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    PlacementEpoch = 1
+                });
+            _ = Assert.Single(reconcile.Assignments, static assignment => assignment.AssignmentId == "assign-accepted-ready");
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task PlacementAssignmentRequest_BrainInfoMissingBaseDefinition_UsesExportFallbackForArtifactBackedShard()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-export-fallback-{Guid.NewGuid():N}");
@@ -2131,8 +2439,13 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         PlacementAssignmentTarget target = PlacementAssignmentTarget.PlacementTargetRegionShard,
         string? actorName = null,
         uint neuronStart = 0,
-        uint neuronCount = 64)
-        => new()
+        uint neuronCount = 64,
+        ArtifactRef? baseDefinition = null,
+        ArtifactRef? lastSnapshot = null,
+        uint inputWidth = 0,
+        uint outputWidth = 0)
+    {
+        var assignment = new PlacementAssignment
         {
             AssignmentId = assignmentId,
             BrainId = brainId.ToProtoUuid(),
@@ -2143,8 +2456,23 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
             ShardIndex = shardIndex,
             NeuronStart = neuronStart,
             NeuronCount = neuronCount,
-            ActorName = actorName ?? $"region-{regionId}-shard-{shardIndex}"
+            ActorName = actorName ?? $"region-{regionId}-shard-{shardIndex}",
+            InputWidth = inputWidth,
+            OutputWidth = outputWidth
         };
+
+        if (baseDefinition is not null)
+        {
+            assignment.BaseDefinition = baseDefinition.Clone();
+        }
+
+        if (lastSnapshot is not null)
+        {
+            assignment.LastSnapshot = lastSnapshot.Clone();
+        }
+
+        return assignment;
+    }
 
     private static async Task WaitForAsync(Func<Task<bool>> predicate, int timeoutMs)
     {
@@ -2169,6 +2497,34 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         throw new Xunit.Sdk.XunitException($"Condition was not met within {timeoutMs} ms.");
     }
 
+    private static PID InvokeNormalizeReplyTarget(
+        PID target,
+        string? systemAddress,
+        PID? hintedReplyPid,
+        IReadOnlyCollection<PID> knownReplyTargets)
+    {
+        var method = typeof(WorkerNodeActor).GetMethod(
+            "NormalizeReplyTarget",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(method);
+        return Assert.IsType<PID>(method!.Invoke(null, [target, systemAddress, hintedReplyPid, knownReplyTargets])!);
+    }
+
+    private static PID InvokeResolvePlacementReplyTarget(PID target, PID? authoritativeHiveMindPid)
+    {
+        var method = typeof(WorkerNodeActor).GetMethod(
+            "ResolvePlacementReplyTarget",
+            BindingFlags.NonPublic | BindingFlags.Static,
+            binder: null,
+            types: [typeof(PID), typeof(PID)],
+            modifiers: null);
+        Assert.NotNull(method);
+        return Assert.IsType<PID>(method!.Invoke(null, [target, authoritativeHiveMindPid])!);
+    }
+
+    private static string PidLabel(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
     private static async Task<PlacementAssignmentAck> SendPlacementRequestViaNamedSenderAsync(
         ActorSystem system,
         PID workerPid,
@@ -2189,11 +2545,77 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         }
     }
 
+    private static async Task<(PlacementAssignmentAck First, PlacementAssignmentAck Second)> SendPlacementRequestViaNamedSenderAndAwaitSecondAckAsync(
+        ActorSystem system,
+        PID workerPid,
+        PlacementAssignmentRequest request)
+    {
+        var firstAck = new TaskCompletionSource<PlacementAssignmentAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondAck = new TaskCompletionSource<PlacementAssignmentAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var senderPid = system.Root.SpawnNamed(
+            Props.FromProducer(() => new PlacementRequestProbeActor(workerPid, request, firstAck, secondAck)),
+            $"worker-test-probe-accepted-{Guid.NewGuid():N}");
+
+        try
+        {
+            return (
+                await firstAck.Task.WaitAsync(TimeSpan.FromSeconds(5)),
+                await secondAck.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        finally
+        {
+            system.Root.Stop(senderPid);
+        }
+    }
+
+    private sealed class PlacementAckCaptureActor : IActor
+    {
+        private readonly TaskCompletionSource<PlacementAssignmentAck> _completion;
+
+        public PlacementAckCaptureActor(TaskCompletionSource<PlacementAssignmentAck> completion)
+        {
+            _completion = completion;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is PlacementAssignmentAck ack)
+            {
+                _completion.TrySetResult(ack);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FireAndForgetPlacementRequestActor : IActor
+    {
+        private readonly PID _workerPid;
+        private readonly PlacementAssignmentRequest _request;
+
+        public FireAndForgetPlacementRequestActor(PID workerPid, PlacementAssignmentRequest request)
+        {
+            _workerPid = workerPid;
+            _request = request;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is Started)
+            {
+                context.Request(_workerPid, _request);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class PlacementRequestProbeActor : IActor
     {
         private readonly PID _workerPid;
         private readonly PlacementAssignmentRequest _request;
         private readonly TaskCompletionSource<PlacementAssignmentAck> _completion;
+        private readonly TaskCompletionSource<PlacementAssignmentAck>? _secondCompletion;
 
         public PlacementRequestProbeActor(
             PID workerPid,
@@ -2205,6 +2627,18 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
             _completion = completion;
         }
 
+        public PlacementRequestProbeActor(
+            PID workerPid,
+            PlacementAssignmentRequest request,
+            TaskCompletionSource<PlacementAssignmentAck> completion,
+            TaskCompletionSource<PlacementAssignmentAck> secondCompletion)
+        {
+            _workerPid = workerPid;
+            _request = request;
+            _completion = completion;
+            _secondCompletion = secondCompletion;
+        }
+
         public Task ReceiveAsync(IContext context)
         {
             switch (context.Message)
@@ -2213,8 +2647,19 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
                     context.Request(_workerPid, _request);
                     break;
                 case PlacementAssignmentAck ack:
-                    _completion.TrySetResult(ack);
-                    context.Stop(context.Self);
+                    if (!_completion.Task.IsCompleted)
+                    {
+                        _completion.TrySetResult(ack);
+                    }
+                    else if (_secondCompletion is not null)
+                    {
+                        _secondCompletion.TrySetResult(ack);
+                        context.Stop(context.Self);
+                    }
+                    else
+                    {
+                        context.Stop(context.Self);
+                    }
                     break;
             }
 
@@ -2472,6 +2917,68 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
             });
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class DelayedBackendExecutionInfoActor : IActor
+    {
+        private readonly TimeSpan _delay;
+
+        public DelayedBackendExecutionInfoActor(TimeSpan delay)
+        {
+            _delay = delay;
+        }
+
+        public TaskCompletionSource<bool> RequestObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is not GetRegionShardBackendExecutionInfo)
+            {
+                return;
+            }
+
+            RequestObserved.TrySetResult(true);
+            await Task.Delay(_delay);
+            context.Respond(new RegionShardBackendExecutionInfo(
+                RegionShardComputeBackendPreference.Cpu,
+                BackendName: "cpu",
+                UsedGpu: false,
+                FallbackReason: string.Empty,
+                HasExecuted: true));
+        }
+    }
+
+    private static void ReplaceHostedRegionShardPid(
+        WorkerNodeActor actor,
+        Guid brainId,
+        int regionId,
+        int shardIndex,
+        PID replacementPid,
+        string assignmentId)
+    {
+        var brainsField = typeof(WorkerNodeActor).GetField("_brains", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(brainsField);
+        var brains = Assert.IsAssignableFrom<IDictionary>(brainsField!.GetValue(actor));
+        var brain = brains[brainId];
+        Assert.NotNull(brain);
+
+        var brainType = brain!.GetType();
+        var regionShardsProperty = brainType.GetProperty("RegionShards", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert.NotNull(regionShardsProperty);
+        var regionShards = Assert.IsAssignableFrom<IDictionary>(regionShardsProperty!.GetValue(brain));
+
+        Assert.True(Nbn.Shared.Addressing.ShardId32.TryFrom(regionId, shardIndex, out var shardId));
+        var hostedShardType = typeof(WorkerNodeActor).GetNestedType("HostedShard", BindingFlags.NonPublic);
+        Assert.NotNull(hostedShardType);
+        var hostedShard = Activator.CreateInstance(
+            hostedShardType!,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: new object[] { shardId, 0, 1, replacementPid, assignmentId },
+            culture: null);
+        Assert.NotNull(hostedShard);
+
+        regionShards[shardId] = hostedShard;
     }
 
     private sealed class WorkerHarness : IAsyncDisposable

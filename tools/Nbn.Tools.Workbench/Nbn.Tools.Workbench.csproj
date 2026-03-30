@@ -26,6 +26,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Nbn.Shared\Nbn.Shared.csproj" />
     <ProjectReference Include="..\..\src\Nbn.Runtime.Artifacts\Nbn.Runtime.Artifacts.csproj" />
+    <ProjectReference Include="..\..\src\Nbn.Runtime.WorkerNode\Nbn.Runtime.WorkerNode.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -44,6 +44,7 @@ public sealed partial class OrchestratorPanelViewModel
         IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
         IReadOnlyList<Nbn.Proto.Settings.WorkerReadinessCapability> inventory,
         IReadOnlyDictionary<Guid, HashSet<Guid>> workerBrainHints,
+        IReadOnlyDictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint> workerBrainBackends,
         long nowMs)
     {
         foreach (var worker in inventory)
@@ -130,7 +131,7 @@ public sealed partial class OrchestratorPanelViewModel
                     break;
             }
 
-            var brainHints = DescribeWorkerBrainHints(workerBrainHints, entry.NodeId);
+            var brainHints = DescribeWorkerBrainHints(workerBrainHints, workerBrainBackends, entry.NodeId);
             var capabilityChips = DescribeWorkerCapabilityChips(entry);
             rows.Add((WorkerStatusRank(status), entry.LastSeenMs, new WorkerEndpointItem(
                 entry.NodeId,
@@ -173,7 +174,8 @@ public sealed partial class OrchestratorPanelViewModel
             worker => worker.NodeId is not null
                       && worker.NodeId.TryToGuid(out _)
                       && IsWorkerHostCandidate(worker.LogicalName, worker.RootActorName));
-        return WorkbenchSystemLoadSummaryBuilder.Build(workers, hiveMindStatus);
+        var history = _systemLoadHistory.Record(workers, hiveMindStatus, nowMs);
+        return WorkbenchSystemLoadSummaryBuilder.Build(workers, hiveMindStatus, history);
     }
 
     private static long ResolveWorkerReferenceTimeMs(
@@ -495,6 +497,7 @@ public sealed partial class OrchestratorPanelViewModel
 
     private static WorkerBrainHintSummary DescribeWorkerBrainHints(
         IReadOnlyDictionary<Guid, HashSet<Guid>> workerBrainHints,
+        IReadOnlyDictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint> workerBrainBackends,
         Guid nodeId)
     {
         if (!workerBrainHints.TryGetValue(nodeId, out var brainIds) || brainIds.Count == 0)
@@ -502,15 +505,64 @@ public sealed partial class OrchestratorPanelViewModel
             return new WorkerBrainHintSummary(0, "none");
         }
 
-        var abbreviated = brainIds
-            .Select(AbbreviateBrainId)
-            .OrderBy(value => value, StringComparer.Ordinal)
-            .ToArray();
-        var preview = abbreviated.Length <= MaxWorkerBrainHints
-            ? string.Join(", ", abbreviated)
-            : $"{string.Join(", ", abbreviated.Take(MaxWorkerBrainHints))}, ...";
-        return new WorkerBrainHintSummary(brainIds.Count, preview);
+        var gpuBrains = new List<string>();
+        var cpuBrains = new List<string>();
+        var mixedBrains = new List<string>();
+        var otherBrains = new List<string>();
+        foreach (var brainId in brainIds.OrderBy(AbbreviateBrainId, StringComparer.Ordinal))
+        {
+            var abbreviated = AbbreviateBrainId(brainId);
+            if (workerBrainBackends.TryGetValue((nodeId, brainId), out var backend))
+            {
+                if (backend == WorkerBrainBackendHint.Gpu)
+                {
+                    gpuBrains.Add(abbreviated);
+                }
+                else if (backend == WorkerBrainBackendHint.Mixed)
+                {
+                    mixedBrains.Add(abbreviated);
+                }
+                else
+                {
+                    cpuBrains.Add(abbreviated);
+                }
+            }
+            else
+            {
+                otherBrains.Add(abbreviated);
+            }
+        }
+
+        var segments = new List<string>();
+        if (gpuBrains.Count > 0)
+        {
+            segments.Add($"GPU {FormatBrainHintPreview(gpuBrains)}");
+        }
+
+        if (cpuBrains.Count > 0)
+        {
+            segments.Add($"CPU {FormatBrainHintPreview(cpuBrains)}");
+        }
+
+        if (mixedBrains.Count > 0)
+        {
+            segments.Add($"Mixed {FormatBrainHintPreview(mixedBrains)}");
+        }
+
+        if (otherBrains.Count > 0)
+        {
+            segments.Add(segments.Count == 0
+                ? FormatBrainHintPreview(otherBrains)
+                : $"Other {FormatBrainHintPreview(otherBrains)}");
+        }
+
+        return new WorkerBrainHintSummary(brainIds.Count, string.Join("; ", segments));
     }
+
+    private static string FormatBrainHintPreview(IReadOnlyList<string> brains)
+        => brains.Count <= MaxWorkerBrainHints
+            ? string.Join(", ", brains)
+            : $"{string.Join(", ", brains.Take(MaxWorkerBrainHints))}, ...";
 
     private static string AbbreviateBrainId(Guid brainId)
     {
@@ -535,6 +587,13 @@ public sealed partial class OrchestratorPanelViewModel
     private sealed record WorkerBrainHintSummary(
         int Count,
         string Preview);
+
+    private enum WorkerBrainBackendHint
+    {
+        Cpu = 0,
+        Gpu = 1,
+        Mixed = 2
+    }
 
     private sealed class WorkerEndpointSnapshot
     {

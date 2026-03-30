@@ -543,7 +543,20 @@ public sealed partial class DesignerPanelViewModel
                 return placementAck;
             }
 
-            Status = "Waiting for brain placement/runtime readiness after artifact restore...";
+            Status = "Waiting for HiveMind placement readiness after artifact restore...";
+            var awaitedPlacementAck = await _client
+                .AwaitSpawnPlacementAsync(brainId, PlacementWaitTimeoutMs)
+                .ConfigureAwait(false);
+            if (awaitedPlacementAck?.PlacementReady != true)
+            {
+                Status = SpawnFailureFormatter.Format(
+                    prefix: snapshotRef is null ? "Artifact placement failed" : "Artifact restore failed",
+                    ack: awaitedPlacementAck,
+                    fallbackMessage: $"Artifact restore failed: brain {brainId:D} did not complete HiveMind placement.");
+                return placementAck;
+            }
+
+            Status = "Waiting for brain visualization/controller readiness after artifact restore...";
             if (!await WaitForBrainRegistrationAsync(brainId).ConfigureAwait(false))
             {
                 Status = $"Artifact restore failed: brain {brainId:D} did not become visualization-ready after HiveMind placement.";
@@ -708,7 +721,21 @@ public sealed partial class DesignerPanelViewModel
                 return;
             }
 
-            Status = "Waiting for brain placement/runtime readiness after IO/HiveMind worker placement...";
+            Status = "Waiting for IO/HiveMind placement readiness...";
+            var awaitedPlacementAck = await _client
+                .AwaitSpawnPlacementViaIoAsync(spawnedBrainId, PlacementWaitTimeoutMs)
+                .ConfigureAwait(false);
+            if (awaitedPlacementAck?.PlacementReady != true)
+            {
+                Status = SpawnFailureFormatter.Format(
+                    prefix: "Spawn failed",
+                    ack: awaitedPlacementAck,
+                    fallbackMessage: $"Spawn failed: brain {spawnedBrainId:D} did not complete IO/HiveMind worker placement.");
+                await _client.KillBrainAsync(spawnedBrainId, "designer_managed_spawn_placement_timeout").ConfigureAwait(false);
+                return;
+            }
+
+            Status = "Waiting for brain visualization/controller readiness after IO/HiveMind worker placement...";
             if (!await WaitForBrainRegistrationAsync(spawnedBrainId).ConfigureAwait(false))
             {
                 Status = $"Spawn failed: brain {spawnedBrainId:D} did not become visualization-ready after IO/HiveMind worker placement.";
@@ -1184,9 +1211,8 @@ public sealed partial class DesignerPanelViewModel
         {
             return false;
         }
-
-        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        return HasLiveController(response.Controllers, brainId, nowMs);
+        
+        return true;
     }
 
     private static bool IsPlacementVisualizationReady(ProtoControl.PlacementLifecycleInfo? lifecycle, Guid brainId)
@@ -1198,52 +1224,9 @@ public sealed partial class DesignerPanelViewModel
             return false;
         }
 
-        return lifecycle.LifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning
+        return (lifecycle.LifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned
+                || lifecycle.LifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning)
                && lifecycle.RegisteredShards > 0;
-    }
-
-    private static bool HasLiveController(
-        IEnumerable<Nbn.Proto.Settings.BrainControllerStatus>? controllers,
-        Guid brainId,
-        long nowMs)
-    {
-        if (controllers is null)
-        {
-            return false;
-        }
-
-        foreach (var controller in controllers)
-        {
-            if (controller.BrainId is null
-                || !controller.BrainId.TryToGuid(out var candidate)
-                || candidate != brainId)
-            {
-                continue;
-            }
-
-            if (controller.IsAlive && IsControllerFresh(controller.LastSeenMs, nowMs))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsControllerFresh(ulong lastSeenMs, long nowMs)
-    {
-        if (lastSeenMs == 0)
-        {
-            return false;
-        }
-
-        var delta = nowMs - (long)lastSeenMs;
-        if (delta < 0)
-        {
-            return false;
-        }
-
-        return delta <= StaleControllerMs;
     }
 
     private string SuggestedName(string extension)

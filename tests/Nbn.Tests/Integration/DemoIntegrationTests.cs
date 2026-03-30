@@ -288,7 +288,7 @@ public class DemoIntegrationTests
                 ioPid,
                 brainId,
                 info => info.InputWidth == 1 && info.OutputWidth == 1,
-                TimeSpan.FromSeconds(10));
+                TimeSpan.FromSeconds(20));
 
             var outputTcs = new TaskCompletionSource<OutputEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
             var outputSink = ioNode.Root.Spawn(Props.FromProducer(() => new OutputSinkActor(brainId, outputTcs)));
@@ -621,7 +621,7 @@ public class DemoIntegrationTests
                 ioPid,
                 brainA,
                 info => info.InputWidth > 0 && info.OutputWidth > 0,
-                TimeSpan.FromSeconds(10));
+                TimeSpan.FromSeconds(20));
 
             await WaitForStatus(
                 hiveNode.Root,
@@ -639,7 +639,7 @@ public class DemoIntegrationTests
                 ioPid,
                 brainB,
                 info => info.InputWidth > 0 && info.OutputWidth > 0,
-                TimeSpan.FromSeconds(10));
+                TimeSpan.FromSeconds(20));
 
             await WaitForStatus(
                 hiveNode.Root,
@@ -1092,9 +1092,9 @@ public class DemoIntegrationTests
         while (sw.Elapsed < timeout)
         {
             var remaining = timeout - sw.Elapsed;
-            var requestTimeout = remaining < TimeSpan.FromSeconds(4)
+            var requestTimeout = remaining < TimeSpan.FromSeconds(1)
                 ? remaining
-                : TimeSpan.FromSeconds(4);
+                : TimeSpan.FromSeconds(1);
 
             try
             {
@@ -1119,7 +1119,7 @@ public class DemoIntegrationTests
                 lastError = ex;
             }
 
-            await Task.Delay(20);
+            await Task.Delay(50);
         }
 
         throw new TimeoutException(

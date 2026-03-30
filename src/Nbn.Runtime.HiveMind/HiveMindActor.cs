@@ -41,10 +41,14 @@ public sealed partial class HiveMindActor : IActor
     private int _workerPressureRebalanceWindow = WorkerCapabilitySettingsKeys.DefaultPressureRebalanceWindow;
     private double _workerPressureViolationRatio = WorkerCapabilitySettingsKeys.DefaultPressureViolationRatio;
     private float _workerPressureLimitTolerancePercent = (float)WorkerCapabilitySettingsKeys.DefaultPressureLimitTolerancePercent;
+    private int _workerRegionShardGpuNeuronThreshold = WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold;
     private ProtoSeverity _debugMinSeverity;
     private bool _debugSettingsSubscribed;
     private readonly Dictionary<Guid, BrainState> _brains = new();
     private readonly Dictionary<Guid, PendingSpawnState> _pendingSpawns = new();
+    private readonly Dictionary<Guid, CompletedSpawnState> _completedSpawns = new();
+    private readonly Queue<Guid> _completedSpawnOrder = new();
+    private readonly Dictionary<Guid, WorkerPlacementDispatchState> _workerPlacementDispatches = new();
     private readonly Dictionary<Guid, WorkerCatalogEntry> _workerCatalog = new();
     private readonly HashSet<ShardKey> _pendingCompute = new();
     private readonly Dictionary<ShardKey, PID> _pendingComputeSenders = new();
@@ -72,6 +76,7 @@ public sealed partial class HiveMindActor : IActor
     private static readonly QuantizationMap SnapshotBufferQuantization = QuantizationSchemas.DefaultBuffer;
     private static readonly TimeSpan PlacementPeerLatencyRefreshInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan PlacementPeerLatencyProbeTimeout = TimeSpan.FromMilliseconds(250);
+    private const int MaxCompletedSpawnResults = 1024;
     private const float DefaultPlasticityRate = 0.001f;
     private const float DefaultPlasticityDelta = DefaultPlasticityRate;
     private const long DefaultPlasticityEnergyCostReferenceTickCost = 100;

@@ -226,9 +226,29 @@ public sealed partial class ReproductionManagerActor
                 && response.Ack.BrainId.TryToGuid(out var childBrainId)
                 && childBrainId != Guid.Empty)
             {
-                result.Spawned = true;
-                result.ChildBrainId = response.Ack.BrainId;
-                return result;
+                var awaitTimeoutMs = (ulong)DefaultRequestTimeout.TotalMilliseconds;
+                var awaited = await context
+                    .RequestAsync<ProtoIo.AwaitSpawnPlacementViaIOAck>(
+                        _ioGatewayPid,
+                        new ProtoIo.AwaitSpawnPlacementViaIO
+                        {
+                            BrainId = response.Ack.BrainId,
+                            TimeoutMs = awaitTimeoutMs
+                        },
+                        TimeSpan.FromMilliseconds(DefaultRequestTimeout.TotalMilliseconds + 1_000))
+                    .ConfigureAwait(false);
+
+                if (awaited?.Ack?.BrainId is not null
+                    && awaited.Ack.BrainId.TryToGuid(out var awaitedBrainId)
+                    && awaitedBrainId != Guid.Empty
+                    && awaited.Ack.AcceptedForPlacement
+                    && awaited.Ack.PlacementReady
+                    && string.IsNullOrWhiteSpace(awaited.Ack.FailureReasonCode))
+                {
+                    result.Spawned = true;
+                    result.ChildBrainId = awaited.Ack.BrainId;
+                    return result;
+                }
             }
 
             return CreateSpawnFailureResult(result, "repro_spawn_failed");

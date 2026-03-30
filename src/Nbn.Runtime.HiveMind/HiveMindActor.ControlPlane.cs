@@ -169,6 +169,7 @@ public sealed partial class HiveMindActor
             return;
         }
 
+        RemoveQueuedPlacementDispatches(context, brainId, brain.PlacementEpoch);
         DispatchPlacementUnassignments(context, brain, brain.PlacementExecution, reason);
         ReleaseBrainVisualizationSubscribers(context, brain);
         _brains.Remove(brainId);
@@ -187,6 +188,15 @@ public sealed partial class HiveMindActor
                     : BuildSpawnFailureMessage(brain.PlacementFailureReason, detail: null, fallbackReasonCode: reasonCode);
             pendingSpawn.SetFailure(reasonCode, failureMessage);
             pendingSpawn.Completion.TrySetResult(false);
+            RememberCompletedSpawn(new CompletedSpawnState(
+                brainId,
+                pendingSpawn.PlacementEpoch,
+                AcceptedForPlacement: true,
+                PlacementReady: false,
+                brain.PlacementLifecycleState,
+                brain.PlacementReconcileState,
+                reasonCode,
+                failureMessage));
         }
 
         if (notifyIoUnregister && _ioPid is not null)

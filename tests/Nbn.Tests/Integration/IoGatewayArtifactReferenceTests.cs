@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Runtime.Artifacts;
@@ -55,10 +56,23 @@ public class IoGatewayArtifactReferenceTests
             Assert.True(
                 brainId != Guid.Empty,
                 $"Expected non-empty brain id but received failure={response.Ack.FailureReasonCode} message={response.Ack.FailureMessage}");
+            Assert.True(response.Ack.AcceptedForPlacement);
+            Assert.False(response.Ack.PlacementReady);
             Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureReasonCode));
             Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureMessage));
             Assert.True(string.IsNullOrWhiteSpace(response.FailureReasonCode));
             Assert.True(string.IsNullOrWhiteSpace(response.FailureMessage));
+
+            var awaited = await AwaitSpawnPlacementViaIoAsync(root, gateway, brainId);
+            Assert.NotNull(awaited.Ack);
+            Assert.True(awaited.Ack.BrainId.TryToGuid(out var awaitedBrainId));
+            Assert.Equal(brainId, awaitedBrainId);
+            Assert.True(awaited.Ack.AcceptedForPlacement);
+            Assert.True(awaited.Ack.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(awaited.Ack.FailureReasonCode));
+            Assert.True(string.IsNullOrWhiteSpace(awaited.Ack.FailureMessage));
+            Assert.True(string.IsNullOrWhiteSpace(awaited.FailureReasonCode));
+            Assert.True(string.IsNullOrWhiteSpace(awaited.FailureMessage));
 
             await WaitForAsync(
                 async () =>
@@ -133,11 +147,111 @@ public class IoGatewayArtifactReferenceTests
 
             Assert.NotNull(response.Ack);
             Assert.True(response.Ack.BrainId.TryToGuid(out var brainId));
-            Assert.Equal(Guid.Empty, brainId);
-            Assert.Equal("spawn_internal_error", response.Ack.FailureReasonCode);
-            Assert.Contains("artifact-backed shard load failed", response.Ack.FailureMessage, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(response.Ack.FailureReasonCode, response.FailureReasonCode);
-            Assert.Equal(response.Ack.FailureMessage, response.FailureMessage);
+            Assert.NotEqual(Guid.Empty, brainId);
+            Assert.True(response.Ack.AcceptedForPlacement);
+            Assert.False(response.Ack.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureReasonCode));
+            Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureMessage));
+            Assert.True(string.IsNullOrWhiteSpace(response.FailureReasonCode));
+            Assert.True(string.IsNullOrWhiteSpace(response.FailureMessage));
+
+            var wait = await AwaitSpawnPlacementViaIoAsync(root, gateway, brainId);
+            Assert.NotNull(wait.Ack);
+            Assert.True(wait.Ack.BrainId.TryToGuid(out var waitedBrainId));
+            Assert.Equal(brainId, waitedBrainId);
+            Assert.True(wait.Ack.AcceptedForPlacement);
+            Assert.False(wait.Ack.PlacementReady);
+            Assert.Equal("spawn_internal_error", wait.Ack.FailureReasonCode);
+            Assert.Contains("artifact-backed shard load failed", wait.Ack.FailureMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(wait.Ack.FailureReasonCode, wait.FailureReasonCode);
+            Assert.Equal(wait.Ack.FailureMessage, wait.FailureMessage);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            artifactRoot.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task SpawnBrainViaIO_EndToEnd_AfterWorkerArtifactLoadFailure_Allows_A_Later_SuccessfulSpawn()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerNodeId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var ioPid = new PID(string.Empty, ioName);
+            var hiveMind = root.Spawn(
+                Props.FromProducer(() => new HiveMindActor(CreateHiveOptions(), ioPid: ioPid)));
+            var gateway = root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveMind)),
+                ioName);
+            var worker = root.Spawn(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactStore: new FailFirstArtifactStore(
+                        new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot)),
+                        failuresRemaining: 1,
+                        message: "simulated transient artifact store load failure"))));
+
+            PrimeWorkerDiscoveryEndpoints(root, worker, hiveMind.Id, gateway.Id);
+            PrimeWorkers(root, hiveMind, worker, workerNodeId);
+
+            async Task<SpawnBrainViaIOAck> SpawnAsync()
+                => await root.RequestAsync<SpawnBrainViaIOAck>(
+                    gateway,
+                    new SpawnBrainViaIO
+                    {
+                        Request = new ProtoControl.SpawnBrain
+                        {
+                            BrainDef = brainDef
+                        }
+                    },
+                    TimeSpan.FromSeconds(70));
+
+            var failedResponse = await SpawnAsync();
+            Assert.NotNull(failedResponse.Ack);
+            Assert.True(failedResponse.Ack.BrainId.TryToGuid(out var failedBrainId));
+            Assert.NotEqual(Guid.Empty, failedBrainId);
+
+            var failedWait = await AwaitSpawnPlacementViaIoAsync(root, gateway, failedBrainId);
+            Assert.NotNull(failedWait.Ack);
+            Assert.True(failedWait.Ack.AcceptedForPlacement);
+            Assert.False(failedWait.Ack.PlacementReady);
+            Assert.False(string.IsNullOrWhiteSpace(failedWait.Ack.FailureReasonCode));
+
+            var successfulResponse = await SpawnAsync();
+            Assert.NotNull(successfulResponse.Ack);
+            Assert.True(successfulResponse.Ack.BrainId.TryToGuid(out var successfulBrainId));
+            Assert.NotEqual(Guid.Empty, successfulBrainId);
+            Assert.NotEqual(failedBrainId, successfulBrainId);
+
+            var successfulWait = await AwaitSpawnPlacementViaIoAsync(root, gateway, successfulBrainId);
+            Assert.NotNull(successfulWait.Ack);
+            Assert.True(successfulWait.Ack.AcceptedForPlacement);
+            Assert.True(successfulWait.Ack.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(successfulWait.Ack.FailureReasonCode), successfulWait.Ack.FailureMessage);
+
+            await WaitForAsync(
+                async () =>
+                {
+                    var lifecycle = await root.RequestAsync<ProtoControl.PlacementLifecycleInfo>(
+                        hiveMind,
+                        new ProtoControl.GetPlacementLifecycle
+                        {
+                            BrainId = successfulBrainId.ToProtoUuid()
+                        });
+
+                    return lifecycle.LifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned
+                           || lifecycle.LifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning;
+                },
+                timeoutMs: 5_000);
 
             await system.ShutdownAsync();
         }
@@ -277,6 +391,67 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task AwaitSpawnPlacementViaIO_DoesNotBlockOnArtifactBootstrap_WhenBrainIsAlreadyVisible()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new AwaitPlacementHiveProbe(
+            brainId,
+            artifactDelay: TimeSpan.FromSeconds(2))));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var started = Stopwatch.GetTimestamp();
+        var response = await root.RequestAsync<AwaitSpawnPlacementViaIOAck>(
+            gateway,
+            new AwaitSpawnPlacementViaIO
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TimeoutMs = 2_000
+            },
+            TimeSpan.FromSeconds(3));
+        var elapsedMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+
+        Assert.NotNull(response.Ack);
+        Assert.True(response.Ack.BrainId.TryToGuid(out var awaitedBrainId));
+        Assert.Equal(brainId, awaitedBrainId);
+        Assert.True(response.Ack.AcceptedForPlacement);
+        Assert.True(response.Ack.PlacementReady);
+        Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureReasonCode));
+        Assert.True(elapsedMs < 1_000d, $"AwaitSpawnPlacementViaIO took {elapsedMs:0.##} ms.");
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task AwaitSpawnPlacementViaIO_Forwards_ZeroTimeout_Unchanged_To_HiveMind()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var forwarded = new TaskCompletionSource<ProtoControl.AwaitSpawnPlacement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new IoGatewayArtifactReferenceTests.RecordingAwaitPlacementHiveProbe(brainId, forwarded)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var response = await root.RequestAsync<AwaitSpawnPlacementViaIOAck>(
+            gateway,
+            new AwaitSpawnPlacementViaIO
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TimeoutMs = 0
+            },
+            TimeSpan.FromSeconds(5));
+
+        var forwardedRequest = await forwarded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0UL, forwardedRequest.TimeoutMs);
+        Assert.NotNull(response.Ack);
+        Assert.True(response.Ack.AcceptedForPlacement);
+        Assert.True(response.Ack.PlacementReady);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SpawnBrainViaIO_Returns_Actionable_Failure_When_HiveMind_Is_Unavailable()
     {
         var system = new ActorSystem();
@@ -339,6 +514,79 @@ public class IoGatewayArtifactReferenceTests
         Assert.False(secondKill.Task.IsCompleted);
 
         await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task KillBrainViaIO_EndToEnd_Terminates_Brain_In_HiveMind()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerNodeId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var ioPid = new PID(string.Empty, ioName);
+            var hiveMind = root.Spawn(
+                Props.FromProducer(() => new HiveMindActor(CreateHiveOptions(), ioPid: ioPid)));
+            var gateway = root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveMind)),
+                ioName);
+            var worker = root.Spawn(
+                Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "worker.local", artifactRootPath: artifactRoot)));
+
+            PrimeWorkerDiscoveryEndpoints(root, worker, hiveMind.Id, gateway.Id);
+            PrimeWorkers(root, hiveMind, worker, workerNodeId);
+
+            var spawn = await root.RequestAsync<SpawnBrainViaIOAck>(
+                gateway,
+                new SpawnBrainViaIO
+                {
+                    Request = new ProtoControl.SpawnBrain
+                    {
+                        BrainDef = brainDef
+                    }
+                },
+                TimeSpan.FromSeconds(70));
+
+            Assert.NotNull(spawn.Ack);
+            Assert.True(spawn.Ack.BrainId.TryToGuid(out var brainId));
+            Assert.NotEqual(Guid.Empty, brainId);
+
+            var awaited = await AwaitSpawnPlacementViaIoAsync(root, gateway, brainId);
+            Assert.NotNull(awaited.Ack);
+            Assert.True(awaited.Ack.PlacementReady);
+
+            var kill = await root.RequestAsync<KillBrainViaIOAck>(
+                gateway,
+                new KillBrainViaIO
+                {
+                    Request = new ProtoControl.KillBrain
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        Reason = "integration_test_stop"
+                    }
+                });
+
+            Assert.True(kill.Accepted);
+
+            await WaitForAsync(
+                async () =>
+                {
+                    var status = await root.RequestAsync<ProtoControl.HiveMindStatus>(
+                        hiveMind,
+                        new ProtoControl.GetHiveMindStatus());
+                    return status.RegisteredBrains == 0;
+                },
+                timeoutMs: 5_000);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            artifactRoot.Dispose();
+        }
     }
 
     [Fact]
@@ -2414,6 +2662,20 @@ public class IoGatewayArtifactReferenceTests
     private static Task WaitForAsync(Func<Task<bool>> predicate, int timeoutMs)
         => AsyncTestHelpers.WaitForAsync(predicate, timeoutMs);
 
+    private static Task<AwaitSpawnPlacementViaIOAck> AwaitSpawnPlacementViaIoAsync(
+        IRootContext root,
+        PID gateway,
+        Guid brainId,
+        ulong timeoutMs = 5_000)
+        => root.RequestAsync<AwaitSpawnPlacementViaIOAck>(
+            gateway,
+            new AwaitSpawnPlacementViaIO
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TimeoutMs = timeoutMs
+            },
+            TimeSpan.FromMilliseconds((double)Math.Max((ulong)100, timeoutMs + 1_000)));
+
     private static IoOptions CreateOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -2454,6 +2716,44 @@ public class IoGatewayArtifactReferenceTests
 
         public Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
             => throw new InvalidOperationException(_message);
+    }
+
+    private sealed class FailFirstArtifactStore : IArtifactStore
+    {
+        private readonly IArtifactStore _inner;
+        private readonly string _message;
+        private int _failuresRemaining;
+
+        public FailFirstArtifactStore(IArtifactStore inner, int failuresRemaining, string message)
+        {
+            _inner = inner;
+            _failuresRemaining = Math.Max(0, failuresRemaining);
+            _message = string.IsNullOrWhiteSpace(message) ? "artifact store failure" : message;
+        }
+
+        public Task<ArtifactManifest> StoreAsync(
+            Stream content,
+            string mediaType,
+            ArtifactStoreWriteOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => _inner.StoreAsync(content, mediaType, options, cancellationToken);
+
+        public Task<ArtifactManifest?> TryGetManifestAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+            => _inner.TryGetManifestAsync(artifactId, cancellationToken);
+
+        public Task<bool> ContainsAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+            => _inner.ContainsAsync(artifactId, cancellationToken);
+
+        public Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+        {
+            if (_failuresRemaining > 0)
+            {
+                _failuresRemaining--;
+                throw new InvalidOperationException(_message);
+            }
+
+            return _inner.TryOpenArtifactAsync(artifactId, cancellationToken);
+        }
     }
 
     private static async Task AssertInvalidHomeostasisCommandAsync(
@@ -2529,6 +2829,125 @@ public class IoGatewayArtifactReferenceTests
 
                 context.Respond(_ack.Clone());
             }
+        }
+    }
+
+    private sealed class AwaitPlacementHiveProbe : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly TimeSpan _artifactDelay;
+
+        public AwaitPlacementHiveProbe(Guid brainId, TimeSpan artifactDelay)
+        {
+            _brainId = brainId;
+            _artifactDelay = artifactDelay;
+        }
+
+        public async Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoControl.AwaitSpawnPlacement request
+                    when request.BrainId is not null
+                         && request.BrainId.TryToGuid(out var requestedBrainId)
+                         && requestedBrainId == _brainId:
+                    context.Respond(new ProtoControl.SpawnBrainAck
+                    {
+                        BrainId = request.BrainId,
+                        AcceptedForPlacement = true,
+                        PlacementReady = true,
+                        PlacementEpoch = 1,
+                        LifecycleState = ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning,
+                        ReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileMatched
+                    });
+                    break;
+                case ProtoControl.GetBrainIoInfo request
+                    when request.BrainId is not null
+                         && request.BrainId.TryToGuid(out var infoBrainId)
+                         && infoBrainId == _brainId:
+                    context.Respond(new ProtoControl.BrainIoInfo
+                    {
+                        BrainId = request.BrainId,
+                        InputWidth = 2,
+                        OutputWidth = 1,
+                        InputCoordinatorMode = ProtoControl.InputCoordinatorMode.DirtyOnChange,
+                        OutputVectorSource = ProtoControl.OutputVectorSource.Potential,
+                        InputCoordinatorPid = "worker.local/brain-input",
+                        OutputCoordinatorPid = "worker.local/brain-output",
+                        IoGatewayOwnsInputCoordinator = false,
+                        IoGatewayOwnsOutputCoordinator = false
+                    });
+                    break;
+                case ExportBrainDefinition request
+                    when request.BrainId is not null
+                         && request.BrainId.TryToGuid(out var definitionBrainId)
+                         && definitionBrainId == _brainId:
+                    await Task.Delay(_artifactDelay).ConfigureAwait(false);
+                    context.Respond(new BrainDefinitionReady { BrainId = request.BrainId });
+                    break;
+                case RequestSnapshot request
+                    when request.BrainId is not null
+                         && request.BrainId.TryToGuid(out var snapshotBrainId)
+                         && snapshotBrainId == _brainId:
+                    await Task.Delay(_artifactDelay).ConfigureAwait(false);
+                    context.Respond(new SnapshotReady { BrainId = request.BrainId });
+                    break;
+            }
+        }
+    }
+
+    private sealed class RecordingAwaitPlacementHiveProbe : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly TaskCompletionSource<ProtoControl.AwaitSpawnPlacement> _forwarded;
+
+        public RecordingAwaitPlacementHiveProbe(
+            Guid brainId,
+            TaskCompletionSource<ProtoControl.AwaitSpawnPlacement> forwarded)
+        {
+            _brainId = brainId;
+            _forwarded = forwarded;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoControl.AwaitSpawnPlacement request
+                    when request.BrainId is not null
+                         && request.BrainId.TryToGuid(out var requestedBrainId)
+                         && requestedBrainId == _brainId:
+                    _forwarded.TrySetResult(request.Clone());
+                    context.Respond(new ProtoControl.SpawnBrainAck
+                    {
+                        BrainId = request.BrainId,
+                        AcceptedForPlacement = true,
+                        PlacementReady = true,
+                        PlacementEpoch = 1,
+                        LifecycleState = ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning,
+                        ReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileMatched
+                    });
+                    break;
+                case ProtoControl.GetBrainIoInfo request
+                    when request.BrainId is not null
+                         && request.BrainId.TryToGuid(out var infoBrainId)
+                         && infoBrainId == _brainId:
+                    context.Respond(new ProtoControl.BrainIoInfo
+                    {
+                        BrainId = request.BrainId,
+                        InputWidth = 2,
+                        OutputWidth = 1,
+                        InputCoordinatorMode = ProtoControl.InputCoordinatorMode.DirtyOnChange,
+                        OutputVectorSource = ProtoControl.OutputVectorSource.Potential,
+                        InputCoordinatorPid = "worker.local/brain-input",
+                        OutputCoordinatorPid = "worker.local/brain-output",
+                        IoGatewayOwnsInputCoordinator = false,
+                        IoGatewayOwnsOutputCoordinator = false
+                    });
+                    break;
+            }
+
+            return Task.CompletedTask;
         }
     }
 

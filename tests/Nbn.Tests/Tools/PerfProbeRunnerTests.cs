@@ -16,7 +16,7 @@ public sealed class PerfProbeRunnerTests
         var config = new WorkerProfileConfig(
             PlannerWorkerCount: 4,
             PlannerIterations: 16,
-            HiddenRegionNeurons: 8_192);
+            HiddenRegionNeurons: WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold);
 
         var scenarios = PerfProbeRunner.BuildWorkerProfileScenarios(config, CreateCudaCapabilities()).ToArray();
 
@@ -34,7 +34,7 @@ public sealed class PerfProbeRunnerTests
         Assert.Null(gpuPlanner.SkipReason);
         Assert.True(gpuPlanner.Metrics["plans_per_second"] > 0d);
         Assert.Equal("gpu", gpuPlanner.Parameters["compute_backend_preference"]);
-        Assert.Equal(Math.Max(4096, NbnConstants.DefaultAxonStride * 2).ToString(), gpuPlanner.Parameters["max_neurons_per_shard"]);
+        Assert.Equal(WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold.ToString(), gpuPlanner.Parameters["max_neurons_per_shard"]);
         Assert.DoesNotContain(
             scenarios,
             static scenario => scenario.Scenario == "placement_planner_profile"
@@ -410,7 +410,7 @@ public sealed class PerfProbeRunnerTests
         var config = PerfProbeDefaults.Create(outputDirectory: "ignored");
         var computeDominant = config.LocalhostStress.ComputeDominantWorkload;
 
-        Assert.True(computeDominant.HiddenNeurons >= Math.Max(4096, NbnConstants.DefaultAxonStride * 2));
+        Assert.True(computeDominant.HiddenNeurons >= WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold);
         Assert.True(computeDominant.TargetTickHz > 0f);
         Assert.True(computeDominant.BrainCount > 0);
         Assert.True(computeDominant.RunSeconds > 0);

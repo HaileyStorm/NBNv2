@@ -65,7 +65,12 @@ public static class PlacementPlanner
         ProtoControl.ShardPlan? RequestedShardPlan,
         IReadOnlyList<RegionSpan> Regions,
         IReadOnlyList<Guid> CurrentWorkerNodeIds,
-        RegionShardComputeBackendPreference ComputeBackendPreference = RegionShardComputeBackendPreference.Auto);
+        Nbn.Proto.ArtifactRef? BaseDefinition = null,
+        Nbn.Proto.ArtifactRef? LastSnapshot = null,
+        int InputWidth = 0,
+        int OutputWidth = 0,
+        RegionShardComputeBackendPreference ComputeBackendPreference = RegionShardComputeBackendPreference.Auto,
+        int RegionShardGpuNeuronThreshold = WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold);
 
     /// <summary>
     /// Contains the deterministic result of a placement planning attempt.
@@ -223,7 +228,12 @@ public static class PlacementPlanner
                 eligibleWorkers,
                 shardPlan,
                 inputs.CurrentWorkerNodeIds,
-                inputs.ComputeBackendPreference);
+                inputs.BaseDefinition,
+                inputs.LastSnapshot,
+                inputs.InputWidth,
+                inputs.OutputWidth,
+                inputs.ComputeBackendPreference,
+                inputs.RegionShardGpuNeuronThreshold);
         }
         catch (InvalidOperationException ex)
         {
@@ -263,7 +273,12 @@ public static class PlacementPlanner
         IReadOnlyList<WorkerCandidate> eligibleWorkers,
         ShardPlanResult shardPlan,
         IReadOnlyList<Guid> currentWorkerNodeIds,
-        RegionShardComputeBackendPreference computeBackendPreference)
+        Nbn.Proto.ArtifactRef? baseDefinition,
+        Nbn.Proto.ArtifactRef? lastSnapshot,
+        int inputWidth,
+        int outputWidth,
+        RegionShardComputeBackendPreference computeBackendPreference,
+        int regionShardGpuNeuronThreshold)
     {
         var assignments = new List<ProtoControl.PlacementAssignment>();
         var currentWorkers = currentWorkerNodeIds?.Count > 0
@@ -275,15 +290,20 @@ public static class PlacementPlanner
             .Where(static shard => shard.RegionId != NbnConstants.InputRegionId && shard.RegionId != NbnConstants.OutputRegionId)
             .ToArray();
         var preferGpuWorkload = RegionShardComputeBackendPreferenceResolver.IsGpuExecutionEnabled(computeBackendPreference)
-                                && computeShards.Any(shard => shard.NeuronCount >= Math.Max(4096, stride * 2));
+                                && computeShards.Any(shard => eligibleWorkers.Any(worker => ShouldPreferGpuForShard(
+                                    shard,
+                                    stride,
+                                    worker,
+                                    computeBackendPreference,
+                                    regionShardGpuNeuronThreshold)));
         var controlWorker = SelectPrimaryWorker(eligibleWorkers, currentWorkers, preferGpuWorkload);
         var computeWorkers = SelectComputeWorkers(eligibleWorkers, currentWorkers, computeShards, controlWorker, preferGpuWorkload);
         var assignedNeurons = computeWorkers.ToDictionary(static worker => worker.NodeId, static _ => 0);
 
-        AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetBrainRoot);
-        AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetSignalRouter);
-        AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetInputCoordinator);
-        AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetOutputCoordinator);
+        AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetBrainRoot, baseDefinition, lastSnapshot, inputWidth, outputWidth, ResolveRegionShardGpuNeuronThreshold(stride, controlWorker, regionShardGpuNeuronThreshold));
+        AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetSignalRouter, baseDefinition, lastSnapshot, inputWidth, outputWidth, ResolveRegionShardGpuNeuronThreshold(stride, controlWorker, regionShardGpuNeuronThreshold));
+        AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetInputCoordinator, baseDefinition, lastSnapshot, inputWidth, outputWidth, ResolveRegionShardGpuNeuronThreshold(stride, controlWorker, regionShardGpuNeuronThreshold));
+        AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetOutputCoordinator, baseDefinition, lastSnapshot, inputWidth, outputWidth, ResolveRegionShardGpuNeuronThreshold(stride, controlWorker, regionShardGpuNeuronThreshold));
 
         foreach (var region in shardPlan.Regions.OrderBy(static entry => entry.Key))
         {
@@ -297,8 +317,9 @@ public static class PlacementPlanner
                     controlWorker,
                     assignedNeurons,
                     currentWorkers,
-                    computeBackendPreference);
-                assignments.Add(BuildShardAssignment(brainId, placementEpoch, requestId, worker, shard));
+                    computeBackendPreference,
+                    regionShardGpuNeuronThreshold);
+                assignments.Add(BuildShardAssignment(brainId, placementEpoch, requestId, worker, shard, baseDefinition, lastSnapshot, inputWidth, outputWidth, ResolveRegionShardGpuNeuronThreshold(stride, worker, regionShardGpuNeuronThreshold)));
             }
         }
 
@@ -419,16 +440,20 @@ public static class PlacementPlanner
         WorkerCandidate controlWorker,
         Dictionary<Guid, int> assignedNeurons,
         IReadOnlySet<Guid> currentWorkers,
-        RegionShardComputeBackendPreference computeBackendPreference)
+        RegionShardComputeBackendPreference computeBackendPreference,
+        int regionShardGpuNeuronThreshold)
     {
         if (shard.RegionId == NbnConstants.InputRegionId || shard.RegionId == NbnConstants.OutputRegionId)
         {
             return controlWorker;
         }
 
-        var preferGpu = RegionShardComputeBackendPreferenceResolver.IsGpuExecutionEnabled(computeBackendPreference)
-                        && shard.NeuronCount >= Math.Max(4096, stride * 2)
-                        && eligibleWorkers.Any(static worker => HasEffectiveGpu(worker));
+        var preferGpu = eligibleWorkers.Any(worker => ShouldPreferGpuForShard(
+            shard,
+            stride,
+            worker,
+            computeBackendPreference,
+            regionShardGpuNeuronThreshold));
         var candidatePool = computeWorkers
             .Where(worker => CanPlaceShardOnWorker(shard, worker, preferGpu))
             .ToArray();
@@ -509,6 +534,22 @@ public static class PlacementPlanner
            && worker.GpuComputeLimitPercent > 0
            && worker.GpuVramLimitPercent > 0;
 
+    private static bool ShouldPreferGpuForShard(
+        ShardPlanSpan shard,
+        int stride,
+        WorkerCandidate worker,
+        RegionShardComputeBackendPreference computeBackendPreference,
+        int regionShardGpuNeuronThreshold)
+        => RegionShardComputeBackendPreferenceResolver.IsGpuExecutionEnabled(computeBackendPreference)
+           && HasEffectiveGpu(worker)
+           && shard.NeuronCount >= ResolveRegionShardGpuNeuronThreshold(stride, worker, regionShardGpuNeuronThreshold);
+
+    private static int ResolveRegionShardGpuNeuronThreshold(
+        int stride,
+        WorkerCandidate worker,
+        int regionShardGpuNeuronThreshold)
+        => Math.Max(1, regionShardGpuNeuronThreshold);
+
     private static uint EffectiveCpuCores(WorkerCandidate worker)
         => WorkerCapabilityMath.EffectiveCpuCores(worker.CpuCores, worker.CpuLimitPercent);
 
@@ -558,17 +599,27 @@ public static class PlacementPlanner
         ulong placementEpoch,
         string requestId,
         WorkerCandidate worker,
-        ProtoControl.PlacementAssignmentTarget target)
+        ProtoControl.PlacementAssignmentTarget target,
+        Nbn.Proto.ArtifactRef? baseDefinition,
+        Nbn.Proto.ArtifactRef? lastSnapshot,
+        int inputWidth,
+        int outputWidth,
+        int regionShardGpuNeuronThreshold)
     {
-        assignments.Add(new ProtoControl.PlacementAssignment
+        var assignment = new ProtoControl.PlacementAssignment
         {
             AssignmentId = BuildControlAssignmentId(requestId, placementEpoch, target),
             BrainId = brainId.ToProtoUuid(),
             PlacementEpoch = placementEpoch,
             Target = target,
             WorkerNodeId = worker.NodeId.ToProtoUuid(),
-            ActorName = BuildControlActorName(brainId, target)
-        });
+            ActorName = BuildControlActorName(brainId, target),
+            InputWidth = (uint)Math.Max(0, inputWidth),
+            OutputWidth = (uint)Math.Max(0, outputWidth),
+            GpuNeuronThreshold = (uint)Math.Max(1, regionShardGpuNeuronThreshold)
+        };
+        ApplyRuntimeMetadataHint(assignment, baseDefinition, lastSnapshot);
+        assignments.Add(assignment);
     }
 
     private static ProtoControl.PlacementAssignment BuildShardAssignment(
@@ -576,8 +627,14 @@ public static class PlacementPlanner
         ulong placementEpoch,
         string requestId,
         WorkerCandidate worker,
-        ShardPlanSpan shard)
-        => new()
+        ShardPlanSpan shard,
+        Nbn.Proto.ArtifactRef? baseDefinition,
+        Nbn.Proto.ArtifactRef? lastSnapshot,
+        int inputWidth,
+        int outputWidth,
+        int regionShardGpuNeuronThreshold)
+    {
+        var assignment = new ProtoControl.PlacementAssignment
         {
             AssignmentId = BuildShardAssignmentId(requestId, placementEpoch, shard.RegionId, shard.ShardIndex),
             BrainId = brainId.ToProtoUuid(),
@@ -588,8 +645,14 @@ public static class PlacementPlanner
             ShardIndex = (uint)shard.ShardIndex,
             NeuronStart = (uint)shard.NeuronStart,
             NeuronCount = (uint)shard.NeuronCount,
-            ActorName = BuildShardActorName(brainId, shard.RegionId, shard.ShardIndex)
+            ActorName = BuildShardActorName(brainId, shard.RegionId, shard.ShardIndex),
+            InputWidth = (uint)Math.Max(0, inputWidth),
+            OutputWidth = (uint)Math.Max(0, outputWidth),
+            GpuNeuronThreshold = (uint)Math.Max(1, regionShardGpuNeuronThreshold)
         };
+        ApplyRuntimeMetadataHint(assignment, baseDefinition, lastSnapshot);
+        return assignment;
+    }
 
     private static string BuildControlAssignmentId(
         string requestId,
@@ -627,7 +690,8 @@ public static class PlacementPlanner
         };
 
     private static ProtoControl.PlacementAssignment CloneAssignment(ProtoControl.PlacementAssignment assignment)
-        => new()
+    {
+        var clone = new ProtoControl.PlacementAssignment
         {
             AssignmentId = assignment.AssignmentId,
             BrainId = assignment.BrainId?.Clone(),
@@ -638,6 +702,28 @@ public static class PlacementPlanner
             ShardIndex = assignment.ShardIndex,
             NeuronStart = assignment.NeuronStart,
             NeuronCount = assignment.NeuronCount,
-            ActorName = assignment.ActorName
+            ActorName = assignment.ActorName,
+            InputWidth = assignment.InputWidth,
+            OutputWidth = assignment.OutputWidth,
+            GpuNeuronThreshold = assignment.GpuNeuronThreshold
         };
+        ApplyRuntimeMetadataHint(clone, assignment.BaseDefinition, assignment.LastSnapshot);
+        return clone;
+    }
+
+    private static void ApplyRuntimeMetadataHint(
+        ProtoControl.PlacementAssignment assignment,
+        Nbn.Proto.ArtifactRef? baseDefinition,
+        Nbn.Proto.ArtifactRef? lastSnapshot)
+    {
+        if (baseDefinition is not null)
+        {
+            assignment.BaseDefinition = baseDefinition.Clone();
+        }
+
+        if (lastSnapshot is not null)
+        {
+            assignment.LastSnapshot = lastSnapshot.Clone();
+        }
+    }
 }

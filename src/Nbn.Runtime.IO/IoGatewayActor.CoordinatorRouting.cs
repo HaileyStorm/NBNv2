@@ -214,7 +214,11 @@ public sealed partial class IoGatewayActor
         }
     }
 
-    private async Task<BrainIoEntry?> EnsureBrainEntryAsync(IContext context, Guid brainId, TimeSpan? requestTimeout = null)
+    private async Task<BrainIoEntry?> EnsureBrainEntryAsync(
+        IContext context,
+        Guid brainId,
+        TimeSpan? requestTimeout = null,
+        bool bootstrapOnly = false)
     {
         if (_brains.TryGetValue(brainId, out var existing))
         {
@@ -235,7 +239,13 @@ public sealed partial class IoGatewayActor
                     timeout)
                 .ConfigureAwait(false);
 
-            if (info is null || info.InputWidth == 0)
+            if (info is null
+                || (info.InputWidth == 0
+                    && info.OutputWidth == 0
+                    && string.IsNullOrWhiteSpace(info.InputCoordinatorPid)
+                    && string.IsNullOrWhiteSpace(info.OutputCoordinatorPid)
+                    && !info.IoGatewayOwnsInputCoordinator
+                    && !info.IoGatewayOwnsOutputCoordinator))
             {
                 return null;
             }
@@ -253,8 +263,12 @@ public sealed partial class IoGatewayActor
                 IoGatewayOwnsOutputCoordinator = info.IoGatewayOwnsOutputCoordinator
             };
 
-            await TryPopulateArtifactMetadataFromHiveMindAsync(context, brainId, register, timeout).ConfigureAwait(false);
-            await RegisterBrainAsync(context, register);
+            if (!bootstrapOnly)
+            {
+                await TryPopulateArtifactMetadataFromHiveMindAsync(context, brainId, register, timeout).ConfigureAwait(false);
+            }
+
+            await RegisterBrainAsync(context, register, bootstrapOnly: bootstrapOnly);
 
             if (_brains.TryGetValue(brainId, out var entry))
             {

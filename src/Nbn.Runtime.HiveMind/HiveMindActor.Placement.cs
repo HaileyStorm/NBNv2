@@ -15,6 +15,9 @@ public sealed partial class HiveMindActor
             case ProtoControl.SpawnBrain message:
                 HandleSpawnBrain(context, message);
                 return true;
+            case ProtoControl.AwaitSpawnPlacement message:
+                HandleAwaitSpawnPlacement(context, message);
+                return true;
             case ProtoControl.RequestPlacement message:
                 HandleRequestPlacement(context, message);
                 return true;
@@ -116,33 +119,16 @@ public sealed partial class HiveMindActor
                 brain.PausePriority = message.PausePriority;
             }
 
-            var pending = new PendingSpawnState(brain.BrainId, brain.PlacementEpoch);
+            var spawnCompletionTimeoutMs = ComputeSpawnCompletionTimeoutMs(brain);
+            var pending = new PendingSpawnState(brain.BrainId, brain.PlacementEpoch, spawnCompletionTimeoutMs);
             _pendingSpawns[brain.BrainId] = pending;
 
             ScheduleSelf(
                 context,
-                TimeSpan.FromMilliseconds(ComputeSpawnCompletionTimeoutMs()),
+                TimeSpan.FromMilliseconds(spawnCompletionTimeoutMs),
                 new SpawnCompletionTimeout(brain.BrainId, brain.PlacementEpoch));
 
-            context.ReenterAfter(
-                pending.Completion.Task,
-                task =>
-                {
-                    var completed = task.IsCompletedSuccessfully && task.Result;
-                    if (completed)
-                    {
-                        context.Respond(new ProtoControl.SpawnBrainAck
-                        {
-                            BrainId = brain.BrainId.ToProtoUuid()
-                        });
-                        return Task.CompletedTask;
-                    }
-
-                    context.Respond(BuildSpawnFailureAck(
-                        reasonCode: pending.FailureReasonCode,
-                        failureMessage: pending.FailureMessage));
-                    return Task.CompletedTask;
-                });
+            context.Respond(BuildSpawnQueuedAck(brain));
         }
         catch (Exception ex)
         {
@@ -175,6 +161,48 @@ public sealed partial class HiveMindActor
                 reasonCode: "spawn_internal_error",
                 failureMessage: $"Spawn failed: internal error while preparing placement ({ex.GetBaseException().Message})."));
         }
+    }
+
+    private void HandleAwaitSpawnPlacement(IContext context, ProtoControl.AwaitSpawnPlacement message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            context.Respond(BuildSpawnFailureAck(
+                reasonCode: "spawn_invalid_request",
+                failureMessage: "Spawn wait rejected: brain_id is required."));
+            return;
+        }
+
+        if (_pendingSpawns.TryGetValue(brainId, out var pending))
+        {
+            var timeoutMs = NormalizeAwaitSpawnTimeoutMs(message.TimeoutMs, pending);
+            context.ReenterAfter(
+                AwaitPendingSpawnAsync(pending, timeoutMs),
+                task =>
+                {
+                    if (task.IsCompletedSuccessfully)
+                    {
+                        context.Respond(BuildAwaitedSpawnAck(brainId, pending, task.Result));
+                    }
+                    else
+                    {
+                        var detail = task.Exception?.GetBaseException().Message ?? "unknown_error";
+                        context.Respond(BuildSpawnFailureAck(
+                            brainId,
+                            pending.PlacementEpoch,
+                            acceptedForPlacement: true,
+                            lifecycleState: ProtoControl.PlacementLifecycleState.PlacementLifecycleUnknown,
+                            reconcileState: ProtoControl.PlacementReconcileState.PlacementReconcileUnknown,
+                            reasonCode: "spawn_internal_error",
+                            failureMessage: $"Spawn wait failed: internal error while awaiting placement ({detail})."));
+                    }
+
+                    return Task.CompletedTask;
+                });
+            return;
+        }
+
+        context.Respond(BuildCurrentSpawnAck(brainId));
     }
 
     private void HandleRequestPlacement(IContext context, ProtoControl.RequestPlacement message)
@@ -485,24 +513,27 @@ public sealed partial class HiveMindActor
             if (!SenderMatchesPid(context.Sender, plannedWorkerPid))
             {
                 var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
+                var ignoredMessage =
+                    $"Ignored assignment ack for brain {brainId}; assignment={trackedAssignment.Assignment.AssignmentId} reason=sender_worker_mismatch sender={senderLabel} plannedWorker={plannedWorkerId:D} plannedPid={PidLabel(plannedWorkerPid)} target={ToPlacementTargetLabel(trackedAssignment.Assignment.Target)} attempt={trackedAssignment.Attempt}.";
                 EmitDebug(
                     context,
-                    ProtoSeverity.SevDebug,
+                    ProtoSeverity.SevWarn,
                     "placement.assignment_ack.ignored",
-                    $"Ignored assignment ack for brain {brainId}; assignment={trackedAssignment.Assignment.AssignmentId} reason=sender_worker_mismatch sender={senderLabel} plannedWorker={plannedWorkerId:D} plannedPid={PidLabel(plannedWorkerPid)}.");
+                    ignoredMessage);
+                LogError(ignoredMessage);
                 return;
             }
 
-            trackedAssignment.AwaitingAck = false;
-            trackedAssignment.AcceptedMs = NowMs();
+            var ackObservedMs = NowMs();
             var target = ToPlacementTargetLabel(trackedAssignment.Assignment.Target);
+            var plannedWorkerNodeId = plannedWorkerId;
             var ackFailureReason = message.FailureReason == ProtoControl.PlacementFailureReason.PlacementFailureNone
                 ? (!message.Accepted || message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentFailed
                     ? ToFailureReasonLabel(ProtoControl.PlacementFailureReason.PlacementFailureAssignmentRejected)
                     : "none")
                 : ToFailureReasonLabel(message.FailureReason);
             var ackLatencyMs = trackedAssignment.LastDispatchMs > 0
-                ? trackedAssignment.AcceptedMs - trackedAssignment.LastDispatchMs
+                ? ackObservedMs - trackedAssignment.LastDispatchMs
                 : 0;
             HiveMindTelemetry.RecordPlacementAssignmentAck(
                 brain.BrainId,
@@ -517,6 +548,8 @@ public sealed partial class HiveMindActor
 
             if (!message.Accepted || message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentFailed)
             {
+                trackedAssignment.AwaitingAck = false;
+                trackedAssignment.AcceptedMs = ackObservedMs;
                 var failureReason = message.FailureReason == ProtoControl.PlacementFailureReason.PlacementFailureNone
                     ? ProtoControl.PlacementFailureReason.PlacementFailureAssignmentRejected
                     : message.FailureReason;
@@ -550,6 +583,13 @@ public sealed partial class HiveMindActor
                     return;
                 }
 
+                ReleaseWorkerPlacementDispatch(
+                    context,
+                    plannedWorkerNodeId,
+                    brain.BrainId,
+                    brain.PlacementEpoch,
+                    trackedAssignment.Assignment.AssignmentId);
+
                 trackedAssignment.Failed = true;
                 EmitDebug(
                     context,
@@ -570,6 +610,11 @@ public sealed partial class HiveMindActor
             {
                 case ProtoControl.PlacementAssignmentState.PlacementAssignmentPending:
                 case ProtoControl.PlacementAssignmentState.PlacementAssignmentAccepted:
+                    if (trackedAssignment.AcceptedMs == 0)
+                    {
+                        trackedAssignment.AcceptedMs = ackObservedMs;
+                    }
+
                     UpdatePlacementLifecycle(
                         brain,
                         ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning,
@@ -577,9 +622,21 @@ public sealed partial class HiveMindActor
                     trackedAssignment.Accepted = true;
                     break;
                 case ProtoControl.PlacementAssignmentState.PlacementAssignmentReady:
+                    trackedAssignment.AwaitingAck = false;
+                    if (trackedAssignment.AcceptedMs == 0)
+                    {
+                        trackedAssignment.AcceptedMs = ackObservedMs;
+                    }
+
                     trackedAssignment.Accepted = true;
                     trackedAssignment.Ready = true;
-                    trackedAssignment.ReadyMs = NowMs();
+                    trackedAssignment.ReadyMs = ackObservedMs;
+                    ReleaseWorkerPlacementDispatch(
+                        context,
+                        plannedWorkerNodeId,
+                        brain.BrainId,
+                        brain.PlacementEpoch,
+                        trackedAssignment.Assignment.AssignmentId);
                     if (trackedAssignment.LastDispatchMs > 0)
                     {
                         HiveMindTelemetry.RecordPlacementAssignmentReadyLatency(
@@ -617,6 +674,10 @@ public sealed partial class HiveMindActor
             var failureReason = message.FailureReason == ProtoControl.PlacementFailureReason.PlacementFailureNone
                 ? ProtoControl.PlacementFailureReason.PlacementFailureAssignmentRejected
                 : message.FailureReason;
+            if (brain.PlacementExecution is not null)
+            {
+                brain.PlacementExecution.Completed = true;
+            }
             UpdatePlacementLifecycle(brain, ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed, failureReason);
             brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileFailed;
             TryCompletePendingSpawn(context, brain);
@@ -752,6 +813,10 @@ public sealed partial class HiveMindActor
         switch (message.ReconcileState)
         {
             case ProtoControl.PlacementReconcileState.PlacementReconcileMatched:
+                if (brain.PlacementExecution is not null)
+                {
+                    brain.PlacementExecution.Completed = true;
+                }
                 UpdatePlacementLifecycle(
                     brain,
                     brain.Shards.Count > 0
@@ -766,6 +831,10 @@ public sealed partial class HiveMindActor
                     ProtoControl.PlacementFailureReason.PlacementFailureNone);
                 break;
             case ProtoControl.PlacementReconcileState.PlacementReconcileFailed:
+                if (brain.PlacementExecution is not null)
+                {
+                    brain.PlacementExecution.Completed = true;
+                }
                 UpdatePlacementLifecycle(
                     brain,
                     ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,

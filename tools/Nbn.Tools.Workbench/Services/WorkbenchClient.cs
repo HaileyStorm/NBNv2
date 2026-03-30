@@ -23,7 +23,7 @@ namespace Nbn.Tools.Workbench.Services;
 public partial class WorkbenchClient : IAsyncDisposable
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan SpawnRequestTimeout = TimeSpan.FromSeconds(70);
+    private static readonly TimeSpan SpawnRequestTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan PlacementWorkerReadyTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PlacementWorkerReadyPollInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan ReproRequestTimeout = TimeSpan.FromSeconds(45);

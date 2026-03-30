@@ -78,6 +78,15 @@ public class ProtoCompatibilityTests
         AssertField(spawnAck, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(spawnAck, "failure_reason_code", 2, FieldType.String);
         AssertField(spawnAck, "failure_message", 3, FieldType.String);
+        AssertField(spawnAck, "accepted_for_placement", 4, FieldType.Bool);
+        AssertField(spawnAck, "placement_ready", 5, FieldType.Bool);
+        AssertField(spawnAck, "placement_epoch", 6, FieldType.Fixed64);
+        AssertField(spawnAck, "lifecycle_state", 7, FieldType.Enum, "nbn.control.PlacementLifecycleState");
+        AssertField(spawnAck, "reconcile_state", 8, FieldType.Enum, "nbn.control.PlacementReconcileState");
+
+        var awaitSpawnPlacement = descriptor.MessageTypes.Single(message => message.Name == "AwaitSpawnPlacement");
+        AssertField(awaitSpawnPlacement, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(awaitSpawnPlacement, "timeout_ms", 2, FieldType.Fixed64);
     }
 
     [Fact]
@@ -374,6 +383,15 @@ public class ProtoCompatibilityTests
         AssertField(assignment, "neuron_start", 8, FieldType.UInt32);
         AssertField(assignment, "neuron_count", 9, FieldType.UInt32);
         AssertField(assignment, "actor_name", 10, FieldType.String);
+        AssertField(assignment, "base_definition", 11, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(assignment, "last_snapshot", 12, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(assignment, "input_width", 13, FieldType.UInt32);
+        AssertField(assignment, "output_width", 14, FieldType.UInt32);
+        AssertField(assignment, "gpu_neuron_threshold", 15, FieldType.UInt32);
+
+        var assignmentRequest = descriptor.MessageTypes.Single(message => message.Name == "PlacementAssignmentRequest");
+        AssertField(assignmentRequest, "assignment", 1, FieldType.Message, "nbn.control.PlacementAssignment");
+        AssertField(assignmentRequest, "reply_pid", 2, FieldType.String);
 
         var assignmentAck = descriptor.MessageTypes.Single(message => message.Name == "PlacementAssignmentAck");
         AssertField(assignmentAck, "assignment_id", 1, FieldType.String);
@@ -481,6 +499,11 @@ public class ProtoCompatibilityTests
         AssertField(spawnAck, "ack", 1, FieldType.Message, "nbn.control.SpawnBrainAck");
         AssertField(spawnAck, "failure_reason_code", 2, FieldType.String);
         AssertField(spawnAck, "failure_message", 3, FieldType.String);
+
+        var awaitSpawnAck = descriptor.MessageTypes.Single(message => message.Name == "AwaitSpawnPlacementViaIOAck");
+        AssertField(awaitSpawnAck, "ack", 1, FieldType.Message, "nbn.control.SpawnBrainAck");
+        AssertField(awaitSpawnAck, "failure_reason_code", 2, FieldType.String);
+        AssertField(awaitSpawnAck, "failure_message", 3, FieldType.String);
     }
 
     [Fact]
@@ -537,6 +560,10 @@ public class ProtoCompatibilityTests
 
         var spawnBrainViaIo = descriptor.MessageTypes.Single(message => message.Name == "SpawnBrainViaIO");
         AssertField(spawnBrainViaIo, "request", 1, FieldType.Message, "nbn.control.SpawnBrain");
+
+        var awaitSpawnViaIo = descriptor.MessageTypes.Single(message => message.Name == "AwaitSpawnPlacementViaIO");
+        AssertField(awaitSpawnViaIo, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(awaitSpawnViaIo, "timeout_ms", 2, FieldType.Fixed64);
 
         var killBrainViaIo = descriptor.MessageTypes.Single(message => message.Name == "KillBrainViaIO");
         AssertField(killBrainViaIo, "request", 1, FieldType.Message, "nbn.control.KillBrain");

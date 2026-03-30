@@ -79,7 +79,29 @@ public sealed partial class WorkerNodeActor
             brain.RegionShards.Count);
     }
 
-    private async Task HandleGetHostedRegionShardBackendExecutionInfoAsync(
+    private void BeginHandleGetHostedRegionShardBackendExecutionInfo(
+        IContext context,
+        GetHostedRegionShardBackendExecutionInfo request)
+    {
+        var replyTarget = context.Sender;
+        context.ReenterAfter(
+            BuildHostedRegionShardBackendExecutionInfoAsync(context, request),
+            completed =>
+            {
+                var response = completed.IsCompletedSuccessfully
+                    ? completed.Result
+                    : new RegionShardBackendExecutionInfo(
+                        RegionShardComputeBackendPreference.Auto,
+                        BackendName: "unavailable",
+                        UsedGpu: false,
+                        FallbackReason: $"backend_execution_query_failed:{completed.Exception?.GetBaseException().Message ?? "unknown_error"}",
+                        HasExecuted: false);
+                ReplyToTarget(context, replyTarget, response);
+                return Task.CompletedTask;
+            });
+    }
+
+    private async Task<RegionShardBackendExecutionInfo> BuildHostedRegionShardBackendExecutionInfoAsync(
         IContext context,
         GetHostedRegionShardBackendExecutionInfo request)
     {
@@ -87,32 +109,30 @@ public sealed partial class WorkerNodeActor
             || !SharedShardId32.TryFrom(request.RegionId, request.ShardIndex, out var shardId)
             || !brain.RegionShards.TryGetValue(shardId, out var hostedShard))
         {
-            context.Respond(new RegionShardBackendExecutionInfo(
+            return new RegionShardBackendExecutionInfo(
                 RegionShardComputeBackendPreference.Auto,
                 BackendName: "unavailable",
                 UsedGpu: false,
                 FallbackReason: "hosted_region_shard_not_found",
-                HasExecuted: false));
-            return;
+                HasExecuted: false);
         }
 
         try
         {
-            var info = await context.RequestAsync<RegionShardBackendExecutionInfo>(
+            return await context.RequestAsync<RegionShardBackendExecutionInfo>(
                     hostedShard.Pid,
                     new GetRegionShardBackendExecutionInfo(),
                     TimeSpan.FromSeconds(2))
                 .ConfigureAwait(false);
-            context.Respond(info);
         }
         catch (Exception ex)
         {
-            context.Respond(new RegionShardBackendExecutionInfo(
+            return new RegionShardBackendExecutionInfo(
                 RegionShardComputeBackendPreference.Auto,
                 BackendName: "unavailable",
                 UsedGpu: false,
                 FallbackReason: $"backend_execution_query_failed:{ex.GetBaseException().Message}",
-                HasExecuted: false));
+                HasExecuted: false);
         }
     }
 }

@@ -16,12 +16,18 @@ namespace Nbn.Tools.Workbench.ViewModels;
 /// </summary>
 public sealed partial class OrchestratorPanelViewModel : ViewModelBase
 {
+    private sealed record WorkerBrainBackendProbeCacheEntry(
+        WorkerBrainBackendHint? Hint,
+        int ExpectedProbeCount,
+        long UpdatedMs);
+
     private const int MaxWorkerBrainHints = 2;
     private const int MaxRows = 200;
     private const long StaleNodeMs = 15000;
     private const long WorkerFailedAfterMs = 45000;
     private const long WorkerRemoveAfterMs = 120000;
     private const long SpawnVisibilityGraceMs = 30000;
+    private const long WorkerBrainBackendProbeCacheMs = 15000;
     private const float LocalDefaultTickHz = 8f;
     private const float LocalDefaultMinTickHz = 2f;
     private const int LocalDefaultWorkerStorageLimitPercent = 95;
@@ -46,6 +52,8 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private readonly Func<Task>? _connectAll;
     private readonly Action? _disconnectAll;
     private readonly Dictionary<Guid, WorkerEndpointSnapshot> _workerEndpointCache = new();
+    private readonly Dictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendProbeCacheEntry> _workerBrainBackendCache = new();
+    private readonly WorkbenchSystemLoadHistoryTracker _systemLoadHistory = new();
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private string _statusMessage = "Idle";
     private string _settingsLaunchStatus = "Idle";
@@ -67,19 +75,25 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private string _systemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
     private string _systemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
     private string _systemLoadTickSummary = "Tick health: awaiting HiveMind status.";
+    private string _systemLoadHealthSummary = "Health: awaiting HiveMind status.";
+    private string _systemLoadSparklinePathData = WorkbenchSystemLoadSummaryBuilder.EmptySparklinePathData;
+    private string _systemLoadSparklineStroke = WorkbenchSystemLoadSummaryBuilder.NeutralSparklineStroke;
     private string _workerCapabilityRefreshSecondsText = WorkerCapabilitySettingsKeys.DefaultBenchmarkRefreshSeconds.ToString(CultureInfo.InvariantCulture);
     private string _workerPressureRebalanceWindowText = WorkerCapabilitySettingsKeys.DefaultPressureRebalanceWindow.ToString(CultureInfo.InvariantCulture);
     private string _workerPressureViolationRatioText = WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureViolationRatio);
     private string _workerPressureTolerancePercentText = WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureLimitTolerancePercent);
+    private string _workerRegionShardGpuNeuronThresholdText = WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold.ToString(CultureInfo.InvariantCulture);
     private string _workerPolicyStatus = "Settings-backed defaults.";
     private string _workerCapabilityRefreshSecondsServerValue = WorkerCapabilitySettingsKeys.DefaultBenchmarkRefreshSeconds.ToString(CultureInfo.InvariantCulture);
     private string _workerPressureRebalanceWindowServerValue = WorkerCapabilitySettingsKeys.DefaultPressureRebalanceWindow.ToString(CultureInfo.InvariantCulture);
     private string _workerPressureViolationRatioServerValue = WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureViolationRatio);
     private string _workerPressureTolerancePercentServerValue = WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureLimitTolerancePercent);
+    private string _workerRegionShardGpuNeuronThresholdServerValue = WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold.ToString(CultureInfo.InvariantCulture);
     private bool _workerCapabilityRefreshSecondsDirty;
     private bool _workerPressureRebalanceWindowDirty;
     private bool _workerPressureViolationRatioDirty;
     private bool _workerPressureTolerancePercentDirty;
+    private bool _workerRegionShardGpuNeuronThresholdDirty;
     private readonly Dictionary<Guid, BrainListItem> _lastBrains = new();
     private readonly CancellationTokenSource _refreshCts = new();
     private static readonly HashSet<string> EndpointRefreshTriggerProperties = new(StringComparer.Ordinal)
@@ -289,6 +303,24 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
         set => SetProperty(ref _systemLoadTickSummary, value);
     }
 
+    public string SystemLoadHealthSummary
+    {
+        get => _systemLoadHealthSummary;
+        set => SetProperty(ref _systemLoadHealthSummary, value);
+    }
+
+    public string SystemLoadSparklinePathData
+    {
+        get => _systemLoadSparklinePathData;
+        set => SetProperty(ref _systemLoadSparklinePathData, value);
+    }
+
+    public string SystemLoadSparklineStroke
+    {
+        get => _systemLoadSparklineStroke;
+        set => SetProperty(ref _systemLoadSparklineStroke, value);
+    }
+
     public string WorkerCapabilityRefreshSecondsText
     {
         get => _workerCapabilityRefreshSecondsText;
@@ -344,6 +376,21 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
                 _workerPressureTolerancePercentDirty = !string.Equals(
                     NormalizeWorkerPolicyValue(value),
                     _workerPressureTolerancePercentServerValue,
+                    StringComparison.Ordinal);
+            }
+        }
+    }
+
+    public string WorkerRegionShardGpuNeuronThresholdText
+    {
+        get => _workerRegionShardGpuNeuronThresholdText;
+        set
+        {
+            if (SetProperty(ref _workerRegionShardGpuNeuronThresholdText, value))
+            {
+                _workerRegionShardGpuNeuronThresholdDirty = !string.Equals(
+                    NormalizeWorkerPolicyValue(value),
+                    _workerRegionShardGpuNeuronThresholdServerValue,
                     StringComparison.Ordinal);
             }
         }

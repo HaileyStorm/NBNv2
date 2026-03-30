@@ -28,6 +28,7 @@ public sealed class DebugPanelViewModel : ViewModelBase, IAsyncDisposable
     private readonly UiDispatcher _dispatcher;
     private readonly WorkbenchClient _client;
     private readonly ConnectionViewModel? _connections;
+    private readonly WorkbenchSystemLoadHistoryTracker _systemLoadHistory = new();
     private readonly List<DebugEventItem> _allEvents = new();
     private readonly List<VizEventItem> _allVizEvents = new();
     private CancellationTokenSource? _systemLoadRefreshCts;
@@ -52,6 +53,9 @@ public sealed class DebugPanelViewModel : ViewModelBase, IAsyncDisposable
     private string _systemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
     private string _systemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
     private string _systemLoadTickSummary = "Tick health: awaiting HiveMind status.";
+    private string _systemLoadHealthSummary = "Health: awaiting HiveMind status.";
+    private string _systemLoadSparklinePathData = WorkbenchSystemLoadSummaryBuilder.EmptySparklinePathData;
+    private string _systemLoadSparklineStroke = WorkbenchSystemLoadSummaryBuilder.NeutralSparklineStroke;
 
     public DebugPanelViewModel(WorkbenchClient client, UiDispatcher dispatcher, ConnectionViewModel? connections = null)
     {
@@ -180,6 +184,24 @@ public sealed class DebugPanelViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _systemLoadTickSummary;
         set => SetProperty(ref _systemLoadTickSummary, value);
+    }
+
+    public string SystemLoadHealthSummary
+    {
+        get => _systemLoadHealthSummary;
+        set => SetProperty(ref _systemLoadHealthSummary, value);
+    }
+
+    public string SystemLoadSparklinePathData
+    {
+        get => _systemLoadSparklinePathData;
+        set => SetProperty(ref _systemLoadSparklinePathData, value);
+    }
+
+    public string SystemLoadSparklineStroke
+    {
+        get => _systemLoadSparklineStroke;
+        set => SetProperty(ref _systemLoadSparklineStroke, value);
     }
 
     public DebugEventItem? SelectedEvent
@@ -736,6 +758,10 @@ public sealed class DebugPanelViewModel : ViewModelBase, IAsyncDisposable
                     SystemLoadResourceSummary = "Resource usage: connect Settings to load worker telemetry.";
                     SystemLoadPressureSummary = "Pressure: connect HiveMind to view current and recent worker pressure.";
                     SystemLoadTickSummary = "Tick health: connect HiveMind to view recent timeout and cadence pressure.";
+                    SystemLoadHealthSummary = "Health: connect HiveMind to view long-window trend and early warning signals.";
+                    SystemLoadSparklinePathData = WorkbenchSystemLoadSummaryBuilder.EmptySparklinePathData;
+                    SystemLoadSparklineStroke = WorkbenchSystemLoadSummaryBuilder.NeutralSparklineStroke;
+                    _systemLoadHistory.Clear();
                 });
                 return;
             }
@@ -754,13 +780,17 @@ public sealed class DebugPanelViewModel : ViewModelBase, IAsyncDisposable
                 : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var workers = inventory?.Workers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.WorkerReadinessCapability>();
             var filteredWorkers = WorkbenchSystemLoadSummaryBuilder.FilterWorkers(workers, referenceMs);
-            var summary = WorkbenchSystemLoadSummaryBuilder.Build(filteredWorkers, hiveMindStatus);
+            var history = _systemLoadHistory.Record(filteredWorkers, hiveMindStatus, referenceMs);
+            var summary = WorkbenchSystemLoadSummaryBuilder.Build(filteredWorkers, hiveMindStatus, history);
 
             _dispatcher.Post(() =>
             {
                 SystemLoadResourceSummary = summary.ResourceSummary;
                 SystemLoadPressureSummary = summary.PressureSummary;
                 SystemLoadTickSummary = summary.TickSummary;
+                SystemLoadHealthSummary = summary.HealthSummary;
+                SystemLoadSparklinePathData = summary.SparklinePathData;
+                SystemLoadSparklineStroke = summary.SparklineStroke;
             });
         }
         finally

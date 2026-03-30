@@ -2478,6 +2478,59 @@ public class ReproductionManagerActorTests
     }
 
     [Fact]
+    public async Task ReproduceByArtifacts_SpawnAlways_QueuedSpawnFailure_Returns_SpawnAbort_And_ChildArtifact()
+    {
+        var artifactRoot = TempDirectoryScope.Create("nbn-repro-spawn-wait-fail", clearSqlitePools: true);
+
+        try
+        {
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var parentA = NbnTestVectors.CreateMinimalNbn();
+            var parentB = NbnTestVectors.CreateMinimalNbn();
+            var manifestA = await store.StoreAsync(new MemoryStream(parentA), "application/x-nbn");
+            var manifestB = await store.StoreAsync(new MemoryStream(parentB), "application/x-nbn");
+            var parentARef = manifestA.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestA.ByteLength, "application/x-nbn", artifactRoot);
+            var parentBRef = manifestB.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifestB.ByteLength, "application/x-nbn", artifactRoot);
+
+            var system = new ActorSystem();
+            var root = system.Root;
+            var ioGateway = root.Spawn(Props.FromProducer(() => new ReproIoGatewayProbe(
+                spawnBrainId: Guid.NewGuid(),
+                awaitPlacementReady: false,
+                awaitFailureReasonCode: "spawn_assignment_timeout",
+                awaitFailureMessage: "Spawn failed: placement assignment acknowledgements timed out and retry budget was exhausted.")));
+            var manager = root.Spawn(Props.FromProducer(() => new ReproductionManagerActor(ioGateway)));
+
+            var response = await root.RequestAsync<Repro.ReproduceResult>(
+                manager,
+                new Repro.ReproduceByArtifactsRequest
+                {
+                    ParentADef = parentARef,
+                    ParentBDef = parentBRef,
+                    Seed = 10,
+                    Config = new Repro.ReproduceConfig
+                    {
+                        MaxRegionSpanDiffRatio = 0f,
+                        SpawnChild = Repro.SpawnChildPolicy.SpawnChildAlways
+                    }
+                });
+
+            Assert.NotNull(response.Report);
+            Assert.False(response.Report.Compatible);
+            Assert.Equal("repro_spawn_failed", response.Report.AbortReason);
+            Assert.NotNull(response.ChildDef);
+            Assert.False(response.Spawned);
+            Assert.Null(response.ChildBrainId);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            artifactRoot.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task ReproduceByArtifacts_MutationLimits_Are_Respected_And_Child_Remains_Valid()
     {
         var artifactRoot = TempDirectoryScope.Create("nbn-repro-limits", clearSqlitePools: true);
@@ -3290,13 +3343,22 @@ public class ReproductionManagerActorTests
     {
         private readonly IReadOnlyDictionary<Guid, ProtoIo.BrainInfo> _brainInfo;
         private readonly Guid _spawnBrainId;
+        private readonly bool _awaitPlacementReady;
+        private readonly string _awaitFailureReasonCode;
+        private readonly string _awaitFailureMessage;
 
         public ReproIoGatewayProbe(
             IReadOnlyDictionary<Guid, ProtoIo.BrainInfo>? brainInfo = null,
-            Guid? spawnBrainId = null)
+            Guid? spawnBrainId = null,
+            bool awaitPlacementReady = true,
+            string awaitFailureReasonCode = "",
+            string awaitFailureMessage = "")
         {
             _brainInfo = brainInfo ?? new Dictionary<Guid, ProtoIo.BrainInfo>();
             _spawnBrainId = spawnBrainId ?? Guid.Empty;
+            _awaitPlacementReady = awaitPlacementReady;
+            _awaitFailureReasonCode = awaitFailureReasonCode;
+            _awaitFailureMessage = awaitFailureMessage;
         }
 
         public Task ReceiveAsync(IContext context)
@@ -3328,8 +3390,25 @@ public class ReproductionManagerActorTests
                     {
                         Ack = new ProtoControl.SpawnBrainAck
                         {
-                            BrainId = _spawnBrainId.ToProtoUuid()
+                            BrainId = _spawnBrainId.ToProtoUuid(),
+                            AcceptedForPlacement = _spawnBrainId != Guid.Empty,
+                            PlacementReady = false
                         }
+                    });
+                    break;
+                case ProtoIo.AwaitSpawnPlacementViaIO:
+                    context.Respond(new ProtoIo.AwaitSpawnPlacementViaIOAck
+                    {
+                        Ack = new ProtoControl.SpawnBrainAck
+                        {
+                            BrainId = _spawnBrainId.ToProtoUuid(),
+                            AcceptedForPlacement = _spawnBrainId != Guid.Empty,
+                            PlacementReady = _awaitPlacementReady,
+                            FailureReasonCode = _awaitFailureReasonCode,
+                            FailureMessage = _awaitFailureMessage
+                        },
+                        FailureReasonCode = _awaitFailureReasonCode,
+                        FailureMessage = _awaitFailureMessage
                     });
                     break;
             }

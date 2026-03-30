@@ -84,6 +84,7 @@ public sealed partial class OrchestratorPanelViewModel
                 sortedNodes,
                 workerInventory,
                 actorRowsResult.WorkerBrainHints,
+                actorRowsResult.WorkerBrainBackends,
                 workerNowMs);
             var systemLoadState = BuildSystemLoadState(workerInventory, hiveMindStatus, workerNowMs);
             var settings = settingsResponse?.Settings?
@@ -147,6 +148,9 @@ public sealed partial class OrchestratorPanelViewModel
                 SystemLoadResourceSummary = systemLoadState.ResourceSummary;
                 SystemLoadPressureSummary = systemLoadState.PressureSummary;
                 SystemLoadTickSummary = systemLoadState.TickSummary;
+                SystemLoadHealthSummary = systemLoadState.HealthSummary;
+                SystemLoadSparklinePathData = systemLoadState.SparklinePathData;
+                SystemLoadSparklineStroke = systemLoadState.SparklineStroke;
                 Trim(Nodes);
                 Trim(WorkerEndpoints);
                 Trim(Actors);
@@ -267,6 +271,16 @@ public sealed partial class OrchestratorPanelViewModel
             return true;
         }
 
+        if (string.Equals(item.Key, WorkerCapabilitySettingsKeys.RegionShardGpuNeuronThresholdKey, StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyWorkerPolicyServerValue(
+                NormalizeWorkerPolicyValue(item.Value, _workerRegionShardGpuNeuronThresholdServerValue),
+                ref _workerRegionShardGpuNeuronThresholdServerValue,
+                ref _workerRegionShardGpuNeuronThresholdDirty,
+                value => WorkerRegionShardGpuNeuronThresholdText = value);
+            return true;
+        }
+
         return false;
     }
 
@@ -302,12 +316,19 @@ public sealed partial class OrchestratorPanelViewModel
             return;
         }
 
+        if (!TryParseRegionShardGpuNeuronThreshold(WorkerRegionShardGpuNeuronThresholdText, out var gpuNeuronThreshold))
+        {
+            WorkerPolicyStatus = "Invalid GPU neuron threshold.";
+            return;
+        }
+
         var desired = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [WorkerCapabilitySettingsKeys.BenchmarkRefreshSecondsKey] = refreshSeconds.ToString(CultureInfo.InvariantCulture),
             [WorkerCapabilitySettingsKeys.PressureRebalanceWindowKey] = Math.Max(1, window).ToString(CultureInfo.InvariantCulture),
             [WorkerCapabilitySettingsKeys.PressureViolationRatioKey] = WorkerCapabilityMath.FormatRatio(Math.Clamp(violationRatio, 0d, 1d)),
-            [WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey] = WorkerCapabilityMath.FormatRatio(Math.Max(0d, tolerancePercent))
+            [WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey] = WorkerCapabilityMath.FormatRatio(Math.Max(0d, tolerancePercent)),
+            [WorkerCapabilitySettingsKeys.RegionShardGpuNeuronThresholdKey] = Math.Max(1, gpuNeuronThreshold).ToString(CultureInfo.InvariantCulture)
         };
 
         var dirtyKeys = desired
@@ -384,6 +405,14 @@ public sealed partial class OrchestratorPanelViewModel
             _workerPressureTolerancePercentServerValue = normalized;
             _workerPressureTolerancePercentDirty = false;
             WorkerPressureTolerancePercentText = normalized;
+            return;
+        }
+
+        if (string.Equals(key, WorkerCapabilitySettingsKeys.RegionShardGpuNeuronThresholdKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _workerRegionShardGpuNeuronThresholdServerValue = normalized;
+            _workerRegionShardGpuNeuronThresholdDirty = false;
+            WorkerRegionShardGpuNeuronThresholdText = normalized;
         }
     }
 
@@ -398,6 +427,8 @@ public sealed partial class OrchestratorPanelViewModel
                 => _workerPressureViolationRatioServerValue,
             var value when string.Equals(value, WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey, StringComparison.OrdinalIgnoreCase)
                 => _workerPressureTolerancePercentServerValue,
+            var value when string.Equals(value, WorkerCapabilitySettingsKeys.RegionShardGpuNeuronThresholdKey, StringComparison.OrdinalIgnoreCase)
+                => _workerRegionShardGpuNeuronThresholdServerValue,
             _ => string.Empty
         };
 
@@ -449,6 +480,10 @@ public sealed partial class OrchestratorPanelViewModel
             SystemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
             SystemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
             SystemLoadTickSummary = "Tick health: awaiting HiveMind status.";
+            SystemLoadHealthSummary = "Health: awaiting HiveMind status.";
+            SystemLoadSparklinePathData = WorkbenchSystemLoadSummaryBuilder.EmptySparklinePathData;
+            SystemLoadSparklineStroke = WorkbenchSystemLoadSummaryBuilder.NeutralSparklineStroke;
+            _systemLoadHistory.Clear();
 
             Connections.HiveMindDiscoverable = false;
             Connections.HiveMindStatus = "Offline";
@@ -731,6 +766,9 @@ public sealed partial class OrchestratorPanelViewModel
            && double.IsFinite(parsed)
            && parsed >= 0d;
 
+    private static bool TryParseRegionShardGpuNeuronThreshold(string value, out int parsed)
+        => int.TryParse(value, out parsed) && parsed > 0;
+
     private static string NormalizeWorkerPolicyValue(string? value, string? fallback = null)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -950,6 +988,7 @@ public sealed partial class OrchestratorPanelViewModel
     {
         var rows = new List<(bool IsOnlineWorkerHost, bool IsOnline, long LastSeenMs, NodeStatusItem Row)>();
         var workerBrainHints = new Dictionary<Guid, HashSet<Guid>>();
+        var workerBackendProbeRequests = new Dictionary<(Guid NodeId, Guid BrainId), Dictionary<(int RegionId, int ShardIndex), WorkerBrainBackendProbeRequest>>();
         var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var nodeById = nodes
             .Where(entry => entry.NodeId is not null && entry.NodeId.TryToGuid(out _))
@@ -1005,6 +1044,41 @@ public sealed partial class OrchestratorPanelViewModel
             }
 
             brainSet.Add(brainId);
+        }
+
+        void AddWorkerBackendProbe(
+            Guid nodeId,
+            Guid brainId,
+            string workerAddress,
+            string workerRootActor,
+            uint regionId,
+            uint shardIndex)
+        {
+            if (nodeId == Guid.Empty
+                || brainId == Guid.Empty
+                || regionId == NbnConstants.InputRegionId
+                || regionId == NbnConstants.OutputRegionId
+                || string.IsNullOrWhiteSpace(workerAddress)
+                || string.IsNullOrWhiteSpace(workerRootActor))
+            {
+                return;
+            }
+
+            var key = (nodeId, brainId);
+            if (!workerBackendProbeRequests.TryGetValue(key, out var probesForBrain))
+            {
+                probesForBrain = new Dictionary<(int RegionId, int ShardIndex), WorkerBrainBackendProbeRequest>();
+                workerBackendProbeRequests[key] = probesForBrain;
+            }
+
+            var probe = new WorkerBrainBackendProbeRequest(
+                nodeId,
+                brainId,
+                workerAddress.Trim(),
+                workerRootActor.Trim(),
+                checked((int)regionId),
+                checked((int)shardIndex));
+            probesForBrain.TryAdd((probe.RegionId, probe.ShardIndex), probe);
         }
 
         foreach (var controller in controllers
@@ -1066,7 +1140,8 @@ public sealed partial class OrchestratorPanelViewModel
                     .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
                     .Select(entry => entry.Row)
                     .ToArray(),
-                workerBrainHints);
+                workerBrainHints,
+                new Dictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint>());
         }
 
         var lifecycleTasks = activeBrainIds.Select(async brainId =>
@@ -1125,6 +1200,7 @@ public sealed partial class OrchestratorPanelViewModel
                     ? "host node"
                     : reconcileResult.Node.LogicalName!;
                 var address = reconcileResult.Node.Address ?? string.Empty;
+                var workerRootActor = reconcileResult.Node.RootActorName ?? string.Empty;
                 var hostSeenMs = (long)reconcileResult.Node.LastSeenMs;
                 var isOnline = reconcileResult.Node.IsAlive && IsFresh(reconcileResult.Node.LastSeenMs, nowMs);
                 var hostIsWorker = IsWorkerHostCandidate(reconcileResult.Node);
@@ -1139,6 +1215,7 @@ public sealed partial class OrchestratorPanelViewModel
                 {
                     hostLabel = string.IsNullOrWhiteSpace(workerNode.LogicalName) ? "host node" : workerNode.LogicalName!;
                     address = workerNode.Address ?? address;
+                    workerRootActor = workerNode.RootActorName ?? workerRootActor;
                     hostSeenMs = (long)workerNode.LastSeenMs;
                     isOnline = workerNode.IsAlive && IsFresh(workerNode.LastSeenMs, nowMs);
                     hostIsWorker = IsWorkerHostCandidate(workerNode);
@@ -1148,6 +1225,16 @@ public sealed partial class OrchestratorPanelViewModel
                 if (hostIsWorker && isOnline && hostNodeId != Guid.Empty)
                 {
                     AddWorkerBrainHint(hostNodeId, reportBrainId);
+                    if (string.Equals(actorKind, "RegionShard", StringComparison.Ordinal))
+                    {
+                        AddWorkerBackendProbe(
+                            hostNodeId,
+                            reportBrainId,
+                            address,
+                            workerRootActor,
+                            assignment.RegionId,
+                            assignment.ShardIndex);
+                    }
                 }
 
                 AddActorRow(
@@ -1164,6 +1251,10 @@ public sealed partial class OrchestratorPanelViewModel
             }
         }
 
+        var workerBrainBackends = await ResolveWorkerBrainBackendsAsync(
+                workerBackendProbeRequests.Values.SelectMany(static probes => probes.Values))
+            .ConfigureAwait(false);
+
         return new HostedActorRowsResult(
             rows
                 .OrderByDescending(entry => entry.IsOnlineWorkerHost)
@@ -1172,7 +1263,8 @@ public sealed partial class OrchestratorPanelViewModel
                 .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
                 .Select(entry => entry.Row)
                 .ToArray(),
-            workerBrainHints);
+            workerBrainHints,
+            workerBrainBackends);
 
         async Task<(Guid BrainId, Nbn.Proto.Settings.NodeStatus Node, PlacementReconcileReport? Report)> QueryPlacementReconcileAsync(
             Guid brainId,
@@ -1246,7 +1338,153 @@ public sealed partial class OrchestratorPanelViewModel
 
     private sealed record HostedActorRowsResult(
         IReadOnlyList<NodeStatusItem> Rows,
-        IReadOnlyDictionary<Guid, HashSet<Guid>> WorkerBrainHints);
+        IReadOnlyDictionary<Guid, HashSet<Guid>> WorkerBrainHints,
+        IReadOnlyDictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint> WorkerBrainBackends);
+
+    private readonly record struct WorkerBrainBackendProbeRequest(
+        Guid NodeId,
+        Guid BrainId,
+        string WorkerAddress,
+        string WorkerRootActor,
+        int RegionId,
+        int ShardIndex);
+
+    private async Task<IReadOnlyDictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint>> ResolveWorkerBrainBackendsAsync(
+        IEnumerable<WorkerBrainBackendProbeRequest> probes)
+    {
+        var probeArray = probes.ToArray();
+        var expectedProbeCounts = probeArray
+            .GroupBy(static probe => (probe.NodeId, probe.BrainId))
+            .ToDictionary(static group => group.Key, static group => group.Count());
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        PruneWorkerBrainBackendProbeCache(expectedProbeCounts.Keys, nowMs);
+
+        var results = new Dictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint>();
+        var probesToRefresh = new List<WorkerBrainBackendProbeRequest>(probeArray.Length);
+        foreach (var probe in probeArray)
+        {
+            var key = (probe.NodeId, probe.BrainId);
+            if (_workerBrainBackendCache.TryGetValue(key, out var cached)
+                && cached.ExpectedProbeCount == expectedProbeCounts[key]
+                && nowMs - cached.UpdatedMs < WorkerBrainBackendProbeCacheMs)
+            {
+                if (cached.Hint is { } cachedHint)
+                {
+                    results[key] = cachedHint;
+                }
+
+                continue;
+            }
+
+            probesToRefresh.Add(probe);
+        }
+
+        if (probesToRefresh.Count == 0)
+        {
+            return results;
+        }
+
+        var tasks = probesToRefresh.Select(async probe =>
+        {
+            var info = await _client
+                .GetHostedRegionShardBackendExecutionInfoAsync(
+                    probe.WorkerAddress,
+                    probe.WorkerRootActor,
+                    probe.BrainId,
+                    probe.RegionId,
+                    probe.ShardIndex)
+                .ConfigureAwait(false);
+            return (probe, info);
+        });
+
+        var aggregate = new Dictionary<(Guid NodeId, Guid BrainId), (int ExecutedCount, bool SawCpu, bool SawGpu, bool Incomplete)>();
+        foreach (var (probe, info) in await Task.WhenAll(tasks).ConfigureAwait(false))
+        {
+            var key = (probe.NodeId, probe.BrainId);
+            if (!aggregate.TryGetValue(key, out var observed))
+            {
+                observed = (ExecutedCount: 0, SawCpu: false, SawGpu: false, Incomplete: false);
+            }
+
+            if (info is null)
+            {
+                observed.Incomplete = true;
+                aggregate[key] = observed;
+                continue;
+            }
+
+            var backendInfo = info.Value;
+            if (!backendInfo.HasExecuted || string.Equals(backendInfo.BackendName, "unavailable", StringComparison.OrdinalIgnoreCase))
+            {
+                observed.Incomplete = true;
+                aggregate[key] = observed;
+                continue;
+            }
+
+            observed.ExecutedCount++;
+            if (backendInfo.UsedGpu)
+            {
+                observed.SawGpu = true;
+            }
+            else
+            {
+                observed.SawCpu = true;
+            }
+
+            aggregate[key] = observed;
+        }
+
+        foreach (var (key, observed) in aggregate)
+        {
+            if (!expectedProbeCounts.TryGetValue(key, out var expectedProbeCount))
+            {
+                continue;
+            }
+
+            WorkerBrainBackendHint? resolvedHint = null;
+            if (!observed.Incomplete && observed.ExecutedCount == expectedProbeCount)
+            {
+                if (observed.SawCpu && observed.SawGpu)
+                {
+                    resolvedHint = WorkerBrainBackendHint.Mixed;
+                }
+                else if (observed.SawGpu)
+                {
+                    resolvedHint = WorkerBrainBackendHint.Gpu;
+                }
+                else if (observed.SawCpu)
+                {
+                    resolvedHint = WorkerBrainBackendHint.Cpu;
+                }
+            }
+
+            _workerBrainBackendCache[key] = new WorkerBrainBackendProbeCacheEntry(
+                resolvedHint,
+                expectedProbeCount,
+                nowMs);
+            if (resolvedHint is { } definiteHint)
+            {
+                results[key] = definiteHint;
+            }
+        }
+
+        return results;
+    }
+
+    private void PruneWorkerBrainBackendProbeCache(
+        IEnumerable<(Guid NodeId, Guid BrainId)> activeKeys,
+        long nowMs)
+    {
+        var active = activeKeys.ToHashSet();
+        foreach (var key in _workerBrainBackendCache.Keys.ToArray())
+        {
+            if (!active.Contains(key)
+                || nowMs - _workerBrainBackendCache[key].UpdatedMs > WorkerBrainBackendProbeCacheMs * 4)
+            {
+                _workerBrainBackendCache.Remove(key);
+            }
+        }
+    }
 
     private static string ToAssignmentTargetLabel(PlacementAssignmentTarget target)
     {

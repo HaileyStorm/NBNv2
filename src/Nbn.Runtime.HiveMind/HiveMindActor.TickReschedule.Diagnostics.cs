@@ -44,11 +44,18 @@ public sealed partial class HiveMindActor
         var shardLabel = message.ShardId is null
             ? "<missing>"
             : message.ShardId.ToShardId32().ToString();
+        var severity = string.Equals(reason, "sender_mismatch", StringComparison.Ordinal)
+            ? ProtoSeverity.SevWarn
+            : ProtoSeverity.SevDebug;
         EmitDebug(
             context,
-            ProtoSeverity.SevDebug,
+            severity,
             "tick.compute_done.ignored",
             $"Ignored TickComputeDone. reason={reason} tick={message.TickId} brain={brainLabel} shard={shardLabel} sender={senderLabel}{expectedLabel}.");
+        if (string.Equals(reason, "sender_mismatch", StringComparison.Ordinal))
+        {
+            LogError($"TickComputeDone sender mismatch tick={message.TickId} brain={brainLabel} shard={shardLabel} sender={senderLabel}{expectedLabel}");
+        }
         if (LogTickBarrier || LogVizDiagnostics)
         {
             Log($"TickComputeDone ignored reason={reason} tick={message.TickId} brain={brainLabel} shard={shardLabel} sender={senderLabel}{expectedLabel}");
@@ -66,11 +73,18 @@ public sealed partial class HiveMindActor
         var brainLabel = message.BrainId is null || !message.BrainId.TryToGuid(out var brainId)
             ? "<invalid>"
             : brainId.ToString("D");
+        var severity = string.Equals(reason, "sender_mismatch", StringComparison.Ordinal)
+            ? ProtoSeverity.SevWarn
+            : ProtoSeverity.SevDebug;
         EmitDebug(
             context,
-            ProtoSeverity.SevDebug,
+            severity,
             "tick.deliver_done.ignored",
             $"Ignored TickDeliverDone. reason={reason} tick={message.TickId} brain={brainLabel} sender={senderLabel}{expectedLabel}.");
+        if (string.Equals(reason, "sender_mismatch", StringComparison.Ordinal))
+        {
+            LogError($"TickDeliverDone sender mismatch tick={message.TickId} brain={brainLabel} sender={senderLabel}{expectedLabel}");
+        }
         if (LogTickBarrier || LogVizDiagnostics)
         {
             Log($"TickDeliverDone ignored reason={reason} tick={message.TickId} brain={brainLabel} sender={senderLabel}{expectedLabel}");

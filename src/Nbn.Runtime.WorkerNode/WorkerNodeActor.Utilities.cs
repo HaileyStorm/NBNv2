@@ -1,4 +1,5 @@
 using Nbn.Proto;
+using Nbn.Proto.Control;
 using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Proto;
@@ -53,6 +54,123 @@ public sealed partial class WorkerNodeActor
         return null;
     }
 
+    private PID ResolveReplyTarget(IContext context, PID target)
+    {
+        var knownReplyTargets = _endpoints.Values
+            .Select(static registration => registration.Endpoint.ToPid());
+        return NormalizeReplyTarget(
+            target,
+            context.System.Address,
+            _hiveMindHintPid,
+            knownReplyTargets);
+    }
+
+    private PID? ResolvePlacementReplyTarget(IContext context, PlacementAssignmentRequest request)
+    {
+        if (!string.IsNullOrWhiteSpace(request.ReplyPid)
+            && TryParsePid(request.ReplyPid, out var replyPid))
+        {
+            return ResolvePlacementReplyTarget(context, replyPid);
+        }
+
+        return ResolvePlacementReplyTarget(context, context.Sender);
+    }
+
+    private PID? ResolvePlacementReplyTarget(IContext context, PID? target)
+    {
+        if (target is null)
+        {
+            return null;
+        }
+
+        if (IsEphemeralRequestSender(target))
+        {
+            return target;
+        }
+
+        var hiveMindPid = ResolveHiveMindPid(context);
+        return ResolvePlacementReplyTarget(target, hiveMindPid);
+    }
+
+    private static PID ResolvePlacementReplyTarget(PID target, PID? authoritativeHiveMindPid)
+    {
+        if (authoritativeHiveMindPid is null)
+        {
+            return target;
+        }
+
+        return string.Equals(authoritativeHiveMindPid.Id ?? string.Empty, target.Id ?? string.Empty, StringComparison.Ordinal)
+            ? authoritativeHiveMindPid
+            : target;
+    }
+
+    private static PID NormalizeReplyTarget(
+        PID target,
+        string? systemAddress,
+        PID? hintedReplyPid,
+        IEnumerable<PID> knownReplyTargets)
+    {
+        if (HasRoutableAddress(target))
+        {
+            return target;
+        }
+
+        if (!string.IsNullOrWhiteSpace(target.Id))
+        {
+            if (hintedReplyPid is not null
+                && string.Equals(hintedReplyPid.Id, target.Id, StringComparison.Ordinal)
+                && HasRoutableAddress(hintedReplyPid))
+            {
+                return hintedReplyPid;
+            }
+
+            foreach (var candidate in knownReplyTargets)
+            {
+                if (string.Equals(candidate.Id, target.Id, StringComparison.Ordinal)
+                    && HasRoutableAddress(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(target.Id)
+            && !string.IsNullOrWhiteSpace(systemAddress)
+            && !string.Equals(systemAddress, "nonhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return new PID(systemAddress, target.Id);
+        }
+
+        return target;
+    }
+
+    private static bool TryParsePid(string? value, out PID pid)
+    {
+        pid = new PID(string.Empty, string.Empty);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var slashIndex = trimmed.IndexOf('/');
+        if (slashIndex <= 0)
+        {
+            pid = new PID(string.Empty, trimmed);
+            return true;
+        }
+
+        var address = trimmed[..slashIndex];
+        var id = trimmed[(slashIndex + 1)..];
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        pid = new PID(address, id);
+        return true;
+    }
+
     private bool TryResolveEndpointPid(string key, out PID pid)
     {
         if (_endpoints.TryGetValue(key, out var registration))
@@ -89,6 +207,11 @@ public sealed partial class WorkerNodeActor
         => sender is { } value
            && !string.IsNullOrWhiteSpace(value.Id)
            && value.Id.StartsWith("$", StringComparison.Ordinal);
+
+    private static bool HasRoutableAddress(PID? pid)
+        => pid is { } value
+           && !string.IsNullOrWhiteSpace(value.Address)
+           && !string.Equals(value.Address, "nonhost", StringComparison.OrdinalIgnoreCase);
 
     private string ResolveReconcileFailureReason(
         bool requestHasBrainId,

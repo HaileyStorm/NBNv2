@@ -394,7 +394,31 @@ public sealed partial class HiveMindActor
             return true;
         }
 
+        if (string.Equals(key, WorkerCapabilitySettingsKeys.RegionShardGpuNeuronThresholdKey, StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed = ParseWorkerRegionShardGpuNeuronThreshold(value, _workerRegionShardGpuNeuronThreshold);
+            if (parsed == _workerRegionShardGpuNeuronThreshold)
+            {
+                return false;
+            }
+
+            _workerRegionShardGpuNeuronThreshold = parsed;
+            return true;
+        }
+
         return false;
+    }
+
+    private static int ParseWorkerRegionShardGpuNeuronThreshold(string? value, int fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return fallback;
+        }
+
+        return int.TryParse(value.Trim(), out var parsed) && parsed > 0
+            ? parsed
+            : fallback;
     }
 
     private void UpdateAllShardRuntimeConfig(IContext context)

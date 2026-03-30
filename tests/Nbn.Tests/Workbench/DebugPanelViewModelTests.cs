@@ -210,7 +210,9 @@ public sealed class DebugPanelViewModelTests
         Assert.Contains("last 6 snapshots", viewModel.SystemLoadPressureSummary, StringComparison.Ordinal);
         Assert.Contains("12.5% recent ticks timed out", viewModel.SystemLoadTickSummary, StringComparison.Ordinal);
         Assert.Contains("6.3% had late arrivals", viewModel.SystemLoadTickSummary, StringComparison.Ordinal);
-        Assert.Contains("auto-reduced to 15 Hz from 30 Hz", viewModel.SystemLoadTickSummary, StringComparison.Ordinal);
+        Assert.Contains("Cadence 15 Hz vs requested 30 Hz", viewModel.SystemLoadTickSummary, StringComparison.Ordinal);
+        Assert.Contains("Health:", viewModel.SystemLoadHealthSummary, StringComparison.Ordinal);
+        Assert.StartsWith("M ", viewModel.SystemLoadSparklinePathData, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -232,6 +234,7 @@ public sealed class DebugPanelViewModelTests
         Assert.True(updated);
         Assert.Contains("connect HiveMind", viewModel.SystemLoadPressureSummary, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("connect HiveMind", viewModel.SystemLoadTickSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("connect HiveMind", viewModel.SystemLoadHealthSummary, StringComparison.OrdinalIgnoreCase);
     }
 
     private static DebugPanelViewModel CreateViewModel()

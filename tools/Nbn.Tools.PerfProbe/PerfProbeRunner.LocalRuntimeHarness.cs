@@ -177,27 +177,28 @@ public static partial class PerfProbeRunner
         /// Spawns a perf brain through IO, applies benchmark-safe runtime config, and waits for routing to settle.
         /// </summary>
         public async Task<Guid> SpawnBrainAsync(CancellationToken cancellationToken)
-        {
-            // The worker advertises the fixed metadata actor until the real IO gateway is ready for BrainInfo traffic.
-            PrimeWorkerDiscoveryEndpoints(Root, Worker, HiveMind.Id, BootstrapIoEndpointActorName);
+            => await WithScopedBackendPreferenceAsync(
+                    ComputeBackendPreference,
+                    async () =>
+                    {
+                        // The worker advertises the fixed metadata actor until the real IO gateway is ready for BrainInfo traffic.
+                        PrimeWorkerDiscoveryEndpoints(Root, Worker, HiveMind.Id, BootstrapIoEndpointActorName);
 
-            var response = await RequestSpawnBrainAsync().ConfigureAwait(false);
-            var brainId = ResolveSpawnedBrainId(response);
-            await WaitForPlacementAssignmentAsync(brainId, cancellationToken).ConfigureAwait(false);
-            PrimeWorkerDiscoveryEndpoints(Root, Worker, HiveMind.Id, IoGateway.Id);
-            RegisterBrainWithIo(brainId);
-            await WaitForBrainInfoRegistrationAsync(brainId, cancellationToken).ConfigureAwait(false);
+                        var response = await RequestSpawnBrainAsync().ConfigureAwait(false);
+                        var brainId = ResolveSpawnedBrainId(response);
+                        await AwaitSpawnPlacementReadyAsync(brainId).ConfigureAwait(false);
+                        PrimeWorkerDiscoveryEndpoints(Root, Worker, HiveMind.Id, IoGateway.Id);
 
-            if (WorkloadProfile == LocalRuntimeWorkloadProfile.ComputeDominantRecurrent)
-            {
-                await PrimeComputeDominantActivityAsync(brainId, cancellationToken).ConfigureAwait(false);
-            }
+                        if (WorkloadProfile == LocalRuntimeWorkloadProfile.ComputeDominantRecurrent)
+                        {
+                            await PrimeComputeDominantActivityAsync(brainId, cancellationToken).ConfigureAwait(false);
+                        }
 
-            await ApplyBenchmarkSafeRuntimeConfigAsync(brainId).ConfigureAwait(false);
-            await WaitForRoutingStabilizationAsync(brainId, cancellationToken).ConfigureAwait(false);
-
-            return brainId;
-        }
+                        await ApplyBenchmarkSafeRuntimeConfigAsync(brainId).ConfigureAwait(false);
+                        await WaitForRoutingStabilizationAsync(brainId, cancellationToken).ConfigureAwait(false);
+                        return brainId;
+                    })
+                .ConfigureAwait(false);
 
         private static HarnessActorNames CreateHarnessActorNames()
             => new(
@@ -224,18 +225,16 @@ public static partial class PerfProbeRunner
                 .ConfigureAwait(false);
 
         private Task<ProtoIo.SpawnBrainViaIOAck> RequestSpawnBrainAsync()
-            => WithScopedBackendPreferenceAsync(
-                ComputeBackendPreference,
-                () => Root.RequestAsync<ProtoIo.SpawnBrainViaIOAck>(
-                    IoGateway,
-                    new ProtoIo.SpawnBrainViaIO
+            => Root.RequestAsync<ProtoIo.SpawnBrainViaIOAck>(
+                IoGateway,
+                new ProtoIo.SpawnBrainViaIO
+                {
+                    Request = new ProtoControl.SpawnBrain
                     {
-                        Request = new ProtoControl.SpawnBrain
-                        {
-                            BrainDef = BrainDef
-                        }
-                    },
-                    SpawnBrainTimeout));
+                        BrainDef = BrainDef
+                    }
+                },
+                SpawnBrainTimeout);
 
         private static Guid ResolveSpawnedBrainId(ProtoIo.SpawnBrainViaIOAck response)
         {
@@ -248,56 +247,29 @@ public static partial class PerfProbeRunner
             return brainId;
         }
 
-        private async Task WaitForPlacementAssignmentAsync(Guid brainId, CancellationToken cancellationToken)
-            => await WaitForAsync(
-                    async () =>
-                    {
-                        var lifecycle = await Root.RequestAsync<ProtoControl.PlacementLifecycleInfo>(
-                                HiveMind,
-                                new ProtoControl.GetPlacementLifecycle
-                                {
-                                    BrainId = brainId.ToProtoUuid()
-                                })
-                            .ConfigureAwait(false);
-
-                        return lifecycle.LifecycleState is ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned
-                            or ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning;
-                    },
-                    PlacementAssignmentTimeout,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-        private void RegisterBrainWithIo(Guid brainId)
+        private async Task AwaitSpawnPlacementReadyAsync(Guid brainId)
         {
-            Root.Send(IoGateway, new ProtoIo.RegisterBrain
-            {
-                BrainId = brainId.ToProtoUuid(),
-                InputWidth = InputWidth,
-                OutputWidth = DefaultOutputWidth,
-                BaseDefinition = BrainDef,
-                InputCoordinatorMode = ProtoControl.InputCoordinatorMode.DirtyOnChange,
-                OutputVectorSource = ProtoControl.OutputVectorSource.Potential,
-                IoGatewayOwnsInputCoordinator = true,
-                IoGatewayOwnsOutputCoordinator = true
-            });
-        }
-
-        private async Task WaitForBrainInfoRegistrationAsync(Guid brainId, CancellationToken cancellationToken)
-            => await WaitForAsync(
-                    async () =>
+            var response = await Root.RequestAsync<ProtoIo.AwaitSpawnPlacementViaIOAck>(
+                    IoGateway,
+                    new ProtoIo.AwaitSpawnPlacementViaIO
                     {
-                        var brainInfo = await Root.RequestAsync<ProtoIo.BrainInfo>(
-                                IoGateway,
-                                new ProtoIo.BrainInfoRequest
-                                {
-                                    BrainId = brainId.ToProtoUuid()
-                                })
-                            .ConfigureAwait(false);
-                        return brainInfo.InputWidth >= InputWidth && brainInfo.OutputWidth >= DefaultOutputWidth;
+                        BrainId = brainId.ToProtoUuid(),
+                        TimeoutMs = (ulong)PlacementAssignmentTimeout.TotalMilliseconds
                     },
-                    BrainInfoRegistrationTimeout,
-                    cancellationToken)
+                    SpawnBrainTimeout)
                 .ConfigureAwait(false);
+            if (response.Ack is null
+                || !response.Ack.BrainId.TryToGuid(out var awaitedBrainId)
+                || awaitedBrainId == Guid.Empty
+                || awaitedBrainId != brainId
+                || !response.Ack.AcceptedForPlacement
+                || !response.Ack.PlacementReady
+                || !string.IsNullOrWhiteSpace(response.Ack.FailureReasonCode))
+            {
+                throw new InvalidOperationException(
+                    $"AwaitSpawnPlacementViaIOAck did not confirm placement for brain {brainId:N}. failure={response.Ack?.FailureReasonCode} message={response.Ack?.FailureMessage}");
+            }
+        }
 
         private async Task ApplyBenchmarkSafeRuntimeConfigAsync(Guid brainId)
         {

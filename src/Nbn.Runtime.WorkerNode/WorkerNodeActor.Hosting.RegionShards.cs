@@ -14,16 +14,35 @@ public sealed partial class WorkerNodeActor
 {
     private async Task<HostingResult> HostRegionShardAsync(IContext context, BrainHostingState brain, PlacementAssignment assignment)
     {
-        var regionId = checked((int)assignment.RegionId);
-        var shardIndex = checked((int)assignment.ShardIndex);
-        if (!SharedShardId32.TryFrom(regionId, shardIndex, out var shardId))
+        try
         {
+            var prepared = await PrepareRegionShardHostingAsync(context, brain, assignment).ConfigureAwait(false);
+            return CompletePreparedRegionShardHosting(context, brain, prepared);
+        }
+        catch (Exception ex)
+        {
+            var detail = string.IsNullOrWhiteSpace(ex.Message)
+                ? ex.GetBaseException().Message
+                : ex.Message;
             return HostingResult.Failed(FailedAck(
                 assignment.AssignmentId,
                 assignment.BrainId,
                 assignment.PlacementEpoch,
                 PlacementFailureReason.PlacementFailureInternalError,
-                $"invalid shard target r{regionId}:s{shardIndex}"));
+                detail));
+        }
+    }
+
+    private async Task<PreparedRegionShardHosting> PrepareRegionShardHostingAsync(
+        IContext context,
+        BrainHostingState brain,
+        PlacementAssignment assignment)
+    {
+        var regionId = checked((int)assignment.RegionId);
+        var shardIndex = checked((int)assignment.ShardIndex);
+        if (!SharedShardId32.TryFrom(regionId, shardIndex, out var shardId))
+        {
+            throw new InvalidOperationException($"invalid shard target r{regionId}:s{shardIndex}");
         }
 
         var neuronStart = checked((int)assignment.NeuronStart);
@@ -36,14 +55,8 @@ public sealed partial class WorkerNodeActor
             var detail = string.IsNullOrWhiteSpace(brain.RuntimeInfo?.LastIoError)
                 ? "metadata_unavailable"
                 : brain.RuntimeInfo!.LastIoError;
-            return HostingResult.Failed(FailedAck(
-                assignment.AssignmentId,
-                assignment.BrainId,
-                assignment.PlacementEpoch,
-                PlacementFailureReason.PlacementFailureWorkerUnavailable,
-                $"artifact metadata unavailable for brain {brain.BrainId}; retry when IO/Hive metadata is ready (detail={detail})",
-                retryable: true,
-                retryAfterMs: (ulong)Math.Max(50, RuntimeMetadataRetryDelay.TotalMilliseconds)));
+            throw new InvalidOperationException(
+                $"artifact metadata unavailable for brain {brain.BrainId}; retry when IO/Hive metadata is ready (detail={detail})");
         }
 
         var actorName = ResolveActorName(assignment);
@@ -64,14 +77,33 @@ public sealed partial class WorkerNodeActor
             ComputeBackendPreference: ResolveComputeBackendPreference(assignment));
 
         var props = await BuildRegionShardPropsAsync(brain, assignment, neuronStart, neuronCount, config).ConfigureAwait(false);
-        var existingPid = brain.RegionShards.TryGetValue(shardId, out var existing) ? existing.Pid : null;
-        var pid = SpawnOrResolveNamed(context, actorName, props, existingPid);
+        return new PreparedRegionShardHosting(
+            assignment.Clone(),
+            shardId,
+            neuronStart,
+            neuronCount,
+            actorName,
+            props);
+    }
 
-        brain.RegionShards[shardId] = new HostedShard(shardId, neuronStart, neuronCount, pid, assignment.AssignmentId);
+    private HostingResult CompletePreparedRegionShardHosting(
+        IContext context,
+        BrainHostingState brain,
+        PreparedRegionShardHosting prepared)
+    {
+        var existingPid = brain.RegionShards.TryGetValue(prepared.ShardId, out var existing) ? existing.Pid : null;
+        var pid = SpawnOrResolveNamed(context, prepared.ActorName, prepared.Props, existingPid);
+
+        brain.RegionShards[prepared.ShardId] = new HostedShard(
+            prepared.ShardId,
+            prepared.NeuronStart,
+            prepared.NeuronCount,
+            pid,
+            prepared.Assignment.AssignmentId);
         context.Watch(pid);
-        RegisterShard(context, brain, shardId, neuronStart, neuronCount, pid);
+        RegisterShard(context, brain, prepared.ShardId, prepared.NeuronStart, prepared.NeuronCount, pid);
 
-        return HostingResult.Succeeded(assignment, pid);
+        return HostingResult.Succeeded(prepared.Assignment, pid);
     }
 
     private async Task<Props> BuildRegionShardPropsAsync(
@@ -143,13 +175,6 @@ public sealed partial class WorkerNodeActor
             return configuredPreference;
         }
 
-        var neuronCount = checked((int)assignment.NeuronCount);
-        var gpuThreshold = Math.Max(4096, NbnConstants.DefaultAxonStride * 2);
-        if (neuronCount < gpuThreshold)
-        {
-            return RegionShardComputeBackendPreference.Cpu;
-        }
-
         var capabilities = _capabilitySnapshotProvider?.Invoke() ?? new ProtoSettings.NodeCapabilities();
         if (!capabilities.HasGpu || (!capabilities.IlgpuCudaAvailable && !capabilities.IlgpuOpenclAvailable))
         {
@@ -162,6 +187,15 @@ public sealed partial class WorkerNodeActor
             capabilities.VramTotalBytes,
             capabilities.GpuVramLimitPercent);
         if (effectiveGpuScore <= 0f || effectiveVramFreeBytes == 0)
+        {
+            return RegionShardComputeBackendPreference.Cpu;
+        }
+
+        var neuronCount = checked((int)assignment.NeuronCount);
+        var gpuThreshold = assignment.GpuNeuronThreshold > 0
+            ? checked((int)assignment.GpuNeuronThreshold)
+            : WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold;
+        if (neuronCount < gpuThreshold)
         {
             return RegionShardComputeBackendPreference.Cpu;
         }

@@ -374,6 +374,12 @@ public sealed class DesignerPanelArtifactStoreTests
         var client = new FakeWorkbenchClient
         {
             PlacementAck = new PlacementAck { Accepted = true, Message = "accepted" },
+            AwaitSpawnPlacementFactory = (brainId, timeoutMs) => new SpawnBrainAck
+            {
+                BrainId = brainId.ToProtoUuid(),
+                AcceptedForPlacement = true,
+                PlacementReady = true
+            },
             BrainListFactory = () => BuildBrainList(spawnedBrainId, "Active"),
             PlacementLifecycleFactory = requestedBrainId => requestedBrainId == spawnedBrainId
                 ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleRunning, registeredShards: 3)
@@ -410,6 +416,7 @@ public sealed class DesignerPanelArtifactStoreTests
         Assert.StartsWith("http://", client.LastPlacementRequest.BaseDef.StoreUri, StringComparison.OrdinalIgnoreCase);
         Assert.StartsWith("http://", client.LastPlacementRequest.LastSnapshot.StoreUri, StringComparison.OrdinalIgnoreCase);
         Assert.True(client.LastPlacementRequest.IsRecovery);
+        Assert.Equal(5_000UL, client.LastAwaitSpawnPlacementTimeoutMs);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.Contains("Brain restored from artifact refs", vm.Status, StringComparison.Ordinal);
     }
@@ -499,8 +506,10 @@ public sealed class DesignerPanelArtifactStoreTests
     private sealed class FakeWorkbenchClient : WorkbenchClient
     {
         public PlacementAck? PlacementAck { get; set; }
+        public Func<Guid, ulong, SpawnBrainAck?>? AwaitSpawnPlacementFactory { get; init; }
         public Func<BrainListResponse?>? BrainListFactory { get; set; }
         public Func<Guid, PlacementLifecycleInfo?>? PlacementLifecycleFactory { get; init; }
+        public ulong LastAwaitSpawnPlacementTimeoutMs { get; private set; }
         public int RequestPlacementCallCount { get; private set; }
         public int KillBrainCallCount { get; private set; }
         public RequestPlacement? LastPlacementRequest { get; private set; }
@@ -519,6 +528,12 @@ public sealed class DesignerPanelArtifactStoreTests
 
         public override Task<BrainListResponse?> ListBrainsAsync()
             => Task.FromResult(BrainListFactory?.Invoke());
+
+        public override Task<SpawnBrainAck?> AwaitSpawnPlacementAsync(Guid brainId, ulong timeoutMs = 0)
+        {
+            LastAwaitSpawnPlacementTimeoutMs = timeoutMs;
+            return Task.FromResult(AwaitSpawnPlacementFactory?.Invoke(brainId, timeoutMs));
+        }
 
         public override Task<PlacementLifecycleInfo?> GetPlacementLifecycleAsync(Guid brainId)
             => Task.FromResult(PlacementLifecycleFactory?.Invoke(brainId));

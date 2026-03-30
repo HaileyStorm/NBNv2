@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Reflection;
+using System.Text;
 using Nbn.Shared;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
@@ -134,7 +135,19 @@ public sealed partial class HiveMindActor
 
         return expected.Equals(sender)
                || PidEquals(sender, expected)
+               || PidHasEquivalentActorIdentity(sender, expected)
                || PidHasEquivalentEndpoint(sender, expected);
+    }
+
+    private static bool PidHasEquivalentActorIdentity(PID sender, PID expected)
+    {
+        if (!string.Equals(sender.Id ?? string.Empty, expected.Id ?? string.Empty, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return IsUnspecifiedActorAddress(sender.Address)
+               || IsUnspecifiedActorAddress(expected.Address);
     }
 
     private static bool PidHasEquivalentEndpoint(PID sender, PID expected)
@@ -175,6 +188,10 @@ public sealed partial class HiveMindActor
 
         return HostsResolveToSameAddress(senderHost, expectedHost);
     }
+
+    private static bool IsUnspecifiedActorAddress(string? address)
+        => string.IsNullOrWhiteSpace(address)
+           || string.Equals(address.Trim(), "nonhost", StringComparison.OrdinalIgnoreCase);
 
     private static bool TryParseEndpoint(string? address, out string host, out int port)
     {
@@ -483,6 +500,288 @@ public sealed partial class HiveMindActor
         };
     }
 
+    private static ProtoControl.SpawnBrainAck BuildSpawnAck(
+        Guid brainId,
+        ulong placementEpoch,
+        bool acceptedForPlacement,
+        bool placementReady,
+        ProtoControl.PlacementLifecycleState lifecycleState,
+        ProtoControl.PlacementReconcileState reconcileState,
+        string? reasonCode = null,
+        string? failureMessage = null)
+    {
+        var normalizedReasonCode = string.IsNullOrWhiteSpace(reasonCode) ? string.Empty : reasonCode.Trim();
+        var normalizedFailureMessage = string.IsNullOrWhiteSpace(normalizedReasonCode)
+            ? string.Empty
+            : string.IsNullOrWhiteSpace(failureMessage)
+                ? BuildSpawnFailureMessage(
+                    ProtoControl.PlacementFailureReason.PlacementFailureNone,
+                    detail: null,
+                    fallbackReasonCode: normalizedReasonCode)
+                : failureMessage.Trim();
+        return new ProtoControl.SpawnBrainAck
+        {
+            BrainId = brainId.ToProtoUuid(),
+            FailureReasonCode = normalizedReasonCode,
+            FailureMessage = normalizedFailureMessage,
+            AcceptedForPlacement = acceptedForPlacement,
+            PlacementReady = placementReady,
+            PlacementEpoch = placementEpoch,
+            LifecycleState = lifecycleState,
+            ReconcileState = reconcileState
+        };
+    }
+
+    private static ProtoControl.SpawnBrainAck BuildSpawnQueuedAck(BrainState brain)
+        => BuildSpawnAck(
+            brain.BrainId,
+            brain.PlacementEpoch,
+            acceptedForPlacement: true,
+            placementReady: false,
+            brain.PlacementLifecycleState,
+            brain.PlacementReconcileState);
+
+    private ProtoControl.SpawnBrainAck BuildCurrentSpawnAck(Guid brainId)
+    {
+        if (_completedSpawns.TryGetValue(brainId, out var completed))
+        {
+            _completedSpawns.Remove(brainId);
+            return string.IsNullOrWhiteSpace(completed.FailureReasonCode)
+                ? BuildSpawnAck(
+                    completed.BrainId,
+                    completed.PlacementEpoch,
+                    completed.AcceptedForPlacement,
+                    completed.PlacementReady,
+                    completed.LifecycleState,
+                    completed.ReconcileState)
+                : BuildSpawnFailureAck(
+                    completed.BrainId,
+                    completed.PlacementEpoch,
+                    completed.AcceptedForPlacement,
+                    completed.LifecycleState,
+                    completed.ReconcileState,
+                    completed.FailureReasonCode,
+                    completed.FailureMessage);
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            return BuildSpawnFailureAck(
+                reasonCode: "spawn_not_found",
+                failureMessage: $"Spawn wait failed: brain {brainId} is no longer tracked.");
+        }
+
+        var executionCompleted = brain.PlacementExecution is null || brain.PlacementExecution.Completed;
+        var placementReady = executionCompleted
+                             && (brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned
+                                 || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning);
+        if (placementReady)
+        {
+            return BuildSpawnAck(
+                brain.BrainId,
+                brain.PlacementEpoch,
+                acceptedForPlacement: true,
+                placementReady: true,
+                brain.PlacementLifecycleState,
+                brain.PlacementReconcileState);
+        }
+
+        if (brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed
+            || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleTerminated)
+        {
+            return BuildSpawnFailureAck(
+                brain.BrainId,
+                brain.PlacementEpoch,
+                acceptedForPlacement: true,
+                brain.PlacementLifecycleState,
+                brain.PlacementReconcileState,
+                string.IsNullOrWhiteSpace(brain.SpawnFailureReasonCode)
+                    ? ToSpawnFailureReasonCode(brain.PlacementFailureReason)
+                    : brain.SpawnFailureReasonCode,
+                string.IsNullOrWhiteSpace(brain.SpawnFailureMessage)
+                    ? BuildSpawnFailureMessage(brain.PlacementFailureReason, detail: null)
+                    : brain.SpawnFailureMessage);
+        }
+
+        return BuildSpawnAck(
+            brain.BrainId,
+            brain.PlacementEpoch,
+            acceptedForPlacement: true,
+            placementReady: false,
+            brain.PlacementLifecycleState,
+            brain.PlacementReconcileState);
+    }
+
+    private ProtoControl.SpawnBrainAck BuildAwaitedSpawnAck(Guid brainId, PendingSpawnState pending, PendingSpawnAwaitResult result)
+    {
+        if (result.TimedOut)
+        {
+            if (_brains.TryGetValue(brainId, out var inFlightBrain))
+            {
+                LogError($"Spawn wait timeout for brain {brainId} epoch={pending.PlacementEpoch}: {DescribeSpawnWaitTimeoutState(inFlightBrain, pending)}");
+                return BuildSpawnFailureAck(
+                    brainId,
+                    pending.PlacementEpoch,
+                    acceptedForPlacement: true,
+                    inFlightBrain.PlacementLifecycleState,
+                    inFlightBrain.PlacementReconcileState,
+                    reasonCode: "spawn_wait_timeout",
+                    failureMessage: "Spawn wait timed out before placement became ready.");
+            }
+
+            LogError($"Spawn wait timeout for brain {brainId} epoch={pending.PlacementEpoch}: brain_not_tracked pendingFailure={pending.FailureReasonCode}");
+            return BuildSpawnFailureAck(
+                brainId,
+                pending.PlacementEpoch,
+                acceptedForPlacement: true,
+                lifecycleState: ProtoControl.PlacementLifecycleState.PlacementLifecycleUnknown,
+                reconcileState: ProtoControl.PlacementReconcileState.PlacementReconcileUnknown,
+                reasonCode: "spawn_wait_timeout",
+                failureMessage: "Spawn wait timed out before placement became ready.");
+        }
+
+        if (result.Completed)
+        {
+            return BuildCurrentSpawnAck(brainId);
+        }
+
+        if (_brains.TryGetValue(brainId, out var failedBrain))
+        {
+            return BuildSpawnFailureAck(
+                brainId,
+                pending.PlacementEpoch,
+                acceptedForPlacement: true,
+                failedBrain.PlacementLifecycleState,
+                failedBrain.PlacementReconcileState,
+                pending.FailureReasonCode,
+                pending.FailureMessage);
+        }
+
+        return BuildSpawnFailureAck(
+            brainId,
+            pending.PlacementEpoch,
+            acceptedForPlacement: true,
+            lifecycleState: ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
+            reconcileState: ProtoControl.PlacementReconcileState.PlacementReconcileFailed,
+            reasonCode: pending.FailureReasonCode,
+            failureMessage: pending.FailureMessage);
+    }
+
+    private string DescribeSpawnWaitTimeoutState(BrainState brain, PendingSpawnState pending)
+    {
+        var builder = new StringBuilder();
+        builder.Append($"lifecycle={brain.PlacementLifecycleState} reconcile={brain.PlacementReconcileState}");
+        builder.Append($" placementEpoch={brain.PlacementEpoch} pendingEpoch={pending.PlacementEpoch}");
+        builder.Append($" registeredShards={brain.Shards.Count}");
+        builder.Append($" failure={pending.FailureReasonCode}");
+
+        var execution = brain.PlacementExecution;
+        if (execution is null)
+        {
+            builder.Append(" execution=none");
+            return builder.ToString();
+        }
+
+        var readyAssignments = 0;
+        var awaitingAssignments = 0;
+        var failedAssignments = 0;
+        var acceptedAssignments = 0;
+        foreach (var assignment in execution.Assignments.Values)
+        {
+            if (assignment.Ready)
+            {
+                readyAssignments++;
+            }
+
+            if (assignment.AwaitingAck)
+            {
+                awaitingAssignments++;
+            }
+
+            if (assignment.Failed)
+            {
+                failedAssignments++;
+            }
+
+            if (assignment.Accepted)
+            {
+                acceptedAssignments++;
+            }
+        }
+
+        builder.Append(
+            $" executionCompleted={execution.Completed} assignments={execution.Assignments.Count} ready={readyAssignments} accepted={acceptedAssignments} awaitingAck={awaitingAssignments} failed={failedAssignments} reconcileRequested={execution.ReconcileRequested} pendingReconcileWorkers={execution.PendingReconcileWorkers.Count} observedAssignments={execution.ObservedAssignments.Count}");
+
+        if (execution.WorkerTargets.Count == 0)
+        {
+            builder.Append(" workerDispatch=none");
+            return builder.ToString();
+        }
+
+        builder.Append(" workerDispatch=[");
+        var first = true;
+        foreach (var workerTarget in execution.WorkerTargets.OrderBy(static entry => entry.Key))
+        {
+            if (!first)
+            {
+                builder.Append("; ");
+            }
+
+            first = false;
+            builder.Append(workerTarget.Key.ToString("D"));
+            builder.Append(":");
+            builder.Append(_workerPlacementDispatches.TryGetValue(workerTarget.Key, out var dispatch)
+                ? DescribeWorkerPlacementDispatchState(dispatch)
+                : "idle");
+        }
+
+        builder.Append(']');
+        return builder.ToString();
+    }
+
+    private static string DescribeWorkerPlacementDispatchState(WorkerPlacementDispatchState dispatch)
+    {
+        if (dispatch.Active is null && dispatch.Pending.Count == 0)
+        {
+            return "idle";
+        }
+
+        var builder = new StringBuilder();
+        if (dispatch.Active is { } active)
+        {
+            builder.Append($"active={active.BrainId:D}@{active.PlacementEpoch}/remaining={active.RemainingAssignmentCount}");
+        }
+        else
+        {
+            builder.Append("active=none");
+        }
+
+        builder.Append($",pendingBatches={dispatch.Pending.Count}");
+        if (dispatch.Pending.Count > 0)
+        {
+            var next = dispatch.Pending.Peek();
+            builder.Append($",next={next.BrainId:D}@{next.PlacementEpoch}/assignments={next.Assignments.Count}");
+        }
+
+        return builder.ToString();
+    }
+
+    private void RememberCompletedSpawn(CompletedSpawnState completed)
+    {
+        if (!_completedSpawns.ContainsKey(completed.BrainId))
+        {
+            _completedSpawnOrder.Enqueue(completed.BrainId);
+        }
+
+        _completedSpawns[completed.BrainId] = completed;
+
+        while (_completedSpawnOrder.Count > MaxCompletedSpawnResults)
+        {
+            var evictedBrainId = _completedSpawnOrder.Dequeue();
+            _completedSpawns.Remove(evictedBrainId);
+        }
+    }
+
     private static void SetSpawnFailureDetails(BrainState brain, string reasonCode, string failureMessage)
     {
         var normalizedReasonCode = string.IsNullOrWhiteSpace(reasonCode)
@@ -499,6 +798,23 @@ public sealed partial class HiveMindActor
     }
 
     private static ProtoControl.SpawnBrainAck BuildSpawnFailureAck(string? reasonCode, string? failureMessage)
+        => BuildSpawnFailureAck(
+            Guid.Empty,
+            placementEpoch: 0,
+            acceptedForPlacement: false,
+            lifecycleState: ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
+            reconcileState: ProtoControl.PlacementReconcileState.PlacementReconcileFailed,
+            reasonCode,
+            failureMessage);
+
+    private static ProtoControl.SpawnBrainAck BuildSpawnFailureAck(
+        Guid brainId,
+        ulong placementEpoch,
+        bool acceptedForPlacement,
+        ProtoControl.PlacementLifecycleState lifecycleState,
+        ProtoControl.PlacementReconcileState reconcileState,
+        string? reasonCode,
+        string? failureMessage)
     {
         var normalizedReasonCode = string.IsNullOrWhiteSpace(reasonCode)
             ? "spawn_failed"
@@ -509,11 +825,14 @@ public sealed partial class HiveMindActor
                 detail: null,
                 fallbackReasonCode: normalizedReasonCode)
             : failureMessage.Trim();
-        return new ProtoControl.SpawnBrainAck
-        {
-            BrainId = Guid.Empty.ToProtoUuid(),
-            FailureReasonCode = normalizedReasonCode,
-            FailureMessage = normalizedFailureMessage
-        };
+        return BuildSpawnAck(
+            brainId,
+            placementEpoch,
+            acceptedForPlacement,
+            placementReady: false,
+            lifecycleState,
+            reconcileState,
+            normalizedReasonCode,
+            normalizedFailureMessage);
     }
 }

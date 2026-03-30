@@ -73,6 +73,7 @@ public static class SettingsMonitorDefaults
             { WorkerCapabilitySettingsKeys.PressureRebalanceWindowKey, WorkerCapabilitySettingsKeys.DefaultPressureRebalanceWindow.ToString(CultureInfo.InvariantCulture) },
             { WorkerCapabilitySettingsKeys.PressureViolationRatioKey, WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureViolationRatio) },
             { WorkerCapabilitySettingsKeys.PressureLimitTolerancePercentKey, WorkerCapabilityMath.FormatRatio(WorkerCapabilitySettingsKeys.DefaultPressureLimitTolerancePercent) },
+            { WorkerCapabilitySettingsKeys.RegionShardGpuNeuronThresholdKey, WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold.ToString(CultureInfo.InvariantCulture) },
             { SpeciationSettingsKeys.ConfigEnabledKey, "true" },
             { SpeciationSettingsKeys.PolicyVersionKey, "default" },
             { SpeciationSettingsKeys.DefaultSpeciesIdKey, "species.default" },
