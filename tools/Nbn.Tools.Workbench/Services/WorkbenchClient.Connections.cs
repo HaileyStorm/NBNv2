@@ -19,6 +19,9 @@ namespace Nbn.Tools.Workbench.Services;
 
 public partial class WorkbenchClient
 {
+    private static readonly TimeSpan RemoteShutdownTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan ActorSystemShutdownTimeout = TimeSpan.FromSeconds(3);
+
     /// <summary>
     /// Starts or restarts the local receiver actor system when the bind or advertised endpoint changes.
     /// </summary>
@@ -395,10 +398,24 @@ public partial class WorkbenchClient
 
             if (_system.Remote() is not null)
             {
-                await _system.Remote().ShutdownAsync(true).ConfigureAwait(false);
+                try
+                {
+                    await _system.Remote().ShutdownAsync(true).WaitAsync(RemoteShutdownTimeout).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    WorkbenchLog.Warn($"Workbench client remote shutdown exceeded {RemoteShutdownTimeout.TotalSeconds:0}s timeout.");
+                }
             }
 
-            await _system.ShutdownAsync().ConfigureAwait(false);
+            try
+            {
+                await _system.ShutdownAsync().WaitAsync(ActorSystemShutdownTimeout).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                WorkbenchLog.Warn($"Workbench client actor-system shutdown exceeded {ActorSystemShutdownTimeout.TotalSeconds:0}s timeout.");
+            }
         }
         catch (Exception)
         {

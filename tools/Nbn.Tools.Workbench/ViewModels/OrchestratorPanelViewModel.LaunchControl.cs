@@ -18,13 +18,15 @@ public sealed partial class OrchestratorPanelViewModel
         _connections.PropertyChanged -= OnConnectionsPropertyChanged;
         _refreshCts.Cancel();
         _disconnectAll?.Invoke();
-        await StopRunnerAsync(_workerRunner, _ => { }).ConfigureAwait(false);
-        await StopRunnerAsync(_settingsRunner, _ => { }).ConfigureAwait(false);
-        await StopRunnerAsync(_hiveMindRunner, _ => { }).ConfigureAwait(false);
-        await StopRunnerAsync(_ioRunner, _ => { }).ConfigureAwait(false);
-        await StopRunnerAsync(_reproRunner, _ => { }).ConfigureAwait(false);
-        await StopRunnerAsync(_speciationRunner, value => SpeciationLaunchStatus = value).ConfigureAwait(false);
-        await StopRunnerAsync(_obsRunner, _ => { }).ConfigureAwait(false);
+        await Task.WhenAll(
+                StopRunnerAsync(_workerRunner, _ => { }),
+                StopRunnerAsync(_settingsRunner, _ => { }),
+                StopRunnerAsync(_hiveMindRunner, _ => { }),
+                StopRunnerAsync(_ioRunner, _ => { }),
+                StopRunnerAsync(_reproRunner, _ => { }),
+                StopRunnerAsync(_speciationRunner, _ => { }),
+                StopRunnerAsync(_obsRunner, _ => { }))
+            .ConfigureAwait(false);
     }
 
     private async Task StartSettingsMonitorAsync()
