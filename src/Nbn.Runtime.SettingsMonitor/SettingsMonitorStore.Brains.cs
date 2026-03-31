@@ -18,7 +18,14 @@ ON CONFLICT(brain_id) DO UPDATE SET
 UPDATE brain_controllers
 SET last_seen_ms = @last_seen_ms,
     is_alive = 1
-WHERE brain_id = @brain_id;
+WHERE brain_id = @brain_id
+  AND last_seen_ms <= @last_seen_ms
+  AND EXISTS (
+      SELECT 1
+      FROM brains
+      WHERE brain_id = @brain_id
+        AND state <> 'Dead'
+  );
 """;
 
     private const string UpsertBrainSql = """
@@ -52,20 +59,23 @@ ON CONFLICT(brain_id) DO UPDATE SET
 UPDATE brains
 SET state = @state,
     notes = COALESCE(@notes, notes)
-WHERE brain_id = @brain_id;
+WHERE brain_id = @brain_id
+  AND (state <> 'Dead' OR @state = 'Dead');
 """;
 
     private const string UpdateBrainTickSql = """
 UPDATE brains
 SET last_tick_id = @last_tick_id
-WHERE brain_id = @brain_id;
+WHERE brain_id = @brain_id
+  AND state <> 'Dead';
 """;
 
     private const string MarkBrainControllerOfflineSql = """
 UPDATE brain_controllers
 SET is_alive = 0,
     last_seen_ms = @last_seen_ms
-WHERE brain_id = @brain_id;
+WHERE brain_id = @brain_id
+  AND last_seen_ms <= @last_seen_ms;
 """;
 
     private const string GetBrainSql = """
@@ -166,7 +176,7 @@ ORDER BY brain_id;
                 new
                 {
                     brain_id = ToDatabaseId(heartbeat.BrainId),
-                    last_seen_ms = NowMs()
+                    last_seen_ms = heartbeat.TimeMs > 0 ? heartbeat.TimeMs : NowMs()
                 },
                 cancellationToken: cancellationToken));
 
