@@ -606,6 +606,11 @@ public class ProtoCompatibilityTests
         AssertField(runtimeStateWrite, "set_accumulator", 6, FieldType.Bool);
         AssertField(runtimeStateWrite, "accumulator_value", 7, FieldType.Float);
 
+        var resetBrainRuntimeState = descriptor.MessageTypes.Single(message => message.Name == "ResetBrainRuntimeState");
+        AssertField(resetBrainRuntimeState, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(resetBrainRuntimeState, "reset_buffer", 2, FieldType.Bool);
+        AssertField(resetBrainRuntimeState, "reset_accumulator", 3, FieldType.Bool);
+
         var outputEvent = descriptor.MessageTypes.Single(message => message.Name == "OutputEvent");
         AssertField(outputEvent, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(outputEvent, "output_index", 2, FieldType.UInt32);

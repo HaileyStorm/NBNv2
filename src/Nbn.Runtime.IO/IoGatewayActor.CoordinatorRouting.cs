@@ -71,6 +71,43 @@ public sealed partial class IoGatewayActor
         context.Send(routerPid, message);
     }
 
+    private async Task ForwardRuntimeStateResetAsync(IContext context, ResetBrainRuntimeState message)
+    {
+        if (!TryGetBrainId(message, out var brainId))
+        {
+            RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "brain_id_invalid");
+            return;
+        }
+
+        var routerPid = await ResolveRouterPidAsync(context, brainId, allowCached: false).ConfigureAwait(false);
+        if (routerPid is null)
+        {
+            RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "brain_router_unavailable");
+            return;
+        }
+
+        try
+        {
+            var ack = await context.RequestAsync<IoCommandAck>(routerPid, message, DefaultRequestTimeout).ConfigureAwait(false);
+            if (ack is null)
+            {
+                RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "brain_router_empty_response");
+                return;
+            }
+
+            context.Respond(ack);
+        }
+        catch (Exception ex)
+        {
+            RespondCommandAck(
+                context,
+                message.BrainId,
+                "reset_brain_runtime_state",
+                success: false,
+                $"brain_router_request_failed:{ex.GetBaseException().Message}");
+        }
+    }
+
     private async Task ForwardOutputAsync(IContext context, object message)
     {
         if (!TryGetBrainId(message, out var brainId))
@@ -444,6 +481,8 @@ public sealed partial class IoGatewayActor
                 return TryGetBrainId(pulse.BrainId, out guid);
             case RuntimeNeuronStateWrite stateWrite:
                 return TryGetBrainId(stateWrite.BrainId, out guid);
+            case ResetBrainRuntimeState resetState:
+                return TryGetBrainId(resetState.BrainId, out guid);
         }
 
         return false;
@@ -787,6 +826,7 @@ public sealed partial class IoGatewayActor
             InputVector inputVector => $"width={inputVector.Values.Count}",
             RuntimeNeuronPulse pulse => $"region={pulse.TargetRegionId} neuron={pulse.TargetNeuronId} value={pulse.Value:0.###}",
             RuntimeNeuronStateWrite stateWrite => $"region={stateWrite.TargetRegionId} neuron={stateWrite.TargetNeuronId} buffer={stateWrite.SetBuffer} accumulator={stateWrite.SetAccumulator}",
+            ResetBrainRuntimeState resetState => $"reset_buffer={resetState.ResetBuffer} reset_accumulator={resetState.ResetAccumulator}",
             _ => string.Empty
         };
     }

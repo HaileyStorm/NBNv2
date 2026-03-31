@@ -137,6 +137,9 @@ public sealed partial class RegionShardActor : IActor
             case RuntimeNeuronStateWrite stateWrite:
                 HandleRuntimeNeuronStateWrite(stateWrite);
                 break;
+            case ResetBrainRuntimeState resetRuntimeState:
+                HandleResetBrainRuntimeState(context, resetRuntimeState);
+                break;
             case UpdateShardOutputSink message:
                 HandleUpdateOutputSink(message);
                 break;

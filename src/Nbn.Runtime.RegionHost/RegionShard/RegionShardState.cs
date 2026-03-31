@@ -215,6 +215,20 @@ public sealed class RegionShardState
         return true;
     }
 
+    public void ResetRuntimeState(bool resetBuffer, bool resetAccumulator)
+    {
+        if (resetBuffer)
+        {
+            Array.Clear(Buffer);
+        }
+
+        if (resetAccumulator)
+        {
+            Array.Clear(_inbox);
+            Array.Clear(_inboxHasInput);
+        }
+    }
+
     private bool TryGetLocalNeuronIndex(uint targetNeuronId, out int localIndex)
     {
         localIndex = (int)targetNeuronId - NeuronStart;

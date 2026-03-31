@@ -14,6 +14,7 @@ public sealed partial class BrainSignalRouterActor : IActor
     private static readonly bool LogDelivery = IsEnvTrue("NBN_BRAIN_LOG_DELIVERY");
     private static readonly bool LogInputDiagnostics = IsEnvTrue("NBN_INPUT_DIAGNOSTICS_ENABLED");
     private static readonly bool LogInputTraceDiagnostics = IsEnvTrue("NBN_INPUT_TRACE_DIAGNOSTICS_ENABLED");
+    private static readonly TimeSpan RuntimeStateResetTimeout = TimeSpan.FromSeconds(5);
 
     private readonly Guid _brainId;
     private readonly Nbn.Proto.Uuid _brainIdProto;
@@ -38,7 +39,7 @@ public sealed partial class BrainSignalRouterActor : IActor
     /// <summary>
     /// Dispatches router messages for tick compute, tick deliver, IO coordination, and ack tracking.
     /// </summary>
-    public Task ReceiveAsync(IContext context)
+    public async Task ReceiveAsync(IContext context)
     {
         switch (context.Message)
         {
@@ -69,6 +70,9 @@ public sealed partial class BrainSignalRouterActor : IActor
             case RuntimeNeuronStateWrite runtimeStateWrite:
                 HandleRuntimeNeuronStateWrite(context, runtimeStateWrite);
                 break;
+            case ResetBrainRuntimeState resetBrainRuntimeState:
+                await HandleResetBrainRuntimeStateAsync(context, resetBrainRuntimeState);
+                break;
             case InputDrain inputDrain:
                 HandleInputDrain(context, inputDrain);
                 break;
@@ -82,8 +86,6 @@ public sealed partial class BrainSignalRouterActor : IActor
                 ForwardToParent(context, tickComputeDone);
                 break;
         }
-
-        return Task.CompletedTask;
     }
 
     private void ApplyRoutingTable(RoutingTableSnapshot? snapshot)

@@ -138,6 +138,11 @@ public sealed partial class RegionShardActor
            && guid == _brainId
            && regionId == (uint)_state.RegionId;
 
+    private bool MatchesBrainMessage(Nbn.Proto.Uuid? brainId)
+        => brainId is not null
+           && brainId.TryToGuid(out var guid)
+           && guid == _brainId;
+
     private bool MatchesShardMessage(Nbn.Proto.Uuid? brainId, uint regionId, uint shardIndex)
         => MatchesRegionMessage(brainId, regionId)
            && shardIndex == (uint)_shardId.ShardIndex;

@@ -111,6 +111,9 @@ public sealed partial class IoGatewayActor : IActor
             case RuntimeNeuronStateWrite message:
                 await ForwardRuntimeNeuronAsync(context, message);
                 break;
+            case ResetBrainRuntimeState message:
+                await ForwardRuntimeStateResetAsync(context, message);
+                break;
             case SubscribeOutputs message:
                 await ForwardOutputAsync(context, message);
                 break;

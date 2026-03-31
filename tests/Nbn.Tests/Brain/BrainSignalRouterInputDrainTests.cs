@@ -110,9 +110,11 @@ public class BrainSignalRouterInputDrainTests
         var pulseBTcs = new TaskCompletionSource<RuntimeNeuronPulse>(TaskCreationOptions.RunContinuationsAsynchronously);
         var stateATcs = new TaskCompletionSource<RuntimeNeuronStateWrite>(TaskCreationOptions.RunContinuationsAsynchronously);
         var stateBTcs = new TaskCompletionSource<RuntimeNeuronStateWrite>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resetATcs = new TaskCompletionSource<ResetBrainRuntimeState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resetBTcs = new TaskCompletionSource<ResetBrainRuntimeState>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var shardA = root.Spawn(Props.FromProducer(() => new RuntimeShardProbeActor(brainId, pulseATcs, stateATcs)));
-        var shardB = root.Spawn(Props.FromProducer(() => new RuntimeShardProbeActor(brainId, pulseBTcs, stateBTcs)));
+        var shardA = root.Spawn(Props.FromProducer(() => new RuntimeShardProbeActor(brainId, pulseATcs, stateATcs, resetATcs)));
+        var shardB = root.Spawn(Props.FromProducer(() => new RuntimeShardProbeActor(brainId, pulseBTcs, stateBTcs, resetBTcs)));
 
         var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
         root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
@@ -140,11 +142,22 @@ public class BrainSignalRouterInputDrainTests
             AccumulatorValue = 1.25f
         });
 
+        var resetAck = await root.RequestAsync<IoCommandAck>(
+            router,
+            new ResetBrainRuntimeState
+            {
+                BrainId = brainId.ToProtoUuid(),
+                ResetBuffer = true,
+                ResetAccumulator = true
+            });
+
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var pulseA = await pulseATcs.Task.WaitAsync(timeoutCts.Token);
         var pulseB = await pulseBTcs.Task.WaitAsync(timeoutCts.Token);
         var stateA = await stateATcs.Task.WaitAsync(timeoutCts.Token);
         var stateB = await stateBTcs.Task.WaitAsync(timeoutCts.Token);
+        var resetA = await resetATcs.Task.WaitAsync(timeoutCts.Token);
+        var resetB = await resetBTcs.Task.WaitAsync(timeoutCts.Token);
 
         Assert.Equal((uint)targetRegionId, pulseA.TargetRegionId);
         Assert.Equal((uint)targetRegionId, pulseB.TargetRegionId);
@@ -159,6 +172,11 @@ public class BrainSignalRouterInputDrainTests
         Assert.True(stateA.SetAccumulator);
         Assert.Equal(-0.5f, stateA.BufferValue);
         Assert.Equal(1.25f, stateA.AccumulatorValue);
+        Assert.True(resetAck.Success);
+        Assert.True(resetA.ResetBuffer);
+        Assert.True(resetA.ResetAccumulator);
+        Assert.True(resetB.ResetBuffer);
+        Assert.True(resetB.ResetAccumulator);
 
         await system.ShutdownAsync();
     }
@@ -620,15 +638,18 @@ public class BrainSignalRouterInputDrainTests
         private readonly Guid _brainId;
         private readonly TaskCompletionSource<RuntimeNeuronPulse> _pulseTcs;
         private readonly TaskCompletionSource<RuntimeNeuronStateWrite> _stateWriteTcs;
+        private readonly TaskCompletionSource<ResetBrainRuntimeState> _resetTcs;
 
         public RuntimeShardProbeActor(
             Guid brainId,
             TaskCompletionSource<RuntimeNeuronPulse> pulseTcs,
-            TaskCompletionSource<RuntimeNeuronStateWrite> stateWriteTcs)
+            TaskCompletionSource<RuntimeNeuronStateWrite> stateWriteTcs,
+            TaskCompletionSource<ResetBrainRuntimeState> resetTcs)
         {
             _brainId = brainId;
             _pulseTcs = pulseTcs;
             _stateWriteTcs = stateWriteTcs;
+            _resetTcs = resetTcs;
         }
 
         public Task ReceiveAsync(IContext context)
@@ -640,6 +661,16 @@ public class BrainSignalRouterInputDrainTests
                     break;
                 case RuntimeNeuronStateWrite stateWrite when Matches(stateWrite.BrainId):
                     _stateWriteTcs.TrySetResult(stateWrite);
+                    break;
+                case ResetBrainRuntimeState resetRuntimeState when Matches(resetRuntimeState.BrainId):
+                    _resetTcs.TrySetResult(resetRuntimeState);
+                    context.Respond(new IoCommandAck
+                    {
+                        BrainId = resetRuntimeState.BrainId,
+                        Command = "reset_brain_runtime_state",
+                        Success = true,
+                        Message = "applied"
+                    });
                     break;
             }
 

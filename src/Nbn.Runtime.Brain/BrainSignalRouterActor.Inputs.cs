@@ -119,6 +119,88 @@ public sealed partial class BrainSignalRouterActor
         DispatchToRegionShards(context, message.TargetRegionId, message);
     }
 
+    private async Task HandleResetBrainRuntimeStateAsync(IContext context, ResetBrainRuntimeState message)
+    {
+        if (!IsForBrain(message.BrainId))
+        {
+            context.Respond(new IoCommandAck
+            {
+                BrainId = message.BrainId,
+                Command = "reset_brain_runtime_state",
+                Success = false,
+                Message = "brain_id_mismatch"
+            });
+            return;
+        }
+
+        CaptureIoGateway(context.Sender);
+
+        if (!message.ResetBuffer && !message.ResetAccumulator)
+        {
+            context.Respond(new IoCommandAck
+            {
+                BrainId = message.BrainId,
+                Command = "reset_brain_runtime_state",
+                Success = false,
+                Message = "nothing_requested"
+            });
+            return;
+        }
+
+        if (_routingTable.Count == 0)
+        {
+            context.Respond(new IoCommandAck
+            {
+                BrainId = message.BrainId,
+                Command = "reset_brain_runtime_state",
+                Success = false,
+                Message = "no_region_shards"
+            });
+            return;
+        }
+
+        try
+        {
+            var targets = _routingTable.Entries
+                .Select(static entry => entry.Pid)
+                .Distinct(PidEqualityComparer.Instance)
+                .ToArray();
+            var acks = await Task.WhenAll(
+                    targets.Select(target => context.RequestAsync<IoCommandAck>(target, message, RuntimeStateResetTimeout)))
+                .ConfigureAwait(false);
+            var failedAck = acks.FirstOrDefault(ack => ack is null || !ack.Success);
+            if (failedAck is not null)
+            {
+                context.Respond(new IoCommandAck
+                {
+                    BrainId = _brainIdProto,
+                    Command = "reset_brain_runtime_state",
+                    Success = false,
+                    Message = failedAck.Message
+                });
+                return;
+            }
+
+            context.Respond(new IoCommandAck
+            {
+                BrainId = _brainIdProto,
+                Command = "reset_brain_runtime_state",
+                Success = true,
+                Message = $"applied_shards={targets.Length}"
+            });
+        }
+        catch (Exception ex)
+        {
+            context.Respond(new IoCommandAck
+            {
+                BrainId = _brainIdProto,
+                Command = "reset_brain_runtime_state",
+                Success = false,
+                Message = $"reset_request_failed:{ex.GetBaseException().Message}"
+            });
+        }
+    }
+
     private void HandleInputDrain(IContext context, InputDrain message)
     {
         if (!IsForBrain(message.BrainId))
@@ -223,6 +305,29 @@ public sealed partial class BrainSignalRouterActor
         }
 
         _ioGatewayPid = sender;
+    }
+
+    private sealed class PidEqualityComparer : IEqualityComparer<PID>
+    {
+        public static readonly PidEqualityComparer Instance = new();
+
+        public bool Equals(PID? x, PID? y)
+        {
+            if (x is null || y is null)
+            {
+                return x is null && y is null;
+            }
+
+            return string.Equals(x.Address, y.Address, StringComparison.Ordinal)
+                   && string.Equals(x.Id, y.Id, StringComparison.Ordinal);
+        }
+
+        public int GetHashCode(PID obj)
+        {
+            var address = obj.Address ?? string.Empty;
+            var id = obj.Id ?? string.Empty;
+            return HashCode.Combine(address, id);
+        }
     }
 
     private sealed class PendingInputDrain

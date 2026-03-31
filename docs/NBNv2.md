@@ -880,6 +880,12 @@ When multiple input writes arrive within one tick window, the most recent value 
 External World may also send a vector of values for all inputs (length must == input width).
 Single-value and vector writes must contain finite real numbers; `NaN` and infinities are rejected by IO runtime validation.
 
+Direct runtime state writes are also available for tooling and deterministic evaluation scenarios:
+
+* `RuntimeNeuronPulse` injects one contribution into a specific neuron.
+* `RuntimeNeuronStateWrite` sets one neuron's current buffer and/or accumulator state.
+* `ResetBrainRuntimeState` clears transient neuron buffer and/or accumulator state across the entire Brain without changing the `.nbn` definition or runtime feature toggles such as cost/energy, plasticity, or homeostasis.
+
 ### 13.4 Output mapping
 
 Outputs come from neurons in region 31.

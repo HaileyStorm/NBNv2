@@ -352,6 +352,42 @@ public sealed partial class RegionShardActor
             message.AccumulatorValue);
     }
 
+    private void HandleResetBrainRuntimeState(IContext context, ResetBrainRuntimeState message)
+    {
+        if (!MatchesBrainMessage(message.BrainId))
+        {
+            context.Respond(new IoCommandAck
+            {
+                BrainId = message.BrainId,
+                Command = "reset_brain_runtime_state",
+                Success = false,
+                Message = "brain_id_mismatch"
+            });
+            return;
+        }
+
+        if (!message.ResetBuffer && !message.ResetAccumulator)
+        {
+            context.Respond(new IoCommandAck
+            {
+                BrainId = message.BrainId,
+                Command = "reset_brain_runtime_state",
+                Success = false,
+                Message = "nothing_requested"
+            });
+            return;
+        }
+
+        _state.ResetRuntimeState(message.ResetBuffer, message.ResetAccumulator);
+        context.Respond(new IoCommandAck
+        {
+            BrainId = message.BrainId,
+            Command = "reset_brain_runtime_state",
+            Success = true,
+            Message = $"region={_state.RegionId}"
+        });
+    }
+
     private void CacheComputeDone(TickComputeDone done)
     {
         _recentComputeDone[done.TickId] = done;
