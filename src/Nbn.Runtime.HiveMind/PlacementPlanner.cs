@@ -289,6 +289,7 @@ public static class PlacementPlanner
             .SelectMany(static region => region.Value)
             .Where(static shard => shard.RegionId != NbnConstants.InputRegionId && shard.RegionId != NbnConstants.OutputRegionId)
             .ToArray();
+        var desiredWorkerCount = DetermineDesiredWorkerCount(computeShards, eligibleWorkers.Count);
         var preferGpuWorkload = RegionShardComputeBackendPreferenceResolver.IsGpuExecutionEnabled(computeBackendPreference)
                                 && computeShards.Any(shard => eligibleWorkers.Any(worker => ShouldPreferGpuForShard(
                                     shard,
@@ -296,8 +297,9 @@ public static class PlacementPlanner
                                     worker,
                                     computeBackendPreference,
                                     regionShardGpuNeuronThreshold)));
-        var controlWorker = SelectPrimaryWorker(eligibleWorkers, currentWorkers, preferGpuWorkload);
-        var computeWorkers = SelectComputeWorkers(eligibleWorkers, currentWorkers, computeShards, controlWorker, preferGpuWorkload);
+        var preferCapacityWeightedBrainSpread = desiredWorkerCount == 1 && currentWorkers.Count == 0;
+        var controlWorker = SelectPrimaryWorker(eligibleWorkers, currentWorkers, preferGpuWorkload, preferCapacityWeightedBrainSpread);
+        var computeWorkers = SelectComputeWorkers(eligibleWorkers, currentWorkers, controlWorker, preferGpuWorkload, desiredWorkerCount, preferCapacityWeightedBrainSpread);
         var assignedNeurons = computeWorkers.ToDictionary(static worker => worker.NodeId, static _ => 0);
 
         AddControlAssignment(assignments, brainId, placementEpoch, requestId, controlWorker, ProtoControl.PlacementAssignmentTarget.PlacementTargetBrainRoot, baseDefinition, lastSnapshot, inputWidth, outputWidth, ResolveRegionShardGpuNeuronThreshold(stride, controlWorker, regionShardGpuNeuronThreshold));
@@ -369,19 +371,20 @@ public static class PlacementPlanner
     private static WorkerCandidate SelectPrimaryWorker(
         IReadOnlyList<WorkerCandidate> eligibleWorkers,
         IReadOnlySet<Guid> currentWorkers,
-        bool preferGpu)
-        => OrderWorkersForBrain(eligibleWorkers, currentWorkers, preferGpu).First();
+        bool preferGpu,
+        bool preferCapacityWeightedBrainSpread)
+        => OrderWorkersForBrain(eligibleWorkers, currentWorkers, preferGpu, preferCapacityWeightedBrainSpread).First();
 
     private static IReadOnlyList<WorkerCandidate> SelectComputeWorkers(
         IReadOnlyList<WorkerCandidate> eligibleWorkers,
         IReadOnlySet<Guid> currentWorkers,
-        IReadOnlyList<ShardPlanSpan> computeShards,
         WorkerCandidate controlWorker,
-        bool preferGpu)
+        bool preferGpu,
+        int desiredWorkerCount,
+        bool preferCapacityWeightedBrainSpread)
     {
-        var desiredWorkerCount = DetermineDesiredWorkerCount(computeShards, eligibleWorkers.Count);
         var selected = new List<WorkerCandidate> { controlWorker };
-        foreach (var worker in OrderWorkersForBrain(eligibleWorkers, currentWorkers, preferGpu))
+        foreach (var worker in OrderWorkersForBrain(eligibleWorkers, currentWorkers, preferGpu, preferCapacityWeightedBrainSpread))
         {
             if (selected.Count >= desiredWorkerCount)
             {
@@ -415,8 +418,28 @@ public static class PlacementPlanner
     private static IOrderedEnumerable<WorkerCandidate> OrderWorkersForBrain(
         IEnumerable<WorkerCandidate> workers,
         IReadOnlySet<Guid> currentWorkers,
-        bool preferGpu)
-        => workers
+        bool preferGpu,
+        bool preferCapacityWeightedBrainSpread)
+    {
+        if (preferCapacityWeightedBrainSpread)
+        {
+            return workers
+                .OrderBy(worker => HostedBrainPressureScore(worker, preferGpu))
+                .ThenBy(static worker => worker.ProcessCpuLoadPercent)
+                .ThenByDescending(worker => preferGpu && HasEffectiveGpu(worker) ? 1 : 0)
+                .ThenByDescending(worker => preferGpu ? EffectiveGpuScore(worker) : EffectiveCpuPlacementScore(worker))
+                .ThenByDescending(static worker => EffectiveCpuCores(worker))
+                .ThenByDescending(static worker => EffectiveRamFreeBytes(worker))
+                .ThenByDescending(static worker => EffectiveStorageFreeBytes(worker))
+                .ThenByDescending(static worker => EffectiveGpuScore(worker))
+                .ThenByDescending(static worker => EffectiveVramFreeBytes(worker))
+                .ThenBy(static worker => worker.PeerLatencySampleCount == 0 ? 1 : 0)
+                .ThenBy(static worker => worker.PeerLatencySampleCount > 0 ? worker.AveragePeerLatencyMs : float.MaxValue)
+                .ThenBy(static worker => worker.WorkerAddress ?? string.Empty, StringComparer.Ordinal)
+                .ThenBy(static worker => worker.NodeId);
+        }
+
+        return workers
             .OrderBy(static worker => worker.PeerLatencySampleCount == 0 ? 1 : 0)
             .ThenBy(static worker => worker.PeerLatencySampleCount > 0 ? worker.AveragePeerLatencyMs : float.MaxValue)
             .ThenBy(worker => currentWorkers.Contains(worker.NodeId) ? 0 : 1)
@@ -431,6 +454,7 @@ public static class PlacementPlanner
             .ThenByDescending(static worker => EffectiveVramFreeBytes(worker))
             .ThenBy(static worker => worker.WorkerAddress ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(static worker => worker.NodeId);
+    }
 
     private static WorkerCandidate SelectShardWorker(
         ShardPlanSpan shard,
@@ -570,6 +594,24 @@ public static class PlacementPlanner
 
     private static float EffectiveGpuScore(WorkerCandidate worker)
         => WorkerCapabilityMath.EffectiveGpuScore(worker.GpuScore, worker.GpuComputeLimitPercent);
+
+    private static double HostedBrainPressureScore(WorkerCandidate worker, bool preferGpu)
+    {
+        if (worker.HostedBrainCount <= 0)
+        {
+            return 0d;
+        }
+
+        var capacity = preferGpu && HasEffectiveGpu(worker)
+            ? Math.Max(0f, EffectiveGpuScore(worker))
+            : Math.Max(0f, EffectiveCpuPlacementScore(worker));
+        if (capacity <= 0f)
+        {
+            capacity = Math.Max(1f, EffectiveCpuCores(worker));
+        }
+
+        return worker.HostedBrainCount / capacity;
+    }
 
     private static ulong EffectiveRamFreeBytes(WorkerCandidate worker)
         => WorkerCapabilityMath.EffectiveRamFreeBytes(

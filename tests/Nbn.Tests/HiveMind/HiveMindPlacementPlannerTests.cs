@@ -300,6 +300,94 @@ public sealed class HiveMindPlacementPlannerTests
     }
 
     [Fact]
+    public async Task RequestPlacement_SequentialTinyBrains_Spread_By_HostedPressure_Relative_To_Capacity()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var actor = new HiveMindActor(CreateOptions(workerInventoryStaleAfterMs: 10_000));
+        var hiveMind = root.Spawn(Props.FromProducer(() => actor));
+
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerA = Guid.Parse("f1000000-0000-0000-0000-000000000001");
+        var workerB = Guid.Parse("f1000000-0000-0000-0000-000000000002");
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    workerA,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "worker-a:12040",
+                    rootActorName: "region-host-a",
+                    cpuScore: 80f),
+                BuildWorker(
+                    workerB,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "worker-b:12040",
+                    rootActorName: "region-host-b",
+                    cpuScore: 40f)
+            }
+        });
+
+        var inventory = await root.RequestAsync<PlacementWorkerInventory>(
+            hiveMind,
+            new PlacementWorkerInventoryRequest());
+        var inventoryWorkerIds = inventory.Workers
+            .Select(
+                static worker =>
+                {
+                    Assert.True(worker.WorkerNodeId.TryToGuid(out var workerId));
+                    return workerId;
+                })
+            .ToArray();
+        Assert.Equal(new[] { workerA, workerB }, inventoryWorkerIds);
+
+        SetPeerLatencyMeasurement(actor, workerA, averagePeerLatencyMs: 1.5f, sampleCount: 2, snapshotMs: nowMs);
+        SetPeerLatencyMeasurement(actor, workerB, averagePeerLatencyMs: 25f, sampleCount: 2, snapshotMs: nowMs);
+
+        async Task<Guid> RequestPlacementAsync(string requestId)
+        {
+            var brainId = Guid.NewGuid();
+            var ack = await root.RequestAsync<PlacementAck>(
+                hiveMind,
+                new RequestPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    InputWidth = 2,
+                    OutputWidth = 2,
+                    RequestId = requestId
+                });
+
+            Assert.True(ack.Accepted);
+            return brainId;
+        }
+
+        var brainA = await RequestPlacementAsync("tiny-a");
+        var brainB = await RequestPlacementAsync("tiny-b");
+        var brainC = await RequestPlacementAsync("tiny-c");
+
+        var planA = GetPlannedPlacement(actor, brainA);
+        var planB = GetPlannedPlacement(actor, brainB);
+        var planC = GetPlannedPlacement(actor, brainC);
+
+        Assert.NotNull(planA);
+        Assert.NotNull(planB);
+        Assert.NotNull(planC);
+        Assert.All(planA!.Assignments, assignment => Assert.Equal(workerA, AssignmentWorkerId(assignment)));
+        Assert.All(planB!.Assignments, assignment => Assert.Equal(workerB, AssignmentWorkerId(assignment)));
+        Assert.All(planC!.Assignments, assignment => Assert.Equal(workerA, AssignmentWorkerId(assignment)));
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public void PlacementPlanner_Uses_Only_Eligible_Workers_And_Is_Deterministic()
     {
         var workerA = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
@@ -893,6 +981,31 @@ public sealed class HiveMindPlacementPlannerTests
         Assert.NotNull(plannedPlacementProperty);
 
         return plannedPlacementProperty!.GetValue(brainState) as PlacementPlanner.PlacementPlanningResult;
+    }
+
+    private static void SetPeerLatencyMeasurement(
+        HiveMindActor actor,
+        Guid workerId,
+        float averagePeerLatencyMs,
+        int sampleCount,
+        long snapshotMs)
+    {
+        var catalogField = typeof(HiveMindActor).GetField("_workerCatalog", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(catalogField);
+
+        var catalog = catalogField!.GetValue(actor);
+        Assert.NotNull(catalog);
+
+        var args = new object?[] { workerId, null };
+        var found = (bool)catalog!.GetType().GetMethod("TryGetValue")!.Invoke(catalog, args)!;
+        Assert.True(found);
+
+        var entry = args[1];
+        Assert.NotNull(entry);
+
+        entry!.GetType().GetProperty("AveragePeerLatencyMs")!.SetValue(entry, averagePeerLatencyMs);
+        entry.GetType().GetProperty("PeerLatencySampleCount")!.SetValue(entry, sampleCount);
+        entry.GetType().GetProperty("PeerLatencySnapshotMs")!.SetValue(entry, snapshotMs);
     }
 
     private static string AssignmentSignature(PlacementAssignment assignment)
