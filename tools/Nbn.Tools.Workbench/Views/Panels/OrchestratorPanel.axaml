@@ -260,6 +260,7 @@
                         <Border Margin="12,0,0,0"
                                 Padding="8,0"
                                 HorizontalAlignment="Left"
+                                VerticalAlignment="Top"
                                 Background="#FFFFFF">
                           <TextBlock Text="{Binding NodeLabel}" Classes="row-title" />
                         </Border>
@@ -311,6 +312,7 @@
                         <Border Margin="12,0,0,0"
                                 Padding="8,0"
                                 HorizontalAlignment="Left"
+                                VerticalAlignment="Top"
                                 Background="#FFFFFF">
                           <TextBlock Text="{Binding NodeLabel}" Classes="row-title" />
                         </Border>
