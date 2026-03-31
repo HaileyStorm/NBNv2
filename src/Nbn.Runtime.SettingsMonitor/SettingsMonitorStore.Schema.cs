@@ -147,6 +147,12 @@ ALTER TABLE brains
 ADD COLUMN updated_ms INTEGER NOT NULL DEFAULT 0;
 """;
 
+    private const string BackfillBrainsUpdatedMsSql = """
+UPDATE brains
+SET updated_ms = @updated_ms
+WHERE updated_ms <= 0;
+""";
+
     private static readonly (string ColumnName, string AlterSql)[] NodeCapabilitiesColumnMigrations =
     [
         ("storage_free_bytes", AddStorageFreeBytesColumnSql),
@@ -183,6 +189,7 @@ ADD COLUMN updated_ms INTEGER NOT NULL DEFAULT 0;
         await connection.ExecuteAsync(new CommandDefinition(CreateSchemaSql, cancellationToken: cancellationToken));
         await EnsureNodeCapabilitiesColumnsAsync(connection, cancellationToken);
         await EnsureBrainsColumnsAsync(connection, cancellationToken);
+        await BackfillLegacyBrainsUpdatedMsAsync(connection, NowMs(), cancellationToken);
     }
 
     private static async Task EnsureNodeCapabilitiesColumnsAsync(
@@ -249,5 +256,17 @@ ADD COLUMN updated_ms INTEGER NOT NULL DEFAULT 0;
 
         await connection.ExecuteAsync(new CommandDefinition(alterSql, cancellationToken: cancellationToken));
         knownColumns.Add(columnName);
+    }
+
+    private static async Task BackfillLegacyBrainsUpdatedMsAsync(
+        SqliteConnection connection,
+        long updatedMs,
+        CancellationToken cancellationToken)
+    {
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                BackfillBrainsUpdatedMsSql,
+                new { updated_ms = updatedMs },
+                cancellationToken: cancellationToken));
     }
 }

@@ -79,6 +79,22 @@ public sealed partial class IoGatewayActor
             return;
         }
 
+        var resetInputCoordinatorState = message.ResetAccumulator;
+        BrainIoEntry? entry = null;
+        if (resetInputCoordinatorState)
+        {
+            if (!TryGetBrainEntry(message, out entry))
+            {
+                entry = await EnsureBrainEntryAsync(context, brainId).ConfigureAwait(false);
+            }
+
+            if (entry is null)
+            {
+                RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "brain_input_unavailable");
+                return;
+            }
+        }
+
         var routerPid = await ResolveRouterPidAsync(context, brainId, allowCached: false).ConfigureAwait(false);
         if (routerPid is null)
         {
@@ -88,14 +104,43 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            var ack = await context.RequestAsync<IoCommandAck>(routerPid, message, DefaultRequestTimeout).ConfigureAwait(false);
-            if (ack is null)
+            var routerAck = await context.RequestAsync<IoCommandAck>(routerPid, message, DefaultRequestTimeout).ConfigureAwait(false);
+            if (routerAck is null)
             {
                 RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "brain_router_empty_response");
                 return;
             }
 
-            context.Respond(ack);
+            if (!routerAck.Success)
+            {
+                context.Respond(routerAck);
+                return;
+            }
+
+            if (resetInputCoordinatorState)
+            {
+                var inputAck = await DispatchCoordinatorMessageAsync(context, entry!.InputPid, message).ConfigureAwait(false);
+                if (inputAck is null)
+                {
+                    RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "brain_input_empty_response");
+                    return;
+                }
+
+                if (!inputAck.Success)
+                {
+                    RespondCommandAck(
+                        context,
+                        message.BrainId,
+                        "reset_brain_runtime_state",
+                        success: false,
+                        $"brain_input_reset_failed:{inputAck.Message}");
+                    return;
+                }
+
+                entry.InputState.ResetRuntimeState(resetAccumulator: true);
+            }
+
+            context.Respond(routerAck);
         }
         catch (Exception ex)
         {
@@ -443,6 +488,8 @@ public sealed partial class IoGatewayActor
             case SetPlasticityEnabled plasticity when TryGetBrainId(plasticity.BrainId, out var brainId):
                 return _brains.TryGetValue(brainId, out entry!);
             case SetHomeostasisEnabled homeostasis when TryGetBrainId(homeostasis.BrainId, out var brainId):
+                return _brains.TryGetValue(brainId, out entry!);
+            case ResetBrainRuntimeState resetState when TryGetBrainId(resetState.BrainId, out var brainId):
                 return _brains.TryGetValue(brainId, out entry!);
         }
 

@@ -558,6 +558,91 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
+    public async Task ResetBrainRuntimeState_ClearsInputCoordinatorState_Across_CoordinatorMoves()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPidA = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(
+            brainId,
+            3,
+            ProtoControl.InputCoordinatorMode.ReplayLatestVector)));
+        var outputPidA = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+        var inputPidB = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(
+            brainId,
+            3,
+            ProtoControl.InputCoordinatorMode.ReplayLatestVector)));
+        var outputPidB = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+        var routerPid = root.Spawn(Props.FromProducer(() => new InputRouterProbeActor(brainId)));
+        var hivePid = root.Spawn(Props.FromProducer(() => new BrainIoInfoHiveProbeActor(
+            brainId,
+            inputPidA,
+            outputPidA,
+            routerPid,
+            inputWidth: 3,
+            outputWidth: 1,
+            inputMode: ProtoControl.InputCoordinatorMode.ReplayLatestVector)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hivePid)));
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 3,
+            OutputWidth = 1,
+            InputCoordinatorMode = ProtoControl.InputCoordinatorMode.ReplayLatestVector,
+            InputCoordinatorPid = PidLabel(inputPidA),
+            OutputCoordinatorPid = PidLabel(outputPidA),
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = false
+        });
+        root.Send(gateway, new InputVector
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Values = { 0.25f, 0.5f, 0.75f }
+        });
+
+        var resetAck = await root.RequestAsync<IoCommandAck>(
+            gateway,
+            new ResetBrainRuntimeState
+            {
+                BrainId = brainId.ToProtoUuid(),
+                ResetBuffer = true,
+                ResetAccumulator = true
+            });
+        Assert.True(resetAck.Success);
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 3,
+            OutputWidth = 1,
+            InputCoordinatorMode = ProtoControl.InputCoordinatorMode.ReplayLatestVector,
+            InputCoordinatorPid = PidLabel(inputPidB),
+            OutputCoordinatorPid = PidLabel(outputPidB),
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = false
+        });
+
+        var drain = await root.RequestAsync<InputDrain>(
+            gateway,
+            new DrainInputs
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TickId = 77
+            });
+
+        Assert.Equal([0f, 0f, 0f], drain.Contribs.Select(static contrib => contrib.Value).ToArray());
+
+        var routerSnapshot = await root.RequestAsync<InputRouterProbeActor.Snapshot>(
+            routerPid,
+            new InputRouterProbeActor.GetSnapshot());
+        Assert.Equal(1, routerSnapshot.ResetCount);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task QueuedOutputUnsubscribe_BeforeBrainRegistration_Prevents_ReplayedSubscription()
     {
         var system = new ActorSystem();
@@ -948,6 +1033,7 @@ public sealed class IoGatewayDistributedCoordinatorTests
         private readonly Guid _brainId;
         private int _inputVectorCount;
         private int _registerIoGatewayCount;
+        private int _resetCount;
         private bool _hasIoGatewayRegistration;
 
         public InputRouterProbeActor(Guid brainId)
@@ -958,7 +1044,7 @@ public sealed class IoGatewayDistributedCoordinatorTests
         public sealed record GetSnapshot;
         public sealed record ForgetIoGatewayRegistration;
 
-        public sealed record Snapshot(int InputVectorCount, int RegisterIoGatewayCount, bool HasIoGatewayRegistration);
+        public sealed record Snapshot(int InputVectorCount, int RegisterIoGatewayCount, bool HasIoGatewayRegistration, int ResetCount);
 
         public Task ReceiveAsync(IContext context)
         {
@@ -966,6 +1052,18 @@ public sealed class IoGatewayDistributedCoordinatorTests
             {
                 case InputVector input when input.BrainId.TryToGuid(out var brainId) && brainId == _brainId:
                     _inputVectorCount++;
+                    break;
+                case ResetBrainRuntimeState reset
+                    when reset.BrainId.TryToGuid(out var resetBrainId)
+                         && resetBrainId == _brainId:
+                    _resetCount++;
+                    context.Respond(new IoCommandAck
+                    {
+                        BrainId = reset.BrainId,
+                        Command = "reset_brain_runtime_state",
+                        Success = true,
+                        Message = "router_reset_applied"
+                    });
                     break;
                 case RegisterIoGateway register when register.BrainId.TryToGuid(out var registeredBrainId) && registeredBrainId == _brainId:
                     _registerIoGatewayCount++;
@@ -975,7 +1073,7 @@ public sealed class IoGatewayDistributedCoordinatorTests
                     _hasIoGatewayRegistration = false;
                     break;
                 case GetSnapshot:
-                    context.Respond(new Snapshot(_inputVectorCount, _registerIoGatewayCount, _hasIoGatewayRegistration));
+                    context.Respond(new Snapshot(_inputVectorCount, _registerIoGatewayCount, _hasIoGatewayRegistration, _resetCount));
                     break;
             }
 

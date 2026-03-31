@@ -200,7 +200,7 @@ public sealed partial class OrchestratorPanelViewModel
                 .Select(static entry => entry.Item)
                 .ToList();
             RecordBrainTerminations(brainListAll);
-            _brainsUpdated?.Invoke(brainRenderSelection.VisibleBrainList);
+            _brainsUpdated?.Invoke(brainListAll);
 
             if (force)
             {

@@ -147,6 +147,18 @@ public sealed partial class BrainSignalRouterActor
             return;
         }
 
+        if (_pendingOutboxes.Count > 0 || _pendingDeliveries.Count > 0 || _pendingInputDrains.Count > 0)
+        {
+            context.Respond(new IoCommandAck
+            {
+                BrainId = message.BrainId,
+                Command = "reset_brain_runtime_state",
+                Success = false,
+                Message = "tick_phase_in_progress"
+            });
+            return;
+        }
+
         if (_routingTable.Count == 0)
         {
             context.Respond(new IoCommandAck

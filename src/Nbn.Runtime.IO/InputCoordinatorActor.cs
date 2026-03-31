@@ -59,6 +59,9 @@ public sealed class InputCoordinatorActor : IActor
             case DrainInputs message:
                 Drain(context, message);
                 break;
+            case ResetBrainRuntimeState message:
+                HandleRuntimeStateReset(context, message);
+                break;
             case UpdateInputWidth message:
                 ApplyInputWidthUpdate(message);
                 Respond(context, "update_input_width", success: true);
@@ -230,6 +233,25 @@ public sealed class InputCoordinatorActor : IActor
         Array.Resize(ref _values, requestedWidth);
         Array.Resize(ref _dirty, requestedWidth);
         _inputWidth = requestedWidth;
+    }
+
+    private void HandleRuntimeStateReset(IContext context, ResetBrainRuntimeState message)
+    {
+        if (!TryMatchBrain(message.BrainId))
+        {
+            Respond(context, "reset_brain_runtime_state", success: false);
+            return;
+        }
+
+        if (!message.ResetAccumulator)
+        {
+            Respond(context, "reset_brain_runtime_state", success: true);
+            return;
+        }
+
+        Array.Clear(_values);
+        ClearDirtyState();
+        Respond(context, "reset_brain_runtime_state", success: true);
     }
 
     private void ClearDirtyState()

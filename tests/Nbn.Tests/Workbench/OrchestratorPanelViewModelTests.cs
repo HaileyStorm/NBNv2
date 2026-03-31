@@ -3006,7 +3006,7 @@ public class OrchestratorPanelViewModelTests
         await vm.RefreshSettingsAsync();
 
         Assert.NotNull(publishedBrains);
-        Assert.Equal(64, publishedBrains!.Count);
+        Assert.Equal(70, publishedBrains!.Count);
         Assert.Equal(64, client.GetPlacementLifecycleCallCount);
         Assert.Equal(64, client.RequestPlacementReconcileCallCount);
         Assert.True(vm.CanShowMoreHostedActors);
@@ -3015,7 +3015,7 @@ public class OrchestratorPanelViewModelTests
 
         vm.ShowMoreHostedActorsCommand.Execute(null);
         await WaitForAsync(
-            () => publishedBrains?.Count == 70 && vm.Actors.Count == 70 && !vm.CanShowMoreHostedActors,
+            () => vm.Actors.Count == 70 && !vm.CanShowMoreHostedActors,
             timeoutMs: 5000);
 
         Assert.Equal(134, client.GetPlacementLifecycleCallCount);
@@ -3092,8 +3092,8 @@ public class OrchestratorPanelViewModelTests
         await vm.RefreshSettingsAsync();
 
         Assert.NotNull(publishedBrains);
-        Assert.Equal(64, publishedBrains!.Count);
-        Assert.Equal(54, publishedBrains.Count(entry => string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase)));
+        Assert.Equal(80, publishedBrains!.Count);
+        Assert.Equal(70, publishedBrains.Count(entry => string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase)));
         Assert.Equal(10, client.GetPlacementLifecycleCallCount);
         Assert.Equal(10, client.RequestPlacementReconcileCallCount);
         Assert.False(vm.CanShowMoreHostedActors);

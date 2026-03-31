@@ -96,6 +96,49 @@ public class BrainSignalRouterInputDrainTests
     }
 
     [Fact]
+    public async Task ResetBrainRuntimeState_IsRejected_While_TickDelivery_IsPending()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var ioPid = root.Spawn(Props.FromProducer(() => new SilentIoDrainActor(brainId)));
+        var inputShardId = ShardId32.From(NbnConstants.InputRegionId, 0);
+        var inputShardPid = root.Spawn(Props.FromProducer(() => new IgnoreActor()));
+
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(inputShardId.Value, inputShardPid)
+        })));
+
+        root.Send(router, new RegisterIoGateway
+        {
+            BrainId = brainId.ToProtoUuid(),
+            IoGatewayPid = PidLabel(ioPid)
+        });
+
+        var tick1Task = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var resetAck = await root.RequestAsync<IoCommandAck>(
+                router,
+                new ResetBrainRuntimeState
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    ResetBuffer = true,
+                    ResetAccumulator = true
+                })
+            .WaitAsync(timeoutCts.Token);
+
+        Assert.False(resetAck.Success);
+        Assert.Equal("tick_phase_in_progress", resetAck.Message);
+
+        await AssertTaskStillPending(tick1Task, TimeSpan.FromMilliseconds(150));
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RuntimeNeuronCommands_AreForwarded_To_All_TargetRegionShards()
     {
         var system = new ActorSystem();

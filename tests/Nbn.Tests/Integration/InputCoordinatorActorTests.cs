@@ -245,6 +245,94 @@ public sealed class InputCoordinatorActorTests
     }
 
     [Fact]
+    public async Task ResetRuntimeState_WithAccumulatorReset_ClearsReplayLatestVectorState()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        try
+        {
+            var coordinator = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(
+                brainId,
+                inputWidth: 3,
+                InputCoordinatorMode.ReplayLatestVector)));
+
+            var initialVector = await root.RequestAsync<IoCommandAck>(coordinator, new InputVector
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Values = { 1f, 2f, 3f }
+            });
+            Assert.True(initialVector.Success);
+
+            var resetAck = await root.RequestAsync<IoCommandAck>(coordinator, new ResetBrainRuntimeState
+            {
+                BrainId = brainId.ToProtoUuid(),
+                ResetBuffer = false,
+                ResetAccumulator = true
+            });
+            Assert.True(resetAck.Success);
+
+            var drain = await root.RequestAsync<InputDrain>(coordinator, new DrainInputs
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TickId = 7
+            });
+
+            Assert.Equal([0f, 0f, 0f], drain.Contribs.Select(static contrib => contrib.Value).ToArray());
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task ResetRuntimeState_BufferOnly_PreservesPendingCoordinatorInputs()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        try
+        {
+            var coordinator = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(
+                brainId,
+                inputWidth: 3,
+                InputCoordinatorMode.DirtyOnChange)));
+
+            root.Send(coordinator, new InputWrite
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputIndex = 2,
+                Value = 0.75f
+            });
+
+            var resetAck = await root.RequestAsync<IoCommandAck>(coordinator, new ResetBrainRuntimeState
+            {
+                BrainId = brainId.ToProtoUuid(),
+                ResetBuffer = true,
+                ResetAccumulator = false
+            });
+            Assert.True(resetAck.Success);
+
+            var drain = await root.RequestAsync<InputDrain>(coordinator, new DrainInputs
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TickId = 8
+            });
+
+            var contribution = Assert.Single(drain.Contribs);
+            Assert.Equal(2u, contribution.TargetNeuronId);
+            Assert.Equal(0.75f, contribution.Value);
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
     public async Task NonFiniteInputs_AreRejected_And_DoNotMutate_State()
     {
         var system = new ActorSystem();

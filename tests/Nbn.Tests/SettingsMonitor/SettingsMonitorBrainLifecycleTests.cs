@@ -126,9 +126,11 @@ public sealed class SettingsMonitorBrainLifecycleTests
     }
 
     [Fact]
-    public async Task InitializeAsync_MigratesLegacyBrainsTable_ToIncludeUpdatedMs()
+    public async Task InitializeAsync_MigratesLegacyBrainsTable_ToIncludeUpdatedMs_And_BackfillsLegacyRows()
     {
         using var db = new TempDatabaseScope("settings-monitor.db");
+        var timeProvider = new MutableTimeProvider(1_000_000);
+        var legacyDeadBrainId = Guid.NewGuid();
         await using (var connection = new SqliteConnection($"Data Source={db.DatabasePath}"))
         {
             await connection.OpenAsync();
@@ -144,15 +146,41 @@ public sealed class SettingsMonitorBrainLifecycleTests
                     notes TEXT NULL
                 );
                 """);
+            await connection.ExecuteAsync(
+                """
+                INSERT INTO brains (brain_id, base_nbn_sha256, last_snapshot_sha256, spawned_ms, last_tick_id, state, notes)
+                VALUES (@brain_id, NULL, NULL, 250, 12, 'Dead', NULL);
+                """,
+                new { brain_id = legacyDeadBrainId.ToString("D") });
         }
 
-        var store = new SettingsMonitorStore(db.DatabasePath);
+        var store = new SettingsMonitorStore(db.DatabasePath, timeProvider);
         await store.InitializeAsync();
 
         await using var migratedConnection = new SqliteConnection($"Data Source={db.DatabasePath}");
         await migratedConnection.OpenAsync();
         var columns = (await migratedConnection.QueryAsync<string>("SELECT name FROM pragma_table_info('brains');")).ToList();
+        var updatedMs = await migratedConnection.ExecuteScalarAsync<long>(
+            "SELECT updated_ms FROM brains WHERE brain_id = @brain_id;",
+            new { brain_id = legacyDeadBrainId.ToString("D") });
 
         Assert.Contains("updated_ms", columns, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(1_000_000, updatedMs);
+
+        var pruneResult = await store.PruneStaleDeadBrainsAsync(cutoffMs: 999_999);
+        Assert.Equal(0, pruneResult.DeletedBrains);
+        Assert.NotNull(await store.GetBrainAsync(legacyDeadBrainId));
+    }
+
+    private sealed class MutableTimeProvider : TimeProvider
+    {
+        private DateTimeOffset _utcNow;
+
+        public MutableTimeProvider(long utcNowMs)
+        {
+            _utcNow = DateTimeOffset.FromUnixTimeMilliseconds(utcNowMs);
+        }
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
     }
 }

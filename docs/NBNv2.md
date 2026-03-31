@@ -1781,6 +1781,7 @@ Tables (recommended, values not exhaustive):
 * last_snapshot_sha256 BLOB (32) NULL
 * spawned_ms INTEGER
 * last_tick_id INTEGER
+* updated_ms INTEGER
 * state TEXT (Active/Paused/Recovering/Dead)
 * notes TEXT NULL
 

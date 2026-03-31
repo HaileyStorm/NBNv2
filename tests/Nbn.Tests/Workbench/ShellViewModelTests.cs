@@ -76,6 +76,36 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task OnBrainsUpdated_FansOutFullSharedBrainList_ToWorkbenchPanels()
+    {
+        var client = new FakeWorkbenchClient();
+        var brains = Enumerable.Range(0, 70)
+            .Select(index => new BrainListItem(Guid.NewGuid(), $"Active-{index}", true))
+            .ToArray();
+
+        await using var shell = new ShellViewModel(client, autoConnect: false);
+
+        var method = typeof(ShellViewModel).GetMethod(
+            "OnBrainsUpdated",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        method!.Invoke(shell, new object[] { brains });
+
+        await WaitForAsync(() =>
+            shell.Viz.KnownBrains.Count == 70
+            && shell.Repro.ActiveBrains.Count == 70
+            && shell.Speciation.SimActiveBrains.Count == 70
+            && shell.Io.KnownBrains.Count == 70);
+
+        Assert.Equal(70, shell.Viz.KnownBrains.Count);
+        Assert.Equal(70, shell.Repro.ActiveBrains.Count);
+        Assert.Equal(70, shell.Speciation.SimActiveBrains.Count);
+        Assert.Equal(70, shell.Io.KnownBrains.Count);
+        Assert.Equal("Active brains: 70", shell.Io.ActiveBrainsSummary);
+    }
+
+    [Fact]
     public async Task OnSettingChanged_UpdatesReproDefaultsFromExternalSettings()
     {
         var client = new FakeWorkbenchClient();

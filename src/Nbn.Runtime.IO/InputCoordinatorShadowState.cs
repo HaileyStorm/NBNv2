@@ -110,6 +110,17 @@ internal sealed class InputCoordinatorShadowState
         }
     }
 
+    public void ResetRuntimeState(bool resetAccumulator)
+    {
+        if (!resetAccumulator)
+        {
+            return;
+        }
+
+        Array.Clear(_values);
+        ClearDirtyState();
+    }
+
     public async Task ReplayToAsync(Func<object, Task> dispatchAsync)
     {
         if (_mode == ProtoControl.InputCoordinatorMode.ReplayLatestVector)
