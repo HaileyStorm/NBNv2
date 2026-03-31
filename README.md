@@ -49,6 +49,7 @@ NBN is not a gradient-descent/backprop training framework.
 
 ## Installation
 
+- Download installers and portable archives from the [latest release](https://github.com/HaileyStorm/NBNv2/releases/latest) or browse all [releases](https://github.com/HaileyStorm/NBNv2/releases).
 - Full-suite artifacts are `nbn-suite-<version>-win-x64-setup.exe`, `nbn-suite_<version>_amd64.deb`, and `nbn-suite-<version>-linux-x64-installer.run`.
 - Worker-only artifacts are `nbn-worker-<version>-win-x64-setup.exe`, `nbn-worker_<version>_amd64.deb`, `nbn-worker-<version>-linux-x64-installer.run`, `nbn-worker-<version>-win-x64-portable.zip`, and `nbn-worker-<version>-linux-x64-portable.tar.gz`.
 - Full-suite installers place files under `C:\Program Files\NBN\` on Windows and `/opt/nbn/` on Linux. Worker-only installers use `C:\Program Files\NBN Worker\` and `/opt/nbn-worker/`.
