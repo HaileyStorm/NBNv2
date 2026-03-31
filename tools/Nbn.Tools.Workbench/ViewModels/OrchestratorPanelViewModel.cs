@@ -55,6 +55,7 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private readonly Dictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendProbeCacheEntry> _workerBrainBackendCache = new();
     private readonly WorkbenchSystemLoadHistoryTracker _systemLoadHistory = new();
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private bool _suspendReconnectRequests;
     private string _statusMessage = "Idle";
     private string _settingsLaunchStatus = "Idle";
     private string _hiveMindLaunchStatus = "Idle";

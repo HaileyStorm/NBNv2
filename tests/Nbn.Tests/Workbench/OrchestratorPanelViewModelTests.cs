@@ -168,6 +168,55 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task StartAllCommand_ReconnectsOnce_AfterAllLaunchesComplete()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsPortText = "12010",
+            HiveMindPortText = "12020",
+            WorkerPortText = "12041",
+            ReproPortText = "12070",
+            SpeciationPortText = "12080",
+            IoPortText = "12050",
+            ObsPortText = "12060",
+            WorkerCpuLimitPercentText = "80",
+            WorkerRamLimitPercentText = "70",
+            WorkerGpuLimitPercentText = "60",
+            WorkerVramLimitPercentText = "50"
+        };
+
+        var launchPreparer = new SequencedLocalProjectLaunchPreparer(
+            Enumerable.Repeat(
+                    new LocalProjectLaunchPreparation(true, CreateLongRunningProcessStartInfo(), "Prepared."),
+                    7)
+                .ToArray());
+        var reconnectCount = 0;
+        var vm = CreateViewModel(
+            connections,
+            new FakeWorkbenchClient(),
+            launchPreparer,
+            connectAll: () =>
+            {
+                reconnectCount++;
+                return Task.CompletedTask;
+            });
+
+        try
+        {
+            vm.StartAllCommand.Execute(null);
+
+            await WaitForAsync(() => string.Equals(vm.StatusMessage, "Start All completed.", StringComparison.Ordinal), timeoutMs: 10000);
+
+            Assert.Equal(7, launchPreparer.CallCount);
+            Assert.Equal(1, reconnectCount);
+        }
+        finally
+        {
+            await vm.StopAllAsyncForShutdown();
+        }
+    }
+
+    [Fact]
     public async Task StartSpeciationServiceAsync_WhenLaunchPreparationFails_ReportsFailure()
     {
         var connections = new ConnectionViewModel

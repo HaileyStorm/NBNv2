@@ -363,84 +363,92 @@ public sealed partial class OrchestratorPanelViewModel
     private async Task StartAllAsync()
     {
         var rollbackActions = new List<Func<Task>>();
-
-        if (!await StartAllStepAsync(
-                StartSettingsMonitorAsync,
-                _settingsRunner,
-                () => SettingsLaunchStatus,
-                value => SettingsLaunchStatus = value,
-                "SettingsMonitor",
-                rollbackActions).ConfigureAwait(false))
+        _suspendReconnectRequests = true;
+        try
         {
-            return;
+            if (!await StartAllStepAsync(
+                    StartSettingsMonitorAsync,
+                    _settingsRunner,
+                    () => SettingsLaunchStatus,
+                    value => SettingsLaunchStatus = value,
+                    "SettingsMonitor",
+                    rollbackActions).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            if (!await StartAllStepAsync(
+                    StartHiveMindAsync,
+                    _hiveMindRunner,
+                    () => HiveMindLaunchStatus,
+                    value => HiveMindLaunchStatus = value,
+                    "HiveMind",
+                    rollbackActions).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            if (!await StartAllStepAsync(
+                    StartWorkerAsync,
+                    _workerRunner,
+                    () => WorkerLaunchStatus,
+                    value => WorkerLaunchStatus = value,
+                    "WorkerNode",
+                    rollbackActions).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            if (!await StartAllStepAsync(
+                    StartReproAsync,
+                    _reproRunner,
+                    () => ReproLaunchStatus,
+                    value => ReproLaunchStatus = value,
+                    "Reproduction",
+                    rollbackActions).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            if (!await StartAllStepAsync(
+                    StartSpeciationAsync,
+                    _speciationRunner,
+                    () => SpeciationLaunchStatus,
+                    value => SpeciationLaunchStatus = value,
+                    "Speciation",
+                    rollbackActions).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            if (!await StartAllStepAsync(
+                    StartIoAsync,
+                    _ioRunner,
+                    () => IoLaunchStatus,
+                    value => IoLaunchStatus = value,
+                    "IoGateway",
+                    rollbackActions).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            if (!await StartAllStepAsync(
+                    StartObsAsync,
+                    _obsRunner,
+                    () => ObsLaunchStatus,
+                    value => ObsLaunchStatus = value,
+                    "Observability",
+                    rollbackActions).ConfigureAwait(false))
+            {
+                return;
+            }
+        }
+        finally
+        {
+            _suspendReconnectRequests = false;
         }
 
-        if (!await StartAllStepAsync(
-                StartHiveMindAsync,
-                _hiveMindRunner,
-                () => HiveMindLaunchStatus,
-                value => HiveMindLaunchStatus = value,
-                "HiveMind",
-                rollbackActions).ConfigureAwait(false))
-        {
-            return;
-        }
-
-        if (!await StartAllStepAsync(
-                StartWorkerAsync,
-                _workerRunner,
-                () => WorkerLaunchStatus,
-                value => WorkerLaunchStatus = value,
-                "WorkerNode",
-                rollbackActions).ConfigureAwait(false))
-        {
-            return;
-        }
-
-        if (!await StartAllStepAsync(
-                StartReproAsync,
-                _reproRunner,
-                () => ReproLaunchStatus,
-                value => ReproLaunchStatus = value,
-                "Reproduction",
-                rollbackActions).ConfigureAwait(false))
-        {
-            return;
-        }
-
-        if (!await StartAllStepAsync(
-                StartSpeciationAsync,
-                _speciationRunner,
-                () => SpeciationLaunchStatus,
-                value => SpeciationLaunchStatus = value,
-                "Speciation",
-                rollbackActions).ConfigureAwait(false))
-        {
-            return;
-        }
-
-        if (!await StartAllStepAsync(
-                StartIoAsync,
-                _ioRunner,
-                () => IoLaunchStatus,
-                value => IoLaunchStatus = value,
-                "IoGateway",
-                rollbackActions).ConfigureAwait(false))
-        {
-            return;
-        }
-
-        if (!await StartAllStepAsync(
-                StartObsAsync,
-                _obsRunner,
-                () => ObsLaunchStatus,
-                value => ObsLaunchStatus = value,
-                "Observability",
-                rollbackActions).ConfigureAwait(false))
-        {
-            return;
-        }
-
+        await TriggerReconnectAsync().ConfigureAwait(false);
         StatusMessage = "Start All completed.";
     }
 
@@ -529,7 +537,7 @@ public sealed partial class OrchestratorPanelViewModel
 
     private async Task TriggerReconnectAsync()
     {
-        if (_connectAll is null)
+        if (_connectAll is null || _suspendReconnectRequests)
         {
             return;
         }
