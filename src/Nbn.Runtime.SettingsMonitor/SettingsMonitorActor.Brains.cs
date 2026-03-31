@@ -88,7 +88,7 @@ public sealed partial class SettingsMonitorActor
 
         var tasks = new List<Task>(3)
         {
-            _store.UpsertBrainAsync(brainId, state, spawnedMs, lastTickId)
+            _store.UpsertBrainAsync(brainId, state, spawnedMs, lastTickId, updatedMs: spawnedMs)
         };
 
         if (nodeId != Guid.Empty && !string.IsNullOrWhiteSpace(nodeAddress))
@@ -187,7 +187,7 @@ public sealed partial class SettingsMonitorActor
         }
 
         var timeMs = message.TimeMs > 0 ? (long)message.TimeMs : NowMs();
-        var updateTask = _store.UpdateBrainStateAsync(brainId, "Dead");
+        var updateTask = _store.UpdateBrainStateAsync(brainId, "Dead", updatedMs: timeMs);
         var controllerTask = _store.MarkBrainControllerOfflineAsync(brainId, timeMs);
 
         context.ReenterAfter(Task.WhenAll(updateTask, controllerTask), completed =>

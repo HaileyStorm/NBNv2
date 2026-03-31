@@ -35,6 +35,7 @@ INSERT INTO brains (
     last_snapshot_sha256,
     spawned_ms,
     last_tick_id,
+    updated_ms,
     state,
     notes
 ) VALUES (
@@ -43,6 +44,7 @@ INSERT INTO brains (
     @last_snapshot_sha256,
     @spawned_ms,
     @last_tick_id,
+    @updated_ms,
     @state,
     @notes
 )
@@ -51,13 +53,15 @@ ON CONFLICT(brain_id) DO UPDATE SET
     last_snapshot_sha256 = COALESCE(excluded.last_snapshot_sha256, brains.last_snapshot_sha256),
     spawned_ms = excluded.spawned_ms,
     last_tick_id = excluded.last_tick_id,
+    updated_ms = excluded.updated_ms,
     state = excluded.state,
     notes = COALESCE(excluded.notes, brains.notes);
 """;
 
     private const string UpdateBrainStateSql = """
 UPDATE brains
-SET state = @state,
+SET updated_ms = @updated_ms,
+    state = @state,
     notes = COALESCE(@notes, notes)
 WHERE brain_id = @brain_id
   AND (state <> 'Dead' OR @state = 'Dead');
@@ -65,7 +69,8 @@ WHERE brain_id = @brain_id
 
     private const string UpdateBrainTickSql = """
 UPDATE brains
-SET last_tick_id = @last_tick_id
+SET last_tick_id = @last_tick_id,
+    updated_ms = @updated_ms
 WHERE brain_id = @brain_id
   AND state <> 'Dead';
 """;
@@ -124,6 +129,22 @@ SELECT
     notes AS Notes
 FROM brains
 ORDER BY brain_id;
+""";
+
+    private const string DeleteStaleDeadBrainControllersSql = """
+DELETE FROM brain_controllers
+WHERE brain_id IN (
+    SELECT brain_id
+    FROM brains
+    WHERE state = 'Dead'
+      AND updated_ms <= @cutoff_ms
+);
+""";
+
+    private const string DeleteStaleDeadBrainsSql = """
+DELETE FROM brains
+WHERE state = 'Dead'
+  AND updated_ms <= @cutoff_ms;
 """;
 
     /// <summary>
@@ -193,6 +214,7 @@ ORDER BY brain_id;
     /// <param name="baseNbnSha256">Optional base artifact hash.</param>
     /// <param name="lastSnapshotSha256">Optional last snapshot artifact hash.</param>
     /// <param name="notes">Optional operator-visible notes.</param>
+    /// <param name="updatedMs">Optional update timestamp used for retention and freshness ordering.</param>
     /// <param name="cancellationToken">Cancels the database write.</param>
     public async Task UpsertBrainAsync(
         Guid brainId,
@@ -202,11 +224,13 @@ ORDER BY brain_id;
         byte[]? baseNbnSha256 = null,
         byte[]? lastSnapshotSha256 = null,
         string? notes = null,
+        long? updatedMs = null,
         CancellationToken cancellationToken = default)
     {
         ThrowIfEmptyGuid(brainId, nameof(brainId), "BrainId");
         ThrowIfNullOrWhiteSpace(state, nameof(state), "State");
 
+        var observedMs = updatedMs ?? NowMs();
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await connection.ExecuteAsync(
             new CommandDefinition(
@@ -218,6 +242,7 @@ ORDER BY brain_id;
                     last_snapshot_sha256 = lastSnapshotSha256,
                     spawned_ms = spawnedMs,
                     last_tick_id = lastTickId,
+                    updated_ms = observedMs,
                     state,
                     notes
                 },
@@ -230,16 +255,19 @@ ORDER BY brain_id;
     /// <param name="brainId">Brain identifier to update.</param>
     /// <param name="state">New runtime state label.</param>
     /// <param name="notes">Optional replacement notes when provided.</param>
+    /// <param name="updatedMs">Optional update timestamp used for retention and freshness ordering.</param>
     /// <param name="cancellationToken">Cancels the database write.</param>
     public async Task UpdateBrainStateAsync(
         Guid brainId,
         string state,
         string? notes = null,
+        long? updatedMs = null,
         CancellationToken cancellationToken = default)
     {
         ThrowIfEmptyGuid(brainId, nameof(brainId), "BrainId");
         ThrowIfNullOrWhiteSpace(state, nameof(state), "State");
 
+        var observedMs = updatedMs ?? NowMs();
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await connection.ExecuteAsync(
             new CommandDefinition(
@@ -247,6 +275,7 @@ ORDER BY brain_id;
                 new
                 {
                     brain_id = ToDatabaseId(brainId),
+                    updated_ms = observedMs,
                     state,
                     notes
                 },
@@ -258,14 +287,17 @@ ORDER BY brain_id;
     /// </summary>
     /// <param name="brainId">Brain identifier to update.</param>
     /// <param name="lastTickId">Last completed tick identifier.</param>
+    /// <param name="updatedMs">Optional update timestamp used for retention and freshness ordering.</param>
     /// <param name="cancellationToken">Cancels the database write.</param>
     public async Task UpdateBrainTickAsync(
         Guid brainId,
         long lastTickId,
+        long? updatedMs = null,
         CancellationToken cancellationToken = default)
     {
         ThrowIfEmptyGuid(brainId, nameof(brainId), "BrainId");
 
+        var observedMs = updatedMs ?? NowMs();
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await connection.ExecuteAsync(
             new CommandDefinition(
@@ -273,7 +305,8 @@ ORDER BY brain_id;
                 new
                 {
                     brain_id = ToDatabaseId(brainId),
-                    last_tick_id = lastTickId
+                    last_tick_id = lastTickId,
+                    updated_ms = observedMs
                 },
                 cancellationToken: cancellationToken));
     }
@@ -367,4 +400,33 @@ ORDER BY brain_id;
             new CommandDefinition(ListBrainsSql, cancellationToken: cancellationToken));
         return rows.AsList();
     }
+
+    /// <summary>
+    /// Deletes persisted dead brain rows and matching controller rows older than the supplied cutoff.
+    /// </summary>
+    /// <param name="cutoffMs">Inclusive retention cutoff in milliseconds.</param>
+    /// <param name="cancellationToken">Cancels the prune operation.</param>
+    public async Task<PrunedBrainRows> PruneStaleDeadBrainsAsync(
+        long cutoffMs,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var deletedControllers = await connection.ExecuteAsync(
+            new CommandDefinition(
+                DeleteStaleDeadBrainControllersSql,
+                new { cutoff_ms = cutoffMs },
+                transaction,
+                cancellationToken: cancellationToken));
+        var deletedBrains = await connection.ExecuteAsync(
+            new CommandDefinition(
+                DeleteStaleDeadBrainsSql,
+                new { cutoff_ms = cutoffMs },
+                transaction,
+                cancellationToken: cancellationToken));
+        await transaction.CommitAsync(cancellationToken);
+        return new PrunedBrainRows(deletedBrains, deletedControllers);
+    }
+
+    public sealed record PrunedBrainRows(int DeletedBrains, int DeletedControllers);
 }

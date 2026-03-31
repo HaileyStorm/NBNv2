@@ -1,3 +1,5 @@
+using Dapper;
+using Microsoft.Data.Sqlite;
 using Nbn.Runtime.SettingsMonitor;
 using Nbn.Tests.TestSupport;
 
@@ -76,5 +78,81 @@ public sealed class SettingsMonitorBrainLifecycleTests
         Assert.NotNull(controller);
         Assert.True(controller!.IsAlive);
         Assert.Equal(550, controller.LastSeenMs);
+    }
+
+    [Fact]
+    public async Task PruneStaleDeadBrainsAsync_RemovesOnlyDeadRowsOlderThanCutoff()
+    {
+        using var db = new TempDatabaseScope("settings-monitor.db");
+        var store = new SettingsMonitorStore(db.DatabasePath);
+        await store.InitializeAsync();
+
+        var nodeId = Guid.NewGuid();
+        var oldDeadBrainId = Guid.NewGuid();
+        var recentDeadBrainId = Guid.NewGuid();
+        var activeBrainId = Guid.NewGuid();
+
+        await store.UpsertNodeAsync(new NodeRegistration(nodeId, "worker-a", "127.0.0.1:12041", "worker-node"), timeMs: 100);
+
+        await store.UpsertBrainAsync(oldDeadBrainId, "Active", spawnedMs: 100, lastTickId: 1, updatedMs: 100);
+        await store.UpsertBrainControllerAsync(
+            new BrainControllerRegistration(oldDeadBrainId, nodeId, "worker-node/brain-old-root"),
+            timeMs: 100);
+        await store.MarkBrainControllerOfflineAsync(oldDeadBrainId, timeMs: 150);
+        await store.UpdateBrainStateAsync(oldDeadBrainId, "Dead", updatedMs: 200);
+
+        await store.UpsertBrainAsync(recentDeadBrainId, "Active", spawnedMs: 300, lastTickId: 2, updatedMs: 300);
+        await store.UpsertBrainControllerAsync(
+            new BrainControllerRegistration(recentDeadBrainId, nodeId, "worker-node/brain-recent-root"),
+            timeMs: 300);
+        await store.MarkBrainControllerOfflineAsync(recentDeadBrainId, timeMs: 900);
+        await store.UpdateBrainStateAsync(recentDeadBrainId, "Dead", updatedMs: 900);
+
+        await store.UpsertBrainAsync(activeBrainId, "Active", spawnedMs: 400, lastTickId: 3, updatedMs: 400);
+        await store.UpsertBrainControllerAsync(
+            new BrainControllerRegistration(activeBrainId, nodeId, "worker-node/brain-live-root"),
+            timeMs: 400);
+
+        var result = await store.PruneStaleDeadBrainsAsync(cutoffMs: 500);
+
+        Assert.Equal(1, result.DeletedBrains);
+        Assert.Equal(1, result.DeletedControllers);
+        Assert.Null(await store.GetBrainAsync(oldDeadBrainId));
+        Assert.Null(await store.GetBrainControllerAsync(oldDeadBrainId));
+        Assert.NotNull(await store.GetBrainAsync(recentDeadBrainId));
+        Assert.NotNull(await store.GetBrainControllerAsync(recentDeadBrainId));
+        Assert.NotNull(await store.GetBrainAsync(activeBrainId));
+        Assert.NotNull(await store.GetBrainControllerAsync(activeBrainId));
+    }
+
+    [Fact]
+    public async Task InitializeAsync_MigratesLegacyBrainsTable_ToIncludeUpdatedMs()
+    {
+        using var db = new TempDatabaseScope("settings-monitor.db");
+        await using (var connection = new SqliteConnection($"Data Source={db.DatabasePath}"))
+        {
+            await connection.OpenAsync();
+            await connection.ExecuteAsync(
+                """
+                CREATE TABLE brains (
+                    brain_id TEXT PRIMARY KEY,
+                    base_nbn_sha256 BLOB NULL,
+                    last_snapshot_sha256 BLOB NULL,
+                    spawned_ms INTEGER NOT NULL,
+                    last_tick_id INTEGER NOT NULL,
+                    state TEXT NOT NULL,
+                    notes TEXT NULL
+                );
+                """);
+        }
+
+        var store = new SettingsMonitorStore(db.DatabasePath);
+        await store.InitializeAsync();
+
+        await using var migratedConnection = new SqliteConnection($"Data Source={db.DatabasePath}");
+        await migratedConnection.OpenAsync();
+        var columns = (await migratedConnection.QueryAsync<string>("SELECT name FROM pragma_table_info('brains');")).ToList();
+
+        Assert.Contains("updated_ms", columns, StringComparer.OrdinalIgnoreCase);
     }
 }

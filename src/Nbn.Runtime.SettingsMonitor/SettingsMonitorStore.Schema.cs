@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS brains (
     last_snapshot_sha256 BLOB NULL,
     spawned_ms INTEGER NOT NULL,
     last_tick_id INTEGER NOT NULL,
+    updated_ms INTEGER NOT NULL DEFAULT 0,
     state TEXT NOT NULL,
     notes TEXT NULL
 );
@@ -139,6 +140,13 @@ ALTER TABLE node_capabilities
 ADD COLUMN process_ram_used_bytes INTEGER NOT NULL DEFAULT 0;
 """;
 
+    private const string BrainsTableInfoSql = "PRAGMA table_info(brains);";
+
+    private const string AddBrainsUpdatedMsColumnSql = """
+ALTER TABLE brains
+ADD COLUMN updated_ms INTEGER NOT NULL DEFAULT 0;
+""";
+
     private static readonly (string ColumnName, string AlterSql)[] NodeCapabilitiesColumnMigrations =
     [
         ("storage_free_bytes", AddStorageFreeBytesColumnSql),
@@ -152,6 +160,11 @@ ADD COLUMN process_ram_used_bytes INTEGER NOT NULL DEFAULT 0;
         ("gpu_vram_limit_percent", AddGpuVramLimitPercentColumnSql),
         ("process_cpu_load_percent", AddProcessCpuLoadPercentColumnSql),
         ("process_ram_used_bytes", AddProcessRamUsedBytesColumnSql)
+    ];
+
+    private static readonly (string ColumnName, string AlterSql)[] BrainsColumnMigrations =
+    [
+        ("updated_ms", AddBrainsUpdatedMsColumnSql)
     ];
 
     /// <summary>
@@ -169,6 +182,7 @@ ADD COLUMN process_ram_used_bytes INTEGER NOT NULL DEFAULT 0;
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await connection.ExecuteAsync(new CommandDefinition(CreateSchemaSql, cancellationToken: cancellationToken));
         await EnsureNodeCapabilitiesColumnsAsync(connection, cancellationToken);
+        await EnsureBrainsColumnsAsync(connection, cancellationToken);
     }
 
     private static async Task EnsureNodeCapabilitiesColumnsAsync(
@@ -189,6 +203,39 @@ ADD COLUMN process_ram_used_bytes INTEGER NOT NULL DEFAULT 0;
     }
 
     private static async Task EnsureNodeCapabilitiesColumnAsync(
+        SqliteConnection connection,
+        ISet<string> knownColumns,
+        string columnName,
+        string alterSql,
+        CancellationToken cancellationToken)
+    {
+        if (knownColumns.Contains(columnName))
+        {
+            return;
+        }
+
+        await connection.ExecuteAsync(new CommandDefinition(alterSql, cancellationToken: cancellationToken));
+        knownColumns.Add(columnName);
+    }
+
+    private static async Task EnsureBrainsColumnsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var tableInfo = (await connection.QueryAsync<TableInfoRow>(
+                new CommandDefinition(BrainsTableInfoSql, cancellationToken: cancellationToken)))
+            .ToArray();
+        var knownColumns = tableInfo
+            .Select(static column => column.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (columnName, alterSql) in BrainsColumnMigrations)
+        {
+            await EnsureBrainsColumnAsync(connection, knownColumns, columnName, alterSql, cancellationToken);
+        }
+    }
+
+    private static async Task EnsureBrainsColumnAsync(
         SqliteConnection connection,
         ISet<string> knownColumns,
         string columnName,

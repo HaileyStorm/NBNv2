@@ -9,24 +9,41 @@ namespace Nbn.Runtime.SettingsMonitor;
 public sealed partial class SettingsMonitorActor : IActor
 {
     private static readonly TimeSpan DefaultExternalSettingsPollInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan DefaultStaleDeadBrainPruneInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan DefaultStaleDeadBrainRetention = TimeSpan.FromHours(6);
 
     private readonly SettingsMonitorStore _store;
     private readonly TimeSpan _externalSettingsPollInterval;
+    private readonly TimeSpan _staleDeadBrainPruneInterval;
+    private readonly TimeSpan _staleDeadBrainRetention;
     private readonly Dictionary<string, PID> _subscribers = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, NodeStatus> _nodes = new();
     private readonly Dictionary<string, ObservedSetting> _observedSettings = new(StringComparer.OrdinalIgnoreCase);
     private bool _externalSettingsPollInFlight;
+    private bool _staleDeadBrainPruneInFlight;
 
     /// <summary>
     /// Initializes a new actor instance backed by the provided store.
     /// </summary>
-    public SettingsMonitorActor(SettingsMonitorStore store, TimeSpan? externalSettingsPollInterval = null)
+    public SettingsMonitorActor(
+        SettingsMonitorStore store,
+        TimeSpan? externalSettingsPollInterval = null,
+        TimeSpan? staleDeadBrainPruneInterval = null,
+        TimeSpan? staleDeadBrainRetention = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         var pollInterval = externalSettingsPollInterval.GetValueOrDefault(DefaultExternalSettingsPollInterval);
         _externalSettingsPollInterval = pollInterval > TimeSpan.Zero
             ? pollInterval
             : DefaultExternalSettingsPollInterval;
+        var pruneInterval = staleDeadBrainPruneInterval.GetValueOrDefault(DefaultStaleDeadBrainPruneInterval);
+        _staleDeadBrainPruneInterval = pruneInterval > TimeSpan.Zero
+            ? pruneInterval
+            : DefaultStaleDeadBrainPruneInterval;
+        var pruneRetention = staleDeadBrainRetention.GetValueOrDefault(DefaultStaleDeadBrainRetention);
+        _staleDeadBrainRetention = pruneRetention > TimeSpan.Zero
+            ? pruneRetention
+            : DefaultStaleDeadBrainRetention;
     }
 
     /// <summary>
@@ -41,6 +58,9 @@ public sealed partial class SettingsMonitorActor : IActor
                 break;
             case PollExternalSettings:
                 HandlePollExternalSettings(context);
+                break;
+            case PruneStaleDeadBrains:
+                HandlePruneStaleDeadBrains(context);
                 break;
             case ProtoSettings.NodeOnline message:
                 HandleNodeOnline(context, message);

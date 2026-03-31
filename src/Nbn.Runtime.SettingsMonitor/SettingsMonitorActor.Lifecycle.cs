@@ -1,3 +1,4 @@
+using System;
 using Proto;
 
 namespace Nbn.Runtime.SettingsMonitor;
@@ -15,6 +16,7 @@ public sealed partial class SettingsMonitorActor
             }
 
             ScheduleSelf(context, _externalSettingsPollInterval, PollExternalSettings.Instance);
+            ScheduleSelf(context, TimeSpan.Zero, PruneStaleDeadBrains.Instance);
             return Task.CompletedTask;
         });
     }
@@ -59,6 +61,41 @@ public sealed partial class SettingsMonitorActor
         });
     }
 
+    private void HandlePruneStaleDeadBrains(IContext context)
+    {
+        if (_staleDeadBrainPruneInFlight)
+        {
+            ScheduleSelf(context, _staleDeadBrainPruneInterval, PruneStaleDeadBrains.Instance);
+            return;
+        }
+
+        _staleDeadBrainPruneInFlight = true;
+        var cutoffMs = NowMs() - checked((long)_staleDeadBrainRetention.TotalMilliseconds);
+        var task = _store.PruneStaleDeadBrainsAsync(cutoffMs);
+        context.ReenterAfter(task, completed =>
+        {
+            try
+            {
+                if (completed.IsFaulted)
+                {
+                    LogError($"Dead-brain prune failed: {completed.Exception?.GetBaseException().Message}");
+                }
+                else if (completed.Result.DeletedBrains > 0 || completed.Result.DeletedControllers > 0)
+                {
+                    Console.WriteLine(
+                        $"[{DateTime.UtcNow:O}] [SettingsMonitor] Pruned stale dead brain rows: {completed.Result.DeletedBrains} brains, {completed.Result.DeletedControllers} controllers.");
+                }
+            }
+            finally
+            {
+                _staleDeadBrainPruneInFlight = false;
+                ScheduleSelf(context, _staleDeadBrainPruneInterval, PruneStaleDeadBrains.Instance);
+            }
+
+            return Task.CompletedTask;
+        });
+    }
+
     private static void ScheduleSelf(IContext context, TimeSpan delay, object message)
     {
         if (delay <= TimeSpan.Zero)
@@ -80,5 +117,10 @@ public sealed partial class SettingsMonitorActor
     private sealed record PollExternalSettings
     {
         public static readonly PollExternalSettings Instance = new();
+    }
+
+    private sealed record PruneStaleDeadBrains
+    {
+        public static readonly PruneStaleDeadBrains Instance = new();
     }
 }
