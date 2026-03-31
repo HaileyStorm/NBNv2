@@ -630,7 +630,7 @@ public class OrchestratorPanelViewModelTests
         await vm.RefreshSettingsAsync();
 
         Assert.True(connections.WorkerDiscoverable);
-        Assert.Equal("1 active worker", connections.WorkerStatus);
+        Assert.Equal("1 active node", connections.WorkerStatus);
         var workerNode = Assert.Single(vm.Nodes);
         Assert.Equal(connections.WorkerLogicalName, workerNode.LogicalName);
         Assert.Equal(connections.WorkerRootName, workerNode.RootActor);
@@ -639,7 +639,7 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(workerId, workerEndpoint.NodeId);
         Assert.Equal("active", workerEndpoint.Status);
         Assert.Equal("none", workerEndpoint.BrainHints);
-        Assert.Equal("1 active worker", vm.WorkerEndpointSummary);
+        Assert.Equal("1 active node", vm.WorkerEndpointSummary);
     }
 
     [Fact]
@@ -1105,7 +1105,7 @@ public class OrchestratorPanelViewModelTests
                     {
                         NodeId = workerA.ToProtoUuid(),
                         LogicalName = "nbn.worker.east",
-                        Address = "127.0.0.1:12041",
+                        Address = "10.0.0.41:12041",
                         RootActorName = "worker-node-east",
                         LastSeenMs = (ulong)nowMs,
                         IsAlive = true
@@ -1114,7 +1114,7 @@ public class OrchestratorPanelViewModelTests
                     {
                         NodeId = workerB.ToProtoUuid(),
                         LogicalName = "external-runner",
-                        Address = "127.0.0.1:12042",
+                        Address = "10.0.0.42:12042",
                         RootActorName = connections.WorkerRootName,
                         LastSeenMs = (ulong)(nowMs - 2_000),
                         IsAlive = true
@@ -1131,11 +1131,133 @@ public class OrchestratorPanelViewModelTests
         await vm.RefreshSettingsAsync();
 
         Assert.True(connections.WorkerDiscoverable);
-        Assert.Equal("2 active workers", connections.WorkerStatus);
+        Assert.Equal("2 active nodes", connections.WorkerStatus);
         Assert.Equal(2, vm.WorkerEndpoints.Count);
         Assert.All(vm.WorkerEndpoints, endpoint => Assert.Equal("active", endpoint.Status));
         Assert.All(vm.WorkerEndpoints, endpoint => Assert.Equal("none", endpoint.BrainHints));
-        Assert.Equal("2 active workers", vm.WorkerEndpointSummary);
+        Assert.Equal("2 active nodes", vm.WorkerEndpointSummary);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_GroupsColocatedWorkers_IntoOneWorkerHost()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerA = Guid.NewGuid();
+        var workerB = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = workerA.ToProtoUuid(),
+                        LogicalName = "nbn.worker.alpha",
+                        Address = "edge-box:12041",
+                        RootActorName = "worker-node-alpha",
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    },
+                    new NodeStatus
+                    {
+                        NodeId = workerB.ToProtoUuid(),
+                        LogicalName = "nbn.worker.beta",
+                        Address = "edge-box:12042",
+                        RootActorName = "worker-node-beta",
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)nowMs,
+                Workers =
+                {
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = workerA.ToProtoUuid(),
+                        LogicalName = "nbn.worker.alpha",
+                        Address = "edge-box:12041",
+                        RootActorName = "worker-node-alpha",
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)nowMs,
+                        HasCapabilities = true,
+                        CapabilityTimeMs = (ulong)nowMs,
+                        Capabilities = new NodeCapabilities
+                        {
+                            CpuCores = 16,
+                            CpuLimitPercent = 75,
+                            ProcessCpuLoadPercent = 25f,
+                            RamTotalBytes = 32UL * 1024 * 1024 * 1024,
+                            RamFreeBytes = 24UL * 1024 * 1024 * 1024,
+                            RamLimitPercent = 80,
+                            ProcessRamUsedBytes = 8UL * 1024 * 1024 * 1024,
+                            StorageTotalBytes = 256UL * 1024 * 1024 * 1024,
+                            StorageFreeBytes = 192UL * 1024 * 1024 * 1024,
+                            StorageLimitPercent = 90
+                        }
+                    },
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = workerB.ToProtoUuid(),
+                        LogicalName = "nbn.worker.beta",
+                        Address = "edge-box:12042",
+                        RootActorName = "worker-node-beta",
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)nowMs,
+                        HasCapabilities = true,
+                        CapabilityTimeMs = (ulong)nowMs,
+                        Capabilities = new NodeCapabilities
+                        {
+                            CpuCores = 16,
+                            CpuLimitPercent = 75,
+                            ProcessCpuLoadPercent = 12.5f,
+                            RamTotalBytes = 32UL * 1024 * 1024 * 1024,
+                            RamFreeBytes = 28UL * 1024 * 1024 * 1024,
+                            RamLimitPercent = 80,
+                            ProcessRamUsedBytes = 4UL * 1024 * 1024 * 1024,
+                            StorageTotalBytes = 256UL * 1024 * 1024 * 1024,
+                            StorageFreeBytes = 200UL * 1024 * 1024 * 1024,
+                            StorageLimitPercent = 90
+                        }
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse(),
+            HiveMindStatusResponse = new HiveMindStatus
+            {
+                TargetTickHz = 15f,
+                ConfiguredTargetTickHz = 15f,
+                RecentTickSampleCount = 16,
+                WorkerPressureWindow = 6,
+                CurrentPressureWorkerCount = 1,
+                RecentPressureWorkerCount = 1
+            }
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.True(connections.WorkerDiscoverable);
+        Assert.Equal("1 active node (2 workers)", connections.WorkerStatus);
+        var workerEndpoint = Assert.Single(vm.WorkerEndpoints);
+        Assert.Equal("edge-box", workerEndpoint.LogicalName);
+        Assert.Contains("edge-box:12041", workerEndpoint.Address, StringComparison.Ordinal);
+        Assert.Contains("edge-box:12042", workerEndpoint.Address, StringComparison.Ordinal);
+        Assert.Contains("2 workers", workerEndpoint.RootActor, StringComparison.Ordinal);
+        Assert.Equal("1 active node (2 workers)", vm.WorkerEndpointSummary);
+        Assert.Contains("CPU 6/12 cores", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
+        Assert.Contains("RAM 12 GiB/25.6 GiB", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
+        Assert.Contains("storage 64 GiB/230.4 GiB", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
+        Assert.Contains("across 1 node (2 workers)", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1155,7 +1277,7 @@ public class OrchestratorPanelViewModelTests
                     {
                         NodeId = cudaWorker.ToProtoUuid(),
                         LogicalName = "nbn.worker.cuda",
-                        Address = "127.0.0.1:12041",
+                        Address = "10.0.0.51:12041",
                         RootActorName = "worker-node-cuda",
                         LastSeenMs = (ulong)nowMs,
                         IsAlive = true
@@ -1164,7 +1286,7 @@ public class OrchestratorPanelViewModelTests
                     {
                         NodeId = cpuWorker.ToProtoUuid(),
                         LogicalName = "nbn.worker.cpu",
-                        Address = "127.0.0.1:12042",
+                        Address = "10.0.0.52:12042",
                         RootActorName = "worker-node-cpu",
                         LastSeenMs = (ulong)nowMs,
                         IsAlive = true
@@ -1180,7 +1302,7 @@ public class OrchestratorPanelViewModelTests
                     {
                         NodeId = cudaWorker.ToProtoUuid(),
                         LogicalName = "nbn.worker.cuda",
-                        Address = "127.0.0.1:12041",
+                        Address = "10.0.0.51:12041",
                         RootActorName = "worker-node-cuda",
                         IsAlive = true,
                         IsReady = true,
@@ -1199,7 +1321,7 @@ public class OrchestratorPanelViewModelTests
                     {
                         NodeId = cpuWorker.ToProtoUuid(),
                         LogicalName = "nbn.worker.cpu",
-                        Address = "127.0.0.1:12042",
+                        Address = "10.0.0.52:12042",
                         RootActorName = "worker-node-cpu",
                         IsAlive = true,
                         IsReady = true,
@@ -1371,7 +1493,7 @@ public class OrchestratorPanelViewModelTests
                     {
                         NodeId = degradedWorker.ToProtoUuid(),
                         LogicalName = "nbn.worker.degraded",
-                        Address = "127.0.0.1:12043",
+                        Address = "10.0.0.61:12043",
                         RootActorName = "worker-node-degraded",
                         LastSeenMs = (ulong)(nowMs - 20_000),
                         IsAlive = true
@@ -1380,7 +1502,7 @@ public class OrchestratorPanelViewModelTests
                     {
                         NodeId = failedWorker.ToProtoUuid(),
                         LogicalName = "nbn.worker.failed",
-                        Address = "127.0.0.1:12044",
+                        Address = "10.0.0.62:12044",
                         RootActorName = "worker-node-failed",
                         LastSeenMs = (ulong)(nowMs - 70_000),
                         IsAlive = true
@@ -1397,12 +1519,12 @@ public class OrchestratorPanelViewModelTests
         await vm.RefreshSettingsAsync();
 
         Assert.False(connections.WorkerDiscoverable);
-        Assert.Equal("1 degraded worker, 1 failed worker", connections.WorkerStatus);
+        Assert.Equal("1 degraded node, 1 failed node", connections.WorkerStatus);
         Assert.Equal(2, vm.WorkerEndpoints.Count);
         Assert.Contains(vm.WorkerEndpoints, endpoint => endpoint.NodeId == degradedWorker && endpoint.Status == "degraded");
         Assert.Contains(vm.WorkerEndpoints, endpoint => endpoint.NodeId == failedWorker && endpoint.Status == "failed");
         Assert.All(vm.WorkerEndpoints, endpoint => Assert.Equal("none", endpoint.BrainHints));
-        Assert.Equal("1 degraded worker, 1 failed worker", vm.WorkerEndpointSummary);
+        Assert.Equal("1 degraded node, 1 failed node", vm.WorkerEndpointSummary);
     }
 
     [Fact]
@@ -1472,7 +1594,7 @@ public class OrchestratorPanelViewModelTests
         var endpoint = Assert.Single(vm.WorkerEndpoints);
         Assert.Equal("limited", endpoint.Status);
         Assert.Contains("Storage used", endpoint.PlacementDetail, StringComparison.Ordinal);
-        Assert.Equal("1 limited worker", vm.WorkerEndpointSummary);
+        Assert.Equal("1 limited node", vm.WorkerEndpointSummary);
     }
 
     [Fact]
@@ -1548,7 +1670,7 @@ public class OrchestratorPanelViewModelTests
 
         var workerEndpoint = Assert.Single(vm.WorkerEndpoints);
         Assert.Equal("failed", workerEndpoint.Status);
-        Assert.Equal("1 failed worker", vm.WorkerEndpointSummary);
+        Assert.Equal("1 failed node", vm.WorkerEndpointSummary);
         Assert.False(connections.WorkerDiscoverable);
     }
 
@@ -1571,7 +1693,7 @@ public class OrchestratorPanelViewModelTests
         Assert.False(connections.WorkerDiscoverable);
         Assert.Equal("Offline", connections.WorkerStatus);
         Assert.Empty(vm.WorkerEndpoints);
-        Assert.Equal("No active workers.", vm.WorkerEndpointSummary);
+        Assert.Equal("No active nodes.", vm.WorkerEndpointSummary);
         Assert.Equal(6, vm.Endpoints.Count);
         Assert.DoesNotContain(vm.Endpoints, endpoint => endpoint.ServiceName == "Worker Node");
         var settingsEndpoint = Assert.Single(vm.Endpoints, endpoint => endpoint.ServiceName == "SettingsMonitor");
@@ -1597,13 +1719,13 @@ public class OrchestratorPanelViewModelTests
             ObsStatus = "Online",
             ReproStatus = "Online",
             SpeciationStatus = "Online",
-            WorkerStatus = "1 active worker",
+            WorkerStatus = "1 active node",
             HiveMindStatus = "Online",
             IoEndpointDisplay = "10.0.0.1:12050/io",
             ObsEndpointDisplay = "10.0.0.2:12060/debug",
             ReproEndpointDisplay = "10.0.0.3:12070/repro",
             SpeciationEndpointDisplay = "10.0.0.6:12080/speciation",
-            WorkerEndpointDisplay = "1 active worker",
+            WorkerEndpointDisplay = "1 active node",
             HiveMindEndpointDisplay = "10.0.0.4:12020/hive"
         };
         var vm = CreateViewModel(connections, new FakeWorkbenchClient());
@@ -1632,7 +1754,7 @@ public class OrchestratorPanelViewModelTests
         Assert.Empty(vm.Nodes);
         Assert.Empty(vm.WorkerEndpoints);
         Assert.Empty(vm.Actors);
-        Assert.Equal("No active workers.", vm.WorkerEndpointSummary);
+        Assert.Equal("No active nodes.", vm.WorkerEndpointSummary);
         Assert.Equal(6, vm.Endpoints.Count);
         Assert.DoesNotContain(vm.Endpoints, endpoint => endpoint.ServiceName == "Worker Node");
         var settingsEndpoint = Assert.Single(vm.Endpoints, endpoint => endpoint.ServiceName == "SettingsMonitor");

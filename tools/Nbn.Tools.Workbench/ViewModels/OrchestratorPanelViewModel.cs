@@ -71,7 +71,7 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private string _lastSeededPullSettingsHost = string.Empty;
     private string _lastSeededPullSettingsPortText = string.Empty;
     private string _lastSeededPullSettingsName = string.Empty;
-    private string _workerEndpointSummary = "No active workers.";
+    private string _workerEndpointSummary = "No active nodes.";
     private string _systemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
     private string _systemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
     private string _systemLoadTickSummary = "Tick health: awaiting HiveMind status.";

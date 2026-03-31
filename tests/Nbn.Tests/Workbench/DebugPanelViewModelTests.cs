@@ -216,6 +216,123 @@ public sealed class DebugPanelViewModelTests
     }
 
     [Fact]
+    public async Task SystemLoadRefresh_GroupsColocatedWorkers_AndIgnoresNonWorkerNodes()
+    {
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var client = new RecordingWorkbenchClient(new NullWorkbenchEventSink())
+        {
+            WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)nowMs,
+                Workers =
+                {
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = Guid.NewGuid().ToProtoUuid(),
+                        LogicalName = "nbn.worker.alpha",
+                        Address = "worker-a:12040",
+                        RootActorName = "worker-node-alpha",
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)nowMs,
+                        HasCapabilities = true,
+                        CapabilityTimeMs = (ulong)nowMs,
+                        Capabilities = new NodeCapabilities
+                        {
+                            CpuCores = 16,
+                            CpuLimitPercent = 75,
+                            ProcessCpuLoadPercent = 25f,
+                            RamTotalBytes = 32UL * 1024 * 1024 * 1024,
+                            RamLimitPercent = 80,
+                            ProcessRamUsedBytes = 8UL * 1024 * 1024 * 1024,
+                            StorageTotalBytes = 256UL * 1024 * 1024 * 1024,
+                            StorageFreeBytes = 192UL * 1024 * 1024 * 1024,
+                            StorageLimitPercent = 90
+                        }
+                    },
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = Guid.NewGuid().ToProtoUuid(),
+                        LogicalName = "nbn.worker.beta",
+                        Address = "worker-a:12041",
+                        RootActorName = "worker-node-beta",
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)nowMs,
+                        HasCapabilities = true,
+                        CapabilityTimeMs = (ulong)nowMs,
+                        Capabilities = new NodeCapabilities
+                        {
+                            CpuCores = 16,
+                            CpuLimitPercent = 75,
+                            ProcessCpuLoadPercent = 12.5f,
+                            RamTotalBytes = 32UL * 1024 * 1024 * 1024,
+                            RamLimitPercent = 80,
+                            ProcessRamUsedBytes = 4UL * 1024 * 1024 * 1024,
+                            StorageTotalBytes = 256UL * 1024 * 1024 * 1024,
+                            StorageFreeBytes = 200UL * 1024 * 1024 * 1024,
+                            StorageLimitPercent = 90
+                        }
+                    },
+                    new WorkerReadinessCapability
+                    {
+                        NodeId = Guid.NewGuid().ToProtoUuid(),
+                        LogicalName = "nbn.hivemind",
+                        Address = "worker-a:12020",
+                        RootActorName = "HiveMind",
+                        IsAlive = true,
+                        IsReady = true,
+                        LastSeenMs = (ulong)nowMs,
+                        HasCapabilities = true,
+                        CapabilityTimeMs = (ulong)nowMs,
+                        Capabilities = new NodeCapabilities
+                        {
+                            CpuCores = 64,
+                            CpuLimitPercent = 100,
+                            ProcessCpuLoadPercent = 50f,
+                            RamTotalBytes = 128UL * 1024 * 1024 * 1024,
+                            RamLimitPercent = 100,
+                            ProcessRamUsedBytes = 32UL * 1024 * 1024 * 1024,
+                            StorageTotalBytes = 512UL * 1024 * 1024 * 1024,
+                            StorageFreeBytes = 256UL * 1024 * 1024 * 1024,
+                            StorageLimitPercent = 100
+                        }
+                    }
+                }
+            },
+            HiveMindStatusResponse = new HiveMindStatus
+            {
+                TargetTickHz = 15f,
+                ConfiguredTargetTickHz = 30f,
+                AutomaticBackpressureActive = true,
+                RecentTickSampleCount = 32,
+                RecentTimeoutTickCount = 4,
+                RecentLateTickCount = 2,
+                WorkerPressureWindow = 6,
+                CurrentPressureWorkerCount = 1,
+                RecentPressureWorkerCount = 1
+            }
+        };
+        var connections = new ConnectionViewModel
+        {
+            SettingsStatus = "Ready",
+            HiveMindStatus = "Connected"
+        };
+
+        await using var viewModel = new DebugPanelViewModel(client, new UiDispatcher(), connections);
+
+        var updated = SpinWait.SpinUntil(
+            () => viewModel.SystemLoadResourceSummary.Contains("across 1 node (2 workers)", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(3));
+
+        Assert.True(updated);
+        Assert.Contains("CPU 6/12 cores", viewModel.SystemLoadResourceSummary, StringComparison.Ordinal);
+        Assert.Contains("RAM 12 GiB/25.6 GiB", viewModel.SystemLoadResourceSummary, StringComparison.Ordinal);
+        Assert.Contains("storage 64 GiB/230.4 GiB", viewModel.SystemLoadResourceSummary, StringComparison.Ordinal);
+        Assert.DoesNotContain("32/76", viewModel.SystemLoadResourceSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SystemLoadRefresh_WhenServicesNotReady_ShowsGuidance()
     {
         var client = new RecordingWorkbenchClient(new NullWorkbenchEventSink());

@@ -101,6 +101,7 @@ public sealed partial class OrchestratorPanelViewModel
 
         var rows = new List<(int Rank, long LastSeenMs, WorkerEndpointItem Row)>();
         var staleNodeIds = new List<Guid>();
+        var classifiedEntries = new List<WorkerEndpointGroupEntry>();
         var activeCount = 0;
         var limitedCount = 0;
         var degradedCount = 0;
@@ -114,7 +115,29 @@ public sealed partial class OrchestratorPanelViewModel
                 staleNodeIds.Add(entry.NodeId);
                 continue;
             }
+            classifiedEntries.Add(new WorkerEndpointGroupEntry(entry, status));
+        }
 
+        foreach (var staleNodeId in staleNodeIds)
+        {
+            _workerEndpointCache.Remove(staleNodeId);
+        }
+
+        foreach (var group in classifiedEntries
+                     .GroupBy(
+                         entry => WorkbenchWorkerHostGrouping.ResolveHostGroupKey(
+                             entry.Snapshot.Address,
+                             entry.Snapshot.LogicalName,
+                             entry.Snapshot.RootActorName,
+                             entry.Snapshot.NodeId),
+                         StringComparer.Ordinal))
+        {
+            var entries = group
+                .OrderByDescending(entry => entry.Snapshot.LastSeenMs)
+                .ThenBy(entry => entry.Snapshot.LogicalName, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var representative = entries[0].Snapshot;
+            var status = ResolveWorkerHostStatus(entries);
             switch (status)
             {
                 case "active":
@@ -131,25 +154,27 @@ public sealed partial class OrchestratorPanelViewModel
                     break;
             }
 
-            var brainHints = DescribeWorkerBrainHints(workerBrainHints, workerBrainBackends, entry.NodeId);
-            var capabilityChips = DescribeWorkerCapabilityChips(entry);
-            rows.Add((WorkerStatusRank(status), entry.LastSeenMs, new WorkerEndpointItem(
-                entry.NodeId,
-                entry.LogicalName,
-                entry.Address,
-                entry.RootActorName,
+            var snapshots = entries.Select(static entry => entry.Snapshot).ToArray();
+            var brainHints = DescribeWorkerBrainHints(
+                workerBrainHints,
+                workerBrainBackends,
+                snapshots.Select(static snapshot => snapshot.NodeId));
+            var capabilityChips = DescribeWorkerCapabilityChips(snapshots);
+            rows.Add((WorkerStatusRank(status), representative.LastSeenMs, new WorkerEndpointItem(
+                representative.NodeId,
+                WorkbenchWorkerHostGrouping.ResolveHostDisplayName(
+                    representative.Address,
+                    representative.LogicalName,
+                    representative.NodeId),
+                BuildWorkerHostAddressSummary(snapshots),
+                BuildWorkerHostRootActorSummary(snapshots),
                 brainHints.Preview,
-                FormatUpdated(entry.LastSeenMs),
+                FormatUpdated(representative.LastSeenMs),
                 status,
-                entry.PlacementDetail,
+                BuildWorkerHostPlacementDetail(entries),
                 capabilityChips.CpuCapability,
                 capabilityChips.GpuCapability,
                 brainHints.Count)));
-        }
-
-        foreach (var staleNodeId in staleNodeIds)
-        {
-            _workerEndpointCache.Remove(staleNodeId);
         }
 
         var orderedRows = rows
@@ -159,7 +184,12 @@ public sealed partial class OrchestratorPanelViewModel
             .Select(entry => entry.Row)
             .ToArray();
 
-        var summary = BuildWorkerEndpointSummary(activeCount, limitedCount, degradedCount, failedCount);
+        var summary = BuildWorkerEndpointSummary(
+            activeCount,
+            limitedCount,
+            degradedCount,
+            failedCount,
+            classifiedEntries.Count);
         return new WorkerEndpointState(orderedRows, activeCount, limitedCount, degradedCount, failedCount, summary);
     }
 
@@ -393,7 +423,12 @@ public sealed partial class OrchestratorPanelViewModel
         };
     }
 
-    private static string BuildWorkerEndpointSummary(int activeCount, int limitedCount, int degradedCount, int failedCount)
+    private static string BuildWorkerEndpointSummary(
+        int activeCount,
+        int limitedCount,
+        int degradedCount,
+        int failedCount,
+        int workerCount)
     {
         var parts = new List<string>();
         if (activeCount > 0)
@@ -416,9 +451,17 @@ public sealed partial class OrchestratorPanelViewModel
             parts.Add(FormatCount(failedCount, "failed"));
         }
 
-        return parts.Count == 0
-            ? "No active workers."
+        var summary = parts.Count == 0
+            ? "No active nodes."
             : string.Join(", ", parts);
+
+        var hostCount = activeCount + limitedCount + degradedCount + failedCount;
+        if (hostCount > 0 && workerCount > hostCount)
+        {
+            summary += $" ({WorkbenchWorkerHostGrouping.FormatWorkerCountLabel(workerCount)})";
+        }
+
+        return summary;
     }
 
     private static string DescribeWorkerPlacementStatus(Nbn.Proto.Settings.WorkerReadinessCapability worker, out string detail)
@@ -491,16 +534,151 @@ public sealed partial class OrchestratorPanelViewModel
 
     private static string FormatCount(int count, string label)
     {
-        var suffix = count == 1 ? "worker" : "workers";
+        var suffix = count == 1 ? "node" : "nodes";
         return $"{count} {label} {suffix}";
+    }
+
+    private static string ResolveWorkerHostStatus(IReadOnlyList<WorkerEndpointGroupEntry> entries)
+    {
+        if (entries.Any(static entry => string.Equals(entry.Status, "active", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "active";
+        }
+
+        if (entries.Any(static entry => string.Equals(entry.Status, "limited", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "limited";
+        }
+
+        if (entries.Any(static entry => string.Equals(entry.Status, "degraded", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "degraded";
+        }
+
+        return "failed";
+    }
+
+    private static string BuildWorkerHostAddressSummary(IReadOnlyList<WorkerEndpointSnapshot> snapshots)
+    {
+        if (snapshots.Count == 1)
+        {
+            return snapshots[0].Address;
+        }
+
+        var addresses = snapshots
+            .Select(static snapshot => snapshot.Address)
+            .Where(static address => !string.IsNullOrWhiteSpace(address))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static address => address, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return addresses.Length == 0
+            ? "Multiple worker endpoints"
+            : string.Join(", ", addresses);
+    }
+
+    private static string BuildWorkerHostRootActorSummary(IReadOnlyList<WorkerEndpointSnapshot> snapshots)
+    {
+        if (snapshots.Count == 1)
+        {
+            return snapshots[0].RootActorName;
+        }
+
+        var actorNames = snapshots
+            .Select(static snapshot => snapshot.RootActorName)
+            .Where(static actorName => !string.IsNullOrWhiteSpace(actorName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static actorName => actorName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return actorNames.Length == 0
+            ? WorkbenchWorkerHostGrouping.FormatWorkerCountLabel(snapshots.Count)
+            : $"{WorkbenchWorkerHostGrouping.FormatWorkerCountLabel(snapshots.Count)}: {string.Join(", ", actorNames)}";
+    }
+
+    private static string BuildWorkerHostPlacementDetail(IReadOnlyList<WorkerEndpointGroupEntry> entries)
+    {
+        if (entries.Count == 1)
+        {
+            return entries[0].Snapshot.PlacementDetail;
+        }
+
+        var counts = new List<string>();
+        var activeCount = entries.Count(static entry => string.Equals(entry.Status, "active", StringComparison.OrdinalIgnoreCase));
+        var limitedCount = entries.Count(static entry => string.Equals(entry.Status, "limited", StringComparison.OrdinalIgnoreCase));
+        var degradedCount = entries.Count(static entry => string.Equals(entry.Status, "degraded", StringComparison.OrdinalIgnoreCase));
+        var failedCount = entries.Count(static entry => string.Equals(entry.Status, "failed", StringComparison.OrdinalIgnoreCase));
+        if (activeCount > 0)
+        {
+            counts.Add($"{activeCount} active");
+        }
+
+        if (limitedCount > 0)
+        {
+            counts.Add($"{limitedCount} limited");
+        }
+
+        if (degradedCount > 0)
+        {
+            counts.Add($"{degradedCount} degraded");
+        }
+
+        if (failedCount > 0)
+        {
+            counts.Add($"{failedCount} failed");
+        }
+
+        var detail = $"Grouped by node: {string.Join(", ", counts)}.";
+        var placementNotes = entries
+            .Select(static entry =>
+            {
+                var label = string.IsNullOrWhiteSpace(entry.Snapshot.RootActorName)
+                    ? entry.Snapshot.Address
+                    : entry.Snapshot.RootActorName;
+                var note = string.IsNullOrWhiteSpace(entry.Snapshot.PlacementDetail)
+                    ? entry.Status
+                    : entry.Snapshot.PlacementDetail;
+                return string.IsNullOrWhiteSpace(label)
+                    ? note
+                    : $"{label}: {note}";
+            })
+            .Where(static note => !string.IsNullOrWhiteSpace(note))
+            .ToArray();
+        return placementNotes.Length == 0
+            ? detail
+            : $"{detail} {string.Join("; ", placementNotes)}";
     }
 
     private static WorkerBrainHintSummary DescribeWorkerBrainHints(
         IReadOnlyDictionary<Guid, HashSet<Guid>> workerBrainHints,
         IReadOnlyDictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint> workerBrainBackends,
         Guid nodeId)
+        => DescribeWorkerBrainHints(workerBrainHints, workerBrainBackends, new[] { nodeId });
+
+    private static WorkerBrainHintSummary DescribeWorkerBrainHints(
+        IReadOnlyDictionary<Guid, HashSet<Guid>> workerBrainHints,
+        IReadOnlyDictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint> workerBrainBackends,
+        IEnumerable<Guid> nodeIds)
     {
-        if (!workerBrainHints.TryGetValue(nodeId, out var brainIds) || brainIds.Count == 0)
+        var resolvedNodeIds = nodeIds.Distinct().ToArray();
+        if (resolvedNodeIds.Length == 0)
+        {
+            return new WorkerBrainHintSummary(0, "none");
+        }
+
+        var brainIds = new HashSet<Guid>();
+        foreach (var nodeId in resolvedNodeIds)
+        {
+            if (!workerBrainHints.TryGetValue(nodeId, out var nodeBrainIds))
+            {
+                continue;
+            }
+
+            foreach (var brainId in nodeBrainIds)
+            {
+                brainIds.Add(brainId);
+            }
+        }
+
+        if (brainIds.Count == 0)
         {
             return new WorkerBrainHintSummary(0, "none");
         }
@@ -512,7 +690,8 @@ public sealed partial class OrchestratorPanelViewModel
         foreach (var brainId in brainIds.OrderBy(AbbreviateBrainId, StringComparer.Ordinal))
         {
             var abbreviated = AbbreviateBrainId(brainId);
-            if (workerBrainBackends.TryGetValue((nodeId, brainId), out var backend))
+            var backend = ResolveWorkerBrainBackendHint(resolvedNodeIds, brainId, workerBrainBackends);
+            if (backend.HasValue)
             {
                 if (backend == WorkerBrainBackendHint.Gpu)
                 {
@@ -559,6 +738,33 @@ public sealed partial class OrchestratorPanelViewModel
         return new WorkerBrainHintSummary(brainIds.Count, string.Join("; ", segments));
     }
 
+    private static WorkerBrainBackendHint? ResolveWorkerBrainBackendHint(
+        IReadOnlyList<Guid> nodeIds,
+        Guid brainId,
+        IReadOnlyDictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint> workerBrainBackends)
+    {
+        WorkerBrainBackendHint? resolved = null;
+        foreach (var nodeId in nodeIds)
+        {
+            if (!workerBrainBackends.TryGetValue((nodeId, brainId), out var candidate))
+            {
+                continue;
+            }
+
+            if (candidate == WorkerBrainBackendHint.Mixed)
+            {
+                return candidate;
+            }
+
+            if (!resolved.HasValue || candidate == WorkerBrainBackendHint.Gpu)
+            {
+                resolved = candidate;
+            }
+        }
+
+        return resolved;
+    }
+
     private static string FormatBrainHintPreview(IReadOnlyList<string> brains)
         => brains.Count <= MaxWorkerBrainHints
             ? string.Join(", ", brains)
@@ -587,6 +793,10 @@ public sealed partial class OrchestratorPanelViewModel
     private sealed record WorkerBrainHintSummary(
         int Count,
         string Preview);
+
+    private sealed record WorkerEndpointGroupEntry(
+        WorkerEndpointSnapshot Snapshot,
+        string Status);
 
     private enum WorkerBrainBackendHint
     {
@@ -651,6 +861,71 @@ public sealed partial class OrchestratorPanelViewModel
 
         if (snapshot.HasGpu)
         {
+            return new WorkerCapabilityChips(
+                cpuCapability,
+                string.IsNullOrWhiteSpace(gpuScore)
+                    ? string.Empty
+                    : $"GPU {gpuScore}");
+        }
+
+        return new WorkerCapabilityChips(cpuCapability, string.Empty);
+    }
+
+    private static WorkerCapabilityChips DescribeWorkerCapabilityChips(IReadOnlyList<WorkerEndpointSnapshot> snapshots)
+    {
+        if (snapshots.Count == 1)
+        {
+            return DescribeWorkerCapabilityChips(snapshots[0]);
+        }
+
+        var capableSnapshots = snapshots
+            .Where(static snapshot => snapshot.HasCapabilitySnapshot && snapshot.HasCapabilities)
+            .ToArray();
+        if (capableSnapshots.Length == 0)
+        {
+            return new WorkerCapabilityChips(string.Empty, string.Empty);
+        }
+
+        var cpuScore = FormatCompactCapabilityScore(capableSnapshots.Max(static snapshot => snapshot.CpuScore));
+        var cpuCapability = string.IsNullOrWhiteSpace(cpuScore)
+            ? "CPU"
+            : $"CPU {cpuScore}";
+
+        var cudaSnapshot = capableSnapshots
+            .Where(static snapshot => snapshot.IlgpuCudaAvailable)
+            .OrderByDescending(static snapshot => snapshot.GpuScore)
+            .FirstOrDefault();
+        if (cudaSnapshot is not null)
+        {
+            var gpuScore = FormatCompactCapabilityScore(cudaSnapshot.GpuScore);
+            return new WorkerCapabilityChips(
+                cpuCapability,
+                string.IsNullOrWhiteSpace(gpuScore)
+                    ? "CUDA"
+                    : $"CUDA {gpuScore}");
+        }
+
+        var openClSnapshot = capableSnapshots
+            .Where(static snapshot => snapshot.IlgpuOpenclAvailable)
+            .OrderByDescending(static snapshot => snapshot.GpuScore)
+            .FirstOrDefault();
+        if (openClSnapshot is not null)
+        {
+            var gpuScore = FormatCompactCapabilityScore(openClSnapshot.GpuScore);
+            return new WorkerCapabilityChips(
+                cpuCapability,
+                string.IsNullOrWhiteSpace(gpuScore)
+                    ? "OpenCL"
+                    : $"OpenCL {gpuScore}");
+        }
+
+        var gpuSnapshot = capableSnapshots
+            .Where(static snapshot => snapshot.HasGpu)
+            .OrderByDescending(static snapshot => snapshot.GpuScore)
+            .FirstOrDefault();
+        if (gpuSnapshot is not null)
+        {
+            var gpuScore = FormatCompactCapabilityScore(gpuSnapshot.GpuScore);
             return new WorkerCapabilityChips(
                 cpuCapability,
                 string.IsNullOrWhiteSpace(gpuScore)

@@ -33,6 +33,18 @@ internal sealed record WorkbenchSystemLoadSnapshot(
     bool RescheduleInProgress,
     double HealthScore);
 
+internal sealed record WorkbenchWorkerHostLoadRollup(
+    int WorkerCount,
+    int GpuWorkerCount,
+    double CpuUsedCores,
+    double CpuQuotaCores,
+    ulong RamUsedBytes,
+    ulong RamQuotaBytes,
+    ulong StorageUsedBytes,
+    ulong StorageQuotaBytes,
+    ulong VramUsedBytes,
+    ulong VramQuotaBytes);
+
 internal sealed class WorkbenchSystemLoadHistoryTracker
 {
     internal const int MaxSnapshots = 120;
@@ -147,39 +159,24 @@ internal static class WorkbenchSystemLoadSummaryBuilder
                 ResolveSparklineStroke(latest.HealthScore));
         }
 
-        double cpuUsedCores = 0d;
-        double cpuQuotaCores = 0d;
-        ulong ramUsedBytes = 0UL;
-        ulong ramQuotaBytes = 0UL;
-        ulong storageUsedBytes = 0UL;
-        ulong storageQuotaBytes = 0UL;
-        ulong vramUsedBytes = 0UL;
-        ulong vramQuotaBytes = 0UL;
-        var gpuWorkerCount = 0;
-
-        foreach (var worker in workers)
-        {
-            var caps = worker.Capabilities!;
-            cpuUsedCores += Math.Max(0d, caps.CpuCores * (caps.ProcessCpuLoadPercent / 100d));
-            cpuQuotaCores += WorkerCapabilityMath.EffectiveCpuCores(caps.CpuCores, caps.CpuLimitPercent);
-
-            ramUsedBytes += ToUnsigned(caps.ProcessRamUsedBytes);
-            ramQuotaBytes += WorkerCapabilityMath.LimitBytes(ToUnsigned(caps.RamTotalBytes), caps.RamLimitPercent);
-
-            storageUsedBytes += CalculateUsedBytes(caps.StorageFreeBytes, caps.StorageTotalBytes);
-            storageQuotaBytes += WorkerCapabilityMath.LimitBytes(ToUnsigned(caps.StorageTotalBytes), caps.StorageLimitPercent);
-
-            if (caps.HasGpu && caps.VramTotalBytes > 0)
-            {
-                gpuWorkerCount++;
-                vramUsedBytes += CalculateUsedBytes(caps.VramFreeBytes, caps.VramTotalBytes);
-                vramQuotaBytes += WorkerCapabilityMath.LimitBytes(ToUnsigned(caps.VramTotalBytes), caps.GpuVramLimitPercent);
-            }
-        }
+        var hostRollups = BuildHostRollups(workers);
+        var hostCount = hostRollups.Count;
+        var cpuUsedCores = hostRollups.Sum(static rollup => rollup.CpuUsedCores);
+        var cpuQuotaCores = hostRollups.Sum(static rollup => rollup.CpuQuotaCores);
+        var ramUsedBytes = hostRollups.Aggregate(0UL, static (total, rollup) => total + rollup.RamUsedBytes);
+        var ramQuotaBytes = hostRollups.Aggregate(0UL, static (total, rollup) => total + rollup.RamQuotaBytes);
+        var storageUsedBytes = hostRollups.Aggregate(0UL, static (total, rollup) => total + rollup.StorageUsedBytes);
+        var storageQuotaBytes = hostRollups.Aggregate(0UL, static (total, rollup) => total + rollup.StorageQuotaBytes);
+        var vramUsedBytes = hostRollups.Aggregate(0UL, static (total, rollup) => total + rollup.VramUsedBytes);
+        var vramQuotaBytes = hostRollups.Aggregate(0UL, static (total, rollup) => total + rollup.VramQuotaBytes);
+        var gpuHostCount = hostRollups.Count(static rollup => rollup.VramQuotaBytes > 0);
+        var gpuWorkerCount = hostRollups.Sum(static rollup => rollup.GpuWorkerCount);
 
         return new WorkbenchSystemLoadSummary(
             BuildResourceSummary(
+                hostCount,
                 workers.Count,
+                gpuHostCount,
                 gpuWorkerCount,
                 cpuUsedCores,
                 cpuQuotaCores,
@@ -208,7 +205,9 @@ internal static class WorkbenchSystemLoadSummaryBuilder
     }
 
     private static string BuildResourceSummary(
+        int hostCount,
         int workerCount,
+        int gpuHostCount,
         int gpuWorkerCount,
         double cpuUsedCores,
         double cpuQuotaCores,
@@ -219,17 +218,80 @@ internal static class WorkbenchSystemLoadSummaryBuilder
         ulong vramUsedBytes,
         ulong vramQuotaBytes)
     {
+        var hostScopeLabel = hostCount == workerCount
+            ? $"across {hostCount} node{(hostCount == 1 ? string.Empty : "s")}."
+            : $"across {hostCount} node{(hostCount == 1 ? string.Empty : "s")} ({workerCount} workers).";
         var summary =
             $"Resource usage: CPU {FormatCoreCount(cpuUsedCores)}/{FormatCoreCount(cpuQuotaCores)} cores, " +
             $"RAM {FormatBytes(ramUsedBytes)}/{FormatBytes(ramQuotaBytes)}, " +
-            $"storage {FormatBytes(storageUsedBytes)}/{FormatBytes(storageQuotaBytes)} across {workerCount} worker{(workerCount == 1 ? string.Empty : "s")}.";
+            $"storage {FormatBytes(storageUsedBytes)}/{FormatBytes(storageQuotaBytes)} {hostScopeLabel}";
 
-        if (gpuWorkerCount > 0 && vramQuotaBytes > 0)
+        if (gpuHostCount > 0 && vramQuotaBytes > 0)
         {
-            summary += $" VRAM {FormatBytes(vramUsedBytes)}/{FormatBytes(vramQuotaBytes)} across {gpuWorkerCount} GPU worker{(gpuWorkerCount == 1 ? string.Empty : "s")}.";
+            var gpuScopeLabel = gpuHostCount == gpuWorkerCount
+                ? $"across {gpuHostCount} GPU node{(gpuHostCount == 1 ? string.Empty : "s")}."
+                : $"across {gpuHostCount} GPU node{(gpuHostCount == 1 ? string.Empty : "s")} ({gpuWorkerCount} GPU workers).";
+            summary += $" VRAM {FormatBytes(vramUsedBytes)}/{FormatBytes(vramQuotaBytes)} {gpuScopeLabel}";
         }
 
         return summary;
+    }
+
+    private static IReadOnlyList<WorkbenchWorkerHostLoadRollup> BuildHostRollups(
+        IReadOnlyList<ProtoSettings.WorkerReadinessCapability> workers)
+    {
+        return workers
+            .GroupBy(
+                worker => WorkbenchWorkerHostGrouping.ResolveHostGroupKey(
+                    worker.Address,
+                    worker.LogicalName,
+                    worker.RootActorName,
+                    worker.NodeId is not null && worker.NodeId.TryToGuid(out var nodeId) ? nodeId : null),
+                StringComparer.Ordinal)
+            .Select(static group =>
+            {
+                double cpuUsedCores = 0d;
+                double cpuQuotaCores = 0d;
+                ulong ramUsedBytes = 0UL;
+                ulong ramQuotaBytes = 0UL;
+                ulong storageUsedBytes = 0UL;
+                ulong storageQuotaBytes = 0UL;
+                ulong vramUsedBytes = 0UL;
+                ulong vramQuotaBytes = 0UL;
+                var gpuWorkerCount = 0;
+
+                foreach (var worker in group)
+                {
+                    var caps = worker.Capabilities!;
+                    cpuUsedCores += Math.Max(0d, caps.CpuCores * (caps.ProcessCpuLoadPercent / 100d));
+                    ramUsedBytes += ToUnsigned(caps.ProcessRamUsedBytes);
+
+                    cpuQuotaCores = Math.Max(cpuQuotaCores, WorkerCapabilityMath.EffectiveCpuCores(caps.CpuCores, caps.CpuLimitPercent));
+                    ramQuotaBytes = Math.Max(ramQuotaBytes, WorkerCapabilityMath.LimitBytes(ToUnsigned(caps.RamTotalBytes), caps.RamLimitPercent));
+                    storageUsedBytes = Math.Max(storageUsedBytes, CalculateUsedBytes(caps.StorageFreeBytes, caps.StorageTotalBytes));
+                    storageQuotaBytes = Math.Max(storageQuotaBytes, WorkerCapabilityMath.LimitBytes(ToUnsigned(caps.StorageTotalBytes), caps.StorageLimitPercent));
+
+                    if (caps.HasGpu && caps.VramTotalBytes > 0)
+                    {
+                        gpuWorkerCount++;
+                        vramUsedBytes = Math.Max(vramUsedBytes, CalculateUsedBytes(caps.VramFreeBytes, caps.VramTotalBytes));
+                        vramQuotaBytes = Math.Max(vramQuotaBytes, WorkerCapabilityMath.LimitBytes(ToUnsigned(caps.VramTotalBytes), caps.GpuVramLimitPercent));
+                    }
+                }
+
+                return new WorkbenchWorkerHostLoadRollup(
+                    group.Count(),
+                    gpuWorkerCount,
+                    cpuUsedCores,
+                    cpuQuotaCores,
+                    ramUsedBytes,
+                    ramQuotaBytes,
+                    storageUsedBytes,
+                    storageQuotaBytes,
+                    vramUsedBytes,
+                    vramQuotaBytes);
+            })
+            .ToArray();
     }
 
     private static string BuildPressureSummary(

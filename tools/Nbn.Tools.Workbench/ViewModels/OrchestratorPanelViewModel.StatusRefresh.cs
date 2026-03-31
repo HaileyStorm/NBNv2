@@ -476,7 +476,7 @@ public sealed partial class OrchestratorPanelViewModel
             Nodes.Clear();
             WorkerEndpoints.Clear();
             Actors.Clear();
-            WorkerEndpointSummary = "No active workers.";
+            WorkerEndpointSummary = "No active nodes.";
             SystemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
             SystemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
             SystemLoadTickSummary = "Tick health: awaiting HiveMind status.";
@@ -1302,39 +1302,7 @@ public sealed partial class OrchestratorPanelViewModel
     }
 
     private bool IsWorkerHostCandidate(string? logicalName, string? rootActorName)
-    {
-        if (!string.IsNullOrWhiteSpace(Connections.WorkerLogicalName)
-            && !string.IsNullOrWhiteSpace(logicalName)
-            && string.Equals(logicalName.Trim(), Connections.WorkerLogicalName.Trim(), StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (!string.IsNullOrWhiteSpace(Connections.WorkerRootName)
-            && !string.IsNullOrWhiteSpace(rootActorName)
-            && string.Equals(rootActorName.Trim(), Connections.WorkerRootName.Trim(), StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (!string.IsNullOrWhiteSpace(logicalName)
-            && logicalName.Trim().StartsWith("nbn.worker", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (string.IsNullOrWhiteSpace(rootActorName))
-        {
-            return false;
-        }
-
-        var root = rootActorName.Trim();
-        return root.StartsWith("worker-node", StringComparison.OrdinalIgnoreCase)
-               || root.Equals("regionhost", StringComparison.OrdinalIgnoreCase)
-               || root.Equals("region-host", StringComparison.OrdinalIgnoreCase)
-               || root.StartsWith("regionhost-", StringComparison.OrdinalIgnoreCase)
-               || root.StartsWith("region-host-", StringComparison.OrdinalIgnoreCase);
-    }
+        => WorkbenchWorkerHostGrouping.IsWorkerHostCandidate(Connections, logicalName, rootActorName);
 
     private sealed record HostedActorRowsResult(
         IReadOnlyList<NodeStatusItem> Rows,

@@ -203,7 +203,7 @@
         <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
           <Border Classes="card" Grid.Column="0">
             <StackPanel Spacing="8">
-              <TextBlock Text="Worker Hosts" Classes="card-title" />
+              <TextBlock Text="Workers" Classes="card-title" />
               <TextBlock Text="{Binding WorkerEndpointSummary}" Classes="muted" />
               <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled">
                 <ItemsControl ItemsSource="{Binding WorkerEndpoints}">

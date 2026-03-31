@@ -779,7 +779,13 @@ public sealed class DebugPanelViewModel : ViewModelBase, IAsyncDisposable
                 ? (long)inventory.SnapshotMs
                 : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var workers = inventory?.Workers?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.WorkerReadinessCapability>();
-            var filteredWorkers = WorkbenchSystemLoadSummaryBuilder.FilterWorkers(workers, referenceMs);
+            var filteredWorkers = WorkbenchSystemLoadSummaryBuilder.FilterWorkers(
+                workers,
+                referenceMs,
+                worker => WorkbenchWorkerHostGrouping.IsWorkerHostCandidate(
+                    _connections,
+                    worker.LogicalName,
+                    worker.RootActorName));
             var history = _systemLoadHistory.Record(filteredWorkers, hiveMindStatus, referenceMs);
             var summary = WorkbenchSystemLoadSummaryBuilder.Build(filteredWorkers, hiveMindStatus, history);
 
