@@ -40,6 +40,7 @@ public partial class WorkbenchClient : IAsyncDisposable
     private PID? _settingsPid;
     private PID? _hiveMindPid;
     private bool _debugSubscribed;
+    private string? _debugSubscriptionKey;
     private bool _vizSubscribed;
     private Guid? _vizBrainEnabled;
     private uint? _vizFocusRegionId;

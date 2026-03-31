@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
+using Nbn.Proto.Debug;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
+using Proto;
 
 namespace Nbn.Tests.Workbench;
 
@@ -73,11 +76,79 @@ public sealed class WorkbenchClientObservabilityTests
         Assert.NotEqual(initialLabel, updatedLabel);
     }
 
+    [Fact]
+    public async Task SetDebugSubscription_DoesNotResubscribe_WhenFilterIsUnchanged()
+    {
+        var sink = new RecordingSink();
+        var clientPort = ReserveFreePort();
+
+        await using var client = new WorkbenchClient(sink);
+        await client.EnsureStartedAsync("127.0.0.1", clientPort);
+
+        var system = GetPrivateField<ActorSystem>(client, "_system");
+        var debugHubPid = system.Root.Spawn(Props.FromProducer(static () => new DebugSubscribeCounterActor()));
+        SetPrivateField(client, "_debugHubPid", debugHubPid);
+
+        var filter = new DebugSubscriptionFilter(
+            StreamEnabled: true,
+            MinSeverity: Nbn.Proto.Severity.SevWarn,
+            ContextRegex: "brain",
+            IncludeContextPrefixes: new[] { "hivemind." },
+            ExcludeContextPrefixes: Array.Empty<string>(),
+            IncludeSummaryPrefixes: new[] { "brain." },
+            ExcludeSummaryPrefixes: Array.Empty<string>());
+
+        client.SetDebugSubscription(true, filter);
+        client.SetDebugSubscription(true, filter);
+
+        var subscribeCount = await system.Root.RequestAsync<int>(debugHubPid, new GetDebugSubscribeCount());
+        Assert.Equal(1, subscribeCount);
+    }
+
     private static int ReserveFreePort()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         return ((IPEndPoint)listener.LocalEndpoint).Port;
+    }
+
+    private static T GetPrivateField<T>(object target, string name) where T : class
+    {
+        var field = target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        var value = field!.GetValue(target);
+        var typed = value as T;
+        Assert.NotNull(typed);
+        return typed!;
+    }
+
+    private static void SetPrivateField(object target, string name, object? value)
+    {
+        var field = target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field!.SetValue(target, value);
+    }
+
+    private sealed record GetDebugSubscribeCount;
+
+    private sealed class DebugSubscribeCounterActor : IActor
+    {
+        private int _count;
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case DebugSubscribe:
+                    _count++;
+                    break;
+                case GetDebugSubscribeCount:
+                    context.Respond(_count);
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingSink : IWorkbenchEventSink

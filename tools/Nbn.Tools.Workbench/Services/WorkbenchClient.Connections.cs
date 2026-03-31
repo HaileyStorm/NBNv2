@@ -216,6 +216,7 @@ public partial class WorkbenchClient
         _vizHubPid = new PID($"{host}:{port}", vizHub);
 
         _debugSubscribed = false;
+        _debugSubscriptionKey = null;
         _vizSubscribed = false;
         var reachable = await IsEndpointReachableAsync(host, port, TimeSpan.FromSeconds(2)).ConfigureAwait(false);
         _sink.OnObsStatus(
@@ -238,10 +239,17 @@ public partial class WorkbenchClient
 
         filter ??= DebugSubscriptionFilter.Default;
         var subscriber = PidLabel(_receiverPid);
+        var subscriptionKey = BuildDebugSubscriptionKey(filter);
         if (enabled)
         {
+            if (_debugSubscribed && string.Equals(_debugSubscriptionKey, subscriptionKey, StringComparison.Ordinal))
+            {
+                return;
+            }
+
             _root.Send(_debugHubPid, BuildDebugSubscribe(subscriber, filter));
             _debugSubscribed = true;
+            _debugSubscriptionKey = subscriptionKey;
             if (WorkbenchLog.Enabled)
             {
                 WorkbenchLog.Info(
@@ -257,6 +265,7 @@ public partial class WorkbenchClient
 
         _root.Send(_debugHubPid, new DebugUnsubscribe { SubscriberActor = subscriber });
         _debugSubscribed = false;
+        _debugSubscriptionKey = null;
         if (WorkbenchLog.Enabled)
         {
             WorkbenchLog.Info($"DebugSub enabled=false subscriber={subscriber} hub={PidLabel(_debugHubPid)}");
@@ -363,6 +372,7 @@ public partial class WorkbenchClient
         }
 
         _debugSubscribed = false;
+        _debugSubscriptionKey = null;
         _vizSubscribed = false;
         _sink.OnObsStatus("Disconnected", false);
     }
@@ -431,6 +441,7 @@ public partial class WorkbenchClient
             _settingsPid = null;
             _hiveMindPid = null;
             _debugSubscribed = false;
+            _debugSubscriptionKey = null;
             _vizSubscribed = false;
             _vizBrainEnabled = null;
             _vizFocusRegionId = null;
@@ -462,6 +473,22 @@ public partial class WorkbenchClient
         request.IncludeSummaryPrefixes.Add(filter.IncludeSummaryPrefixes ?? Array.Empty<string>());
         request.ExcludeSummaryPrefixes.Add(filter.ExcludeSummaryPrefixes ?? Array.Empty<string>());
         return request;
+    }
+
+    private static string BuildDebugSubscriptionKey(DebugSubscriptionFilter filter)
+    {
+        static string Normalize(IEnumerable<string> values)
+            => string.Join("\u001f", values ?? Array.Empty<string>());
+
+        return string.Join(
+            "\u001e",
+            filter.StreamEnabled ? "1" : "0",
+            ((int)filter.MinSeverity).ToString(),
+            filter.ContextRegex ?? string.Empty,
+            Normalize(filter.IncludeContextPrefixes),
+            Normalize(filter.ExcludeContextPrefixes),
+            Normalize(filter.IncludeSummaryPrefixes),
+            Normalize(filter.ExcludeSummaryPrefixes));
     }
 
     private string PidLabel(PID pid)
