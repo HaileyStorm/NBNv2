@@ -2949,6 +2949,159 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_HostedActors_CapsBrainWindow_AndAllowsShowMore_ForHiddenLiveBrains()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerNodeId = Guid.NewGuid();
+        IReadOnlyList<BrainListItem>? publishedBrains = null;
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = workerNodeId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse(),
+            PlacementLifecycleFactory = requestedBrainId => BuildPlacementLifecycle(
+                requestedBrainId,
+                PlacementLifecycleState.PlacementLifecycleRunning,
+                registeredShards: 1)
+        };
+
+        for (var index = 0; index < 70; index++)
+        {
+            var brainId = Guid.NewGuid();
+            client.BrainsResponse.Brains.Add(new BrainStatus
+            {
+                BrainId = brainId.ToProtoUuid(),
+                SpawnedMs = (ulong)(nowMs - index),
+                LastTickId = (ulong)index,
+                State = "Active"
+            });
+            client.BrainsResponse.Controllers.Add(new BrainControllerStatus
+            {
+                BrainId = brainId.ToProtoUuid(),
+                NodeId = workerNodeId.ToProtoUuid(),
+                ActorName = $"worker-node/brain-{brainId:N}-root",
+                LastSeenMs = (ulong)nowMs,
+                IsAlive = true
+            });
+        }
+
+        var vm = CreateViewModel(connections, client, brainsUpdated: brains => publishedBrains = brains);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.NotNull(publishedBrains);
+        Assert.Equal(64, publishedBrains!.Count);
+        Assert.Equal(64, client.GetPlacementLifecycleCallCount);
+        Assert.Equal(64, client.RequestPlacementReconcileCallCount);
+        Assert.True(vm.CanShowMoreHostedActors);
+        Assert.Equal(64, vm.Actors.Count);
+        Assert.Contains("64 of 70", vm.HostedActorSummary, StringComparison.Ordinal);
+
+        vm.ShowMoreHostedActorsCommand.Execute(null);
+        await WaitForAsync(
+            () => publishedBrains?.Count == 70 && vm.Actors.Count == 70 && !vm.CanShowMoreHostedActors,
+            timeoutMs: 5000);
+
+        Assert.Equal(134, client.GetPlacementLifecycleCallCount);
+        Assert.Equal(134, client.RequestPlacementReconcileCallCount);
+        Assert.Contains("70 brains in scope", vm.HostedActorSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_HostedActors_CapIncludesDeadBrains_AndHidesShowMore_WhenOnlyDeadRemain()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerNodeId = Guid.NewGuid();
+        IReadOnlyList<BrainListItem>? publishedBrains = null;
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = workerNodeId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse(),
+            PlacementLifecycleFactory = requestedBrainId => BuildPlacementLifecycle(
+                requestedBrainId,
+                PlacementLifecycleState.PlacementLifecycleRunning,
+                registeredShards: 1)
+        };
+
+        for (var index = 0; index < 10; index++)
+        {
+            var brainId = Guid.NewGuid();
+            client.BrainsResponse.Brains.Add(new BrainStatus
+            {
+                BrainId = brainId.ToProtoUuid(),
+                SpawnedMs = (ulong)(nowMs - index),
+                LastTickId = (ulong)index,
+                State = "Active"
+            });
+            client.BrainsResponse.Controllers.Add(new BrainControllerStatus
+            {
+                BrainId = brainId.ToProtoUuid(),
+                NodeId = workerNodeId.ToProtoUuid(),
+                ActorName = $"worker-node/brain-{brainId:N}-root",
+                LastSeenMs = (ulong)nowMs,
+                IsAlive = true
+            });
+        }
+
+        for (var index = 0; index < 70; index++)
+        {
+            client.BrainsResponse.Brains.Add(new BrainStatus
+            {
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpawnedMs = (ulong)(nowMs - 10_000 - index),
+                LastTickId = (ulong)index,
+                State = "Dead"
+            });
+        }
+
+        var vm = CreateViewModel(connections, client, brainsUpdated: brains => publishedBrains = brains);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.NotNull(publishedBrains);
+        Assert.Equal(64, publishedBrains!.Count);
+        Assert.Equal(54, publishedBrains.Count(entry => string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase)));
+        Assert.Equal(10, client.GetPlacementLifecycleCallCount);
+        Assert.Equal(10, client.RequestPlacementReconcileCallCount);
+        Assert.False(vm.CanShowMoreHostedActors);
+        Assert.Equal(10, vm.Actors.Count);
+        Assert.Contains("64 of 80", vm.HostedActorSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task DesignerSpawn_AllowsDiscoveryReady_WhenConnectionFlagsAreFalse()
     {
         var connections = new ConnectionViewModel
@@ -3319,12 +3472,14 @@ public class OrchestratorPanelViewModelTests
         WorkbenchClient client,
         ILocalProjectLaunchPreparer? launchPreparer = null,
         ILocalFirewallManager? firewallManager = null,
-        Func<Task>? connectAll = null)
+        Func<Task>? connectAll = null,
+        Action<IReadOnlyList<BrainListItem>>? brainsUpdated = null)
     {
         return new OrchestratorPanelViewModel(
             new UiDispatcher(),
             connections,
             client,
+            brainsUpdated: brainsUpdated,
             connectAll: connectAll ?? (() => Task.CompletedTask),
             disconnectAll: () => { },
             launchPreparer: launchPreparer,

@@ -23,6 +23,8 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
 
     private const int MaxWorkerBrainHints = 2;
     private const int MaxRows = 200;
+    private const int InitialHostedActorBrainRenderLimit = 64;
+    private const int HostedActorBrainRenderStep = 64;
     private const long StaleNodeMs = 15000;
     private const long WorkerFailedAfterMs = 45000;
     private const long WorkerRemoveAfterMs = 120000;
@@ -56,6 +58,10 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private readonly WorkbenchSystemLoadHistoryTracker _systemLoadHistory = new();
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private bool _suspendReconnectRequests;
+    private bool _canShowMoreHostedActors;
+    private int _hostedActorBrainRenderLimit = InitialHostedActorBrainRenderLimit;
+    private int _hostedActorRenderedBrainCount;
+    private int _hostedActorTotalBrainCount;
     private string _statusMessage = "Idle";
     private string _settingsLaunchStatus = "Idle";
     private string _hiveMindLaunchStatus = "Idle";
@@ -73,6 +79,7 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private string _lastSeededPullSettingsPortText = string.Empty;
     private string _lastSeededPullSettingsName = string.Empty;
     private string _workerEndpointSummary = "No active nodes.";
+    private string _hostedActorSummary = "Hosted actors: awaiting current brain state.";
     private string _systemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
     private string _systemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
     private string _systemLoadTickSummary = "Tick health: awaiting HiveMind status.";
@@ -180,6 +187,7 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
         StartAllCommand = new AsyncRelayCommand(StartAllAsync);
         StopAllCommand = new AsyncRelayCommand(StopAllAsync);
         ProfileCurrentSystemCommand = new AsyncRelayCommand(ProfileCurrentSystemAsync);
+        ShowMoreHostedActorsCommand = new AsyncRelayCommand(ShowMoreHostedActorsAsync, () => CanShowMoreHostedActors);
         RefreshEndpointRows();
         _ = StartAutoRefreshAsync();
     }
@@ -241,6 +249,7 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     public AsyncRelayCommand StopAllCommand { get; }
 
     public AsyncRelayCommand ProfileCurrentSystemCommand { get; }
+    public AsyncRelayCommand ShowMoreHostedActorsCommand { get; }
 
     public string SettingsLaunchStatus
     {
@@ -289,6 +298,14 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
         get => _workerEndpointSummary;
         set => SetProperty(ref _workerEndpointSummary, value);
     }
+
+    public string HostedActorSummary
+    {
+        get => _hostedActorSummary;
+        set => SetProperty(ref _hostedActorSummary, value);
+    }
+
+    public bool CanShowMoreHostedActors => _canShowMoreHostedActors;
 
     public string SystemLoadResourceSummary
     {
@@ -465,5 +482,45 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
             Terminations.Insert(0, item);
             Trim(Terminations);
         });
+    }
+
+    private void SetHostedActorRenderState(int visibleBrainCount, int totalBrainCount, bool canShowMore)
+    {
+        _hostedActorRenderedBrainCount = visibleBrainCount;
+        _hostedActorTotalBrainCount = totalBrainCount;
+        _canShowMoreHostedActors = canShowMore;
+        HostedActorSummary = BuildHostedActorSummary(visibleBrainCount, totalBrainCount, canShowMore);
+        OnPropertyChanged(nameof(CanShowMoreHostedActors));
+        ShowMoreHostedActorsCommand.RaiseCanExecuteChanged();
+    }
+
+    private static string BuildHostedActorSummary(int visibleBrainCount, int totalBrainCount, bool canShowMore)
+    {
+        if (totalBrainCount <= 0)
+        {
+            return "Hosted actors: no known brains.";
+        }
+
+        if (visibleBrainCount >= totalBrainCount)
+        {
+            return $"Hosted actors: {visibleBrainCount} brain{(visibleBrainCount == 1 ? string.Empty : "s")} in scope.";
+        }
+
+        return canShowMore
+            ? $"Hosted actors: showing {visibleBrainCount} of {totalBrainCount} brains; more live brains are available."
+            : $"Hosted actors: showing {visibleBrainCount} of {totalBrainCount} brains.";
+    }
+
+    private async Task ShowMoreHostedActorsAsync()
+    {
+        if (!CanShowMoreHostedActors)
+        {
+            return;
+        }
+
+        _hostedActorBrainRenderLimit = _hostedActorBrainRenderLimit > int.MaxValue - HostedActorBrainRenderStep
+            ? int.MaxValue
+            : _hostedActorBrainRenderLimit + HostedActorBrainRenderStep;
+        await RefreshAsync(force: true).ConfigureAwait(false);
     }
 }

@@ -79,7 +79,26 @@ public sealed partial class OrchestratorPanelViewModel
                 brains,
                 nowMs);
             var workerNowMs = ResolveWorkerReferenceTimeMs(workerInventoryResponse, settingsNowMs);
-            var actorRowsResult = await BuildActorRowsAsync(controllers, sortedNodes, brains, settingsNowMs).ConfigureAwait(false);
+            var controllerMap = controllers
+                .Where(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out _))
+                .ToDictionary(
+                    entry => entry.BrainId!.ToGuid(),
+                    entry =>
+                    {
+                        var controllerAlive = entry.IsAlive && IsFresh(entry.LastSeenMs, settingsNowMs);
+                        return (entry, controllerAlive);
+                    });
+            var freshControllerBrainIds = controllerMap
+                .Where(static entry => entry.Value.controllerAlive)
+                .Select(static entry => entry.Key)
+                .ToHashSet();
+            var brainRenderSelection = BuildBrainRenderSelection(brains, freshControllerBrainIds, settingsNowMs);
+            var actorRowsResult = await BuildActorRowsAsync(
+                    controllers,
+                    sortedNodes,
+                    brainRenderSelection.VisibleEntries,
+                    settingsNowMs)
+                .ConfigureAwait(false);
             var workerEndpointState = BuildWorkerEndpointState(
                 sortedNodes,
                 workerInventory,
@@ -157,6 +176,10 @@ public sealed partial class OrchestratorPanelViewModel
                 }
 
                 WorkerEndpointSummary = workerEndpointState.SummaryText;
+                SetHostedActorRenderState(
+                    brainRenderSelection.VisibleBrainCount,
+                    brainRenderSelection.TotalBrainCount,
+                    brainRenderSelection.CanShowMore);
                 SystemLoadResourceSummary = systemLoadState.ResourceSummary;
                 SystemLoadPressureSummary = systemLoadState.PressureSummary;
                 SystemLoadTickSummary = systemLoadState.TickSummary;
@@ -173,35 +196,11 @@ public sealed partial class OrchestratorPanelViewModel
 
             UpdateConnectionStatusesFromNodes(nodes, settingsNowMs, workerEndpointState, discoveredServiceEndpoints);
 
-            var controllerMap = controllers
-                .Where(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out _))
-                .ToDictionary(
-                    entry => entry.BrainId!.ToGuid(),
-                    entry =>
-                    {
-                        var controllerAlive = entry.IsAlive && IsFresh(entry.LastSeenMs, settingsNowMs);
-                        return (entry, controllerAlive);
-                    });
-
-            var brainEntries = brains.Select(entry =>
-            {
-                var brainId = entry.BrainId?.ToGuid() ?? Guid.Empty;
-                var alive = controllerMap.TryGetValue(brainId, out var controller) && controller.Item2;
-                var spawnedRecently = IsSpawnRecent(entry.SpawnedMs, settingsNowMs);
-                var item = new BrainListItem(brainId, entry.State ?? string.Empty, alive);
-                return (item, spawnedRecently);
-            }).Where(entry => entry.item.BrainId != Guid.Empty).ToList();
-
-            var brainListAll = brainEntries
-                .Select(entry => entry.item)
+            var brainListAll = brainRenderSelection.AllEntries
+                .Select(static entry => entry.Item)
                 .ToList();
             RecordBrainTerminations(brainListAll);
-            var brainList = brainEntries
-                .Where(entry => !string.Equals(entry.item.State, "Dead", StringComparison.OrdinalIgnoreCase))
-                .Where(entry => entry.item.ControllerAlive || entry.spawnedRecently)
-                .Select(entry => entry.item)
-                .ToList();
-            _brainsUpdated?.Invoke(brainList);
+            _brainsUpdated?.Invoke(brainRenderSelection.VisibleBrainList);
 
             if (force)
             {
@@ -492,6 +491,7 @@ public sealed partial class OrchestratorPanelViewModel
             WorkerNodeGroups.Clear();
             Actors.Clear();
             ActorNodeGroups.Clear();
+            SetHostedActorRenderState(0, 0, canShowMore: false);
             WorkerEndpointSummary = "No active nodes.";
             SystemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
             SystemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
@@ -999,10 +999,21 @@ public sealed partial class OrchestratorPanelViewModel
     private async Task<HostedActorRowsResult> BuildActorRowsAsync(
         IReadOnlyList<Nbn.Proto.Settings.BrainControllerStatus> controllers,
         IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
-        IReadOnlyList<Nbn.Proto.Settings.BrainStatus> brains,
+        IReadOnlyList<BrainRenderEntry> renderedBrains,
         long nowMs)
     {
         var rows = new List<HostedActorDisplayEntry>();
+        var liveBrainInfoById = renderedBrains
+            .ToDictionary(
+                entry => entry.Item.BrainId,
+                entry => new BrainHostedActorInfo(
+                    entry.Item.State,
+                    entry.SpawnedMs,
+                    entry.IncludeInHostedActors));
+        var renderedBrainIds = renderedBrains
+            .Where(static entry => entry.IncludeInHostedActors)
+            .Select(static entry => entry.Item.BrainId)
+            .ToHashSet();
         var workerBrainHints = new Dictionary<Guid, HashSet<Guid>>();
         var workerBackendProbeRequests = new Dictionary<(Guid NodeId, Guid BrainId), Dictionary<(int RegionId, int ShardIndex), WorkerBrainBackendProbeRequest>>();
         var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1109,6 +1120,13 @@ public sealed partial class OrchestratorPanelViewModel
                      .ThenBy(entry => entry.ActorName ?? string.Empty, StringComparer.OrdinalIgnoreCase))
         {
             var brainId = controller.BrainId!.ToGuid();
+            if (!renderedBrainIds.Contains(brainId)
+                || !liveBrainInfoById.TryGetValue(brainId, out var brainInfo)
+                || !brainInfo.IncludeInHostedActors)
+            {
+                continue;
+            }
+
             var hostLabel = "controller node";
             var address = string.Empty;
             var hostSeenMs = (long)controller.LastSeenMs;
@@ -1146,12 +1164,7 @@ public sealed partial class OrchestratorPanelViewModel
                 hostIsWorker: hostIsWorker);
         }
 
-        var activeBrainIds = brains
-            .Where(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out _))
-            .Select(entry => entry.BrainId!.ToGuid())
-            .Where(id => id != Guid.Empty)
-            .Distinct()
-            .ToArray();
+        var activeBrainIds = renderedBrainIds.ToArray();
         if (activeBrainIds.Length == 0)
         {
             return new HostedActorRowsResult(
@@ -1171,6 +1184,7 @@ public sealed partial class OrchestratorPanelViewModel
             .Where(entry =>
                 entry.IsAlive
                 && IsFresh(entry.LastSeenMs, nowMs)
+                && IsWorkerHostCandidate(entry)
                 && !string.IsNullOrWhiteSpace(entry.Address)
                 && !string.IsNullOrWhiteSpace(entry.RootActorName))
             .ToArray();
@@ -1321,6 +1335,70 @@ public sealed partial class OrchestratorPanelViewModel
         IReadOnlyList<HostedActorNodeGroupItem> Groups,
         IReadOnlyDictionary<Guid, HashSet<Guid>> WorkerBrainHints,
         IReadOnlyDictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint> WorkerBrainBackends);
+
+    private BrainRenderSelection BuildBrainRenderSelection(
+        IReadOnlyList<Nbn.Proto.Settings.BrainStatus> brains,
+        ISet<Guid> freshControllerBrainIds,
+        long nowMs)
+    {
+        var orderedEntries = brains
+            .Where(entry => entry.BrainId is not null && entry.BrainId.TryToGuid(out var parsedBrainId) && parsedBrainId != Guid.Empty)
+            .Select(entry =>
+            {
+                var brainId = entry.BrainId!.ToGuid();
+                var controllerAlive = freshControllerBrainIds.Contains(brainId);
+                var spawnedRecently = IsSpawnRecent(entry.SpawnedMs, nowMs);
+                var item = new BrainListItem(brainId, entry.State ?? string.Empty, controllerAlive);
+                var includeInHostedActors = !string.Equals(item.State, "Dead", StringComparison.OrdinalIgnoreCase)
+                    && (controllerAlive || spawnedRecently);
+                return new BrainRenderEntry(
+                    item,
+                    (long)entry.SpawnedMs,
+                    spawnedRecently,
+                    includeInHostedActors);
+            })
+            .OrderByDescending(static entry => entry.IncludeInHostedActors)
+            .ThenByDescending(static entry => entry.Item.ControllerAlive)
+            .ThenBy(static entry => string.Equals(entry.Item.State, "Dead", StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(static entry => entry.SpawnedRecently)
+            .ThenByDescending(static entry => entry.SpawnedMs)
+            .ThenBy(static entry => entry.Item.BrainId)
+            .ToList();
+        var visibleEntries = orderedEntries
+            .Take(_hostedActorBrainRenderLimit)
+            .ToList();
+        var canShowMore = visibleEntries.Count == _hostedActorBrainRenderLimit
+                          && visibleEntries.Count > 0
+                          && visibleEntries.All(static entry => entry.IncludeInHostedActors)
+                          && orderedEntries.Skip(visibleEntries.Count).Any(static entry => entry.IncludeInHostedActors);
+        return new BrainRenderSelection(
+            orderedEntries,
+            visibleEntries,
+            visibleEntries.Select(static entry => entry.Item).ToList(),
+            orderedEntries.Count,
+            canShowMore);
+    }
+
+    private sealed record BrainRenderSelection(
+        IReadOnlyList<BrainRenderEntry> AllEntries,
+        IReadOnlyList<BrainRenderEntry> VisibleEntries,
+        IReadOnlyList<BrainListItem> VisibleBrainList,
+        int TotalBrainCount,
+        bool CanShowMore)
+    {
+        public int VisibleBrainCount => VisibleEntries.Count;
+    }
+
+    private sealed record BrainRenderEntry(
+        BrainListItem Item,
+        long SpawnedMs,
+        bool SpawnedRecently,
+        bool IncludeInHostedActors);
+
+    private sealed record BrainHostedActorInfo(
+        string State,
+        long SpawnedMs,
+        bool IncludeInHostedActors);
 
     private sealed record HostedActorDisplayEntry(
         bool IsOnlineWorkerHost,

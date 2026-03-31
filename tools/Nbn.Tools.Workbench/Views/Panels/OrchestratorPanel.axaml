@@ -274,7 +274,14 @@
 
           <Border Classes="card" Grid.Column="1">
             <StackPanel Spacing="8">
-              <TextBlock Text="Hosted Actors" Classes="card-title" />
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                <TextBlock Text="Hosted Actors" Classes="card-title" />
+                <Button Grid.Column="1"
+                        Content="Show More"
+                        Command="{Binding ShowMoreHostedActorsCommand}"
+                        IsVisible="{Binding CanShowMoreHostedActors}" />
+              </Grid>
+              <TextBlock Text="{Binding HostedActorSummary}" Classes="muted" TextWrapping="Wrap" />
               <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled">
                 <ItemsControl ItemsSource="{Binding ActorNodeGroups}">
                   <ItemsControl.ItemTemplate>
