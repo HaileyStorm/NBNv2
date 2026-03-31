@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Nbn.Tools.Workbench.Models;
 
@@ -132,6 +133,15 @@ public sealed record WorkerEndpointItem(
     public string GpuChipForeground => "#183B7A";
     public string BrainHintSummary => $"Brains ({Math.Max(0, BrainCount)}): {BrainHints}";
 }
+
+public sealed record WorkerNodeGroupItem(
+    string NodeLabel,
+    string WorkerCountText,
+    IReadOnlyList<WorkerEndpointItem> Workers);
+
+public sealed record HostedActorNodeGroupItem(
+    string NodeLabel,
+    IReadOnlyList<NodeStatusItem> Actors);
 
 public sealed record EndpointStatusItem(
     string ServiceName,

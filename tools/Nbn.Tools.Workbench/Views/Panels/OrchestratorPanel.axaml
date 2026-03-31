@@ -206,43 +206,64 @@
               <TextBlock Text="Workers" Classes="card-title" />
               <TextBlock Text="{Binding WorkerEndpointSummary}" Classes="muted" />
               <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled">
-                <ItemsControl ItemsSource="{Binding WorkerEndpoints}">
+                <ItemsControl ItemsSource="{Binding WorkerNodeGroups}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                      <Border Classes="row">
-                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                          <StackPanel Spacing="6">
-                            <Border Classes="pill"
-                                    Background="{Binding StatusChipBackground}"
-                                    BorderBrush="{Binding StatusChipBorder}"
-                                    BorderThickness="1">
-                              <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
-                            </Border>
-                            <Border Classes="pill"
-                                    Background="{Binding CpuChipBackground}"
-                                    BorderBrush="{Binding CpuChipBorder}"
-                                    BorderThickness="1"
-                                    IsVisible="{Binding HasCpuCapability}">
-                              <TextBlock Text="{Binding CpuCapability}" Foreground="{Binding CpuChipForeground}" />
-                            </Border>
-                            <Border Classes="pill"
-                                    Background="{Binding GpuChipBackground}"
-                                    BorderBrush="{Binding GpuChipBorder}"
-                                    BorderThickness="1"
-                                    IsVisible="{Binding HasGpuCapability}">
-                              <TextBlock Text="{Binding GpuCapability}" Foreground="{Binding GpuChipForeground}" />
-                            </Border>
-                          </StackPanel>
-                          <StackPanel Grid.Column="1">
-                            <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
-                            <TextBlock Text="{Binding Address}" Classes="muted" />
-                            <TextBlock Text="{Binding RootActor}" Classes="muted" />
-                            <TextBlock Text="{Binding PlacementDetail}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasPlacementDetail}" />
-                            <TextBlock Text="{Binding BrainHintSummary}" Classes="muted" TextWrapping="Wrap" />
-                          </StackPanel>
-                          <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
-                        </Grid>
-                      </Border>
+                      <Grid Margin="0,4,0,8">
+                        <Border Margin="0,8,0,0"
+                                Padding="12,14,12,8"
+                                Background="#FFFFFF"
+                                BorderBrush="{DynamicResource NbnBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="12">
+                          <ItemsControl ItemsSource="{Binding Workers}">
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate>
+                                <Border Classes="row">
+                                  <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                    <StackPanel Spacing="6">
+                                      <Border Classes="pill"
+                                              Background="{Binding StatusChipBackground}"
+                                              BorderBrush="{Binding StatusChipBorder}"
+                                              BorderThickness="1">
+                                        <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
+                                      </Border>
+                                      <Border Classes="pill"
+                                              Background="{Binding CpuChipBackground}"
+                                              BorderBrush="{Binding CpuChipBorder}"
+                                              BorderThickness="1"
+                                              IsVisible="{Binding HasCpuCapability}">
+                                        <TextBlock Text="{Binding CpuCapability}" Foreground="{Binding CpuChipForeground}" />
+                                      </Border>
+                                      <Border Classes="pill"
+                                              Background="{Binding GpuChipBackground}"
+                                              BorderBrush="{Binding GpuChipBorder}"
+                                              BorderThickness="1"
+                                              IsVisible="{Binding HasGpuCapability}">
+                                        <TextBlock Text="{Binding GpuCapability}" Foreground="{Binding GpuChipForeground}" />
+                                      </Border>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1">
+                                      <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
+                                      <TextBlock Text="{Binding Address}" Classes="muted" />
+                                      <TextBlock Text="{Binding RootActor}" Classes="muted" />
+                                      <TextBlock Text="{Binding PlacementDetail}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasPlacementDetail}" />
+                                      <TextBlock Text="{Binding BrainHintSummary}" Classes="muted" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
+                                  </Grid>
+                                </Border>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                        </Border>
+                        <Border Margin="12,0,0,0"
+                                Padding="8,0"
+                                HorizontalAlignment="Left"
+                                Background="#FFFFFF">
+                          <TextBlock Text="{Binding NodeLabel}" Classes="row-title" />
+                        </Border>
+                      </Grid>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
@@ -254,25 +275,46 @@
             <StackPanel Spacing="8">
               <TextBlock Text="Hosted Actors" Classes="card-title" />
               <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled">
-                <ItemsControl ItemsSource="{Binding Actors}">
+                <ItemsControl ItemsSource="{Binding ActorNodeGroups}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                      <Border Classes="row">
-                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                          <Border Classes="pill"
-                                  Background="{Binding StatusChipBackground}"
-                                  BorderBrush="{Binding StatusChipBorder}"
-                                  BorderThickness="1">
-                            <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
-                          </Border>
-                          <StackPanel Grid.Column="1">
-                            <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
-                            <TextBlock Text="{Binding Address}" Classes="muted" />
-                            <TextBlock Text="{Binding RootActor}" Classes="muted" />
-                          </StackPanel>
-                          <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
-                        </Grid>
-                      </Border>
+                      <Grid Margin="0,4,0,8">
+                        <Border Margin="0,8,0,0"
+                                Padding="12,14,12,8"
+                                Background="#FFFFFF"
+                                BorderBrush="{DynamicResource NbnBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="12">
+                          <ItemsControl ItemsSource="{Binding Actors}">
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate>
+                                <Border Classes="row">
+                                  <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                    <Border Classes="pill"
+                                            Background="{Binding StatusChipBackground}"
+                                            BorderBrush="{Binding StatusChipBorder}"
+                                            BorderThickness="1">
+                                      <TextBlock Text="{Binding Status}" Foreground="{Binding StatusChipForeground}" />
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                      <TextBlock Text="{Binding LogicalName}" Classes="row-title" />
+                                      <TextBlock Text="{Binding Address}" Classes="muted" />
+                                      <TextBlock Text="{Binding RootActor}" Classes="muted" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Text="{Binding LastSeen}" Classes="muted" HorizontalAlignment="Right" />
+                                  </Grid>
+                                </Border>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                        </Border>
+                        <Border Margin="12,0,0,0"
+                                Padding="8,0"
+                                HorizontalAlignment="Left"
+                                Background="#FFFFFF">
+                          <TextBlock Text="{Binding NodeLabel}" Classes="row-title" />
+                        </Border>
+                      </Grid>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>

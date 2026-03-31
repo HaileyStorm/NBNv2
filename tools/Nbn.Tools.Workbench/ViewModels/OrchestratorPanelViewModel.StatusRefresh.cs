@@ -99,7 +99,9 @@ public sealed partial class OrchestratorPanelViewModel
             {
                 Nodes.Clear();
                 WorkerEndpoints.Clear();
+                WorkerNodeGroups.Clear();
                 Actors.Clear();
+                ActorNodeGroups.Clear();
                 foreach (var node in sortedNodes)
                 {
                     var isFresh = IsFresh(node.LastSeenMs, settingsNowMs);
@@ -118,9 +120,19 @@ public sealed partial class OrchestratorPanelViewModel
                     WorkerEndpoints.Add(workerRow);
                 }
 
+                foreach (var workerGroup in workerEndpointState.Groups)
+                {
+                    WorkerNodeGroups.Add(workerGroup);
+                }
+
                 foreach (var actorRow in actorRowsResult.Rows)
                 {
                     Actors.Add(actorRow);
+                }
+
+                foreach (var actorGroup in actorRowsResult.Groups)
+                {
+                    ActorNodeGroups.Add(actorGroup);
                 }
 
                 foreach (var entry in settings)
@@ -153,7 +165,9 @@ public sealed partial class OrchestratorPanelViewModel
                 SystemLoadSparklineStroke = systemLoadState.SparklineStroke;
                 Trim(Nodes);
                 Trim(WorkerEndpoints);
+                Trim(WorkerNodeGroups);
                 Trim(Actors);
+                Trim(ActorNodeGroups);
                 Trim(Settings);
             });
 
@@ -475,7 +489,9 @@ public sealed partial class OrchestratorPanelViewModel
         {
             Nodes.Clear();
             WorkerEndpoints.Clear();
+            WorkerNodeGroups.Clear();
             Actors.Clear();
+            ActorNodeGroups.Clear();
             WorkerEndpointSummary = "No active nodes.";
             SystemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
             SystemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
@@ -986,7 +1002,7 @@ public sealed partial class OrchestratorPanelViewModel
         IReadOnlyList<Nbn.Proto.Settings.BrainStatus> brains,
         long nowMs)
     {
-        var rows = new List<(bool IsOnlineWorkerHost, bool IsOnline, long LastSeenMs, NodeStatusItem Row)>();
+        var rows = new List<HostedActorDisplayEntry>();
         var workerBrainHints = new Dictionary<Guid, HashSet<Guid>>();
         var workerBackendProbeRequests = new Dictionary<(Guid NodeId, Guid BrainId), Dictionary<(int RegionId, int ShardIndex), WorkerBrainBackendProbeRequest>>();
         var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1022,12 +1038,18 @@ public sealed partial class OrchestratorPanelViewModel
             var seen = lastSeenMs > 0 ? FormatUpdated(lastSeenMs) : string.Empty;
             var logicalName = $"{hostLabel} - brain {brainToken} {kindToken}";
             var rootActor = string.IsNullOrWhiteSpace(actorPid) ? actorKind : actorPid;
-            rows.Add((isOnline && hostIsWorker, isOnline, lastSeenMs, new NodeStatusItem(
-                logicalName,
-                address,
-                rootActor,
-                seen,
-                isOnline ? "online" : "offline")));
+            rows.Add(new HostedActorDisplayEntry(
+                isOnline && hostIsWorker,
+                isOnline,
+                lastSeenMs,
+                WorkbenchWorkerHostGrouping.ResolveHostGroupKey(address, hostLabel, null),
+                WorkbenchWorkerHostGrouping.ResolveHostDisplayName(address, hostLabel),
+                new NodeStatusItem(
+                    logicalName,
+                    address,
+                    rootActor,
+                    seen,
+                    isOnline ? "online" : "offline")));
         }
 
         void AddWorkerBrainHint(Guid nodeId, Guid brainId)
@@ -1133,13 +1155,8 @@ public sealed partial class OrchestratorPanelViewModel
         if (activeBrainIds.Length == 0)
         {
             return new HostedActorRowsResult(
-                rows
-                    .OrderByDescending(entry => entry.IsOnlineWorkerHost)
-                    .ThenByDescending(entry => entry.IsOnline)
-                    .ThenByDescending(entry => entry.LastSeenMs)
-                    .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
-                    .Select(entry => entry.Row)
-                    .ToArray(),
+                OrderHostedActorRows(rows),
+                GroupHostedActorRows(rows),
                 workerBrainHints,
                 new Dictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint>());
         }
@@ -1256,13 +1273,8 @@ public sealed partial class OrchestratorPanelViewModel
             .ConfigureAwait(false);
 
         return new HostedActorRowsResult(
-            rows
-                .OrderByDescending(entry => entry.IsOnlineWorkerHost)
-                .ThenByDescending(entry => entry.IsOnline)
-                .ThenByDescending(entry => entry.LastSeenMs)
-                .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
-                .Select(entry => entry.Row)
-                .ToArray(),
+            OrderHostedActorRows(rows),
+            GroupHostedActorRows(rows),
             workerBrainHints,
             workerBrainBackends);
 
@@ -1306,8 +1318,38 @@ public sealed partial class OrchestratorPanelViewModel
 
     private sealed record HostedActorRowsResult(
         IReadOnlyList<NodeStatusItem> Rows,
+        IReadOnlyList<HostedActorNodeGroupItem> Groups,
         IReadOnlyDictionary<Guid, HashSet<Guid>> WorkerBrainHints,
         IReadOnlyDictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint> WorkerBrainBackends);
+
+    private sealed record HostedActorDisplayEntry(
+        bool IsOnlineWorkerHost,
+        bool IsOnline,
+        long LastSeenMs,
+        string GroupKey,
+        string GroupLabel,
+        NodeStatusItem Row);
+
+    private static IReadOnlyList<NodeStatusItem> OrderHostedActorRows(IReadOnlyList<HostedActorDisplayEntry> rows)
+        => rows
+            .OrderByDescending(entry => entry.IsOnlineWorkerHost)
+            .ThenByDescending(entry => entry.IsOnline)
+            .ThenByDescending(entry => entry.LastSeenMs)
+            .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
+            .Select(entry => entry.Row)
+            .ToArray();
+
+    private static IReadOnlyList<HostedActorNodeGroupItem> GroupHostedActorRows(IReadOnlyList<HostedActorDisplayEntry> rows)
+        => rows
+            .OrderByDescending(entry => entry.IsOnlineWorkerHost)
+            .ThenByDescending(entry => entry.IsOnline)
+            .ThenByDescending(entry => entry.LastSeenMs)
+            .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(entry => entry.GroupKey, StringComparer.Ordinal)
+            .Select(group => new HostedActorNodeGroupItem(
+                group.First().GroupLabel,
+                group.Select(static entry => entry.Row).ToArray()))
+            .ToArray();
 
     private readonly record struct WorkerBrainBackendProbeRequest(
         Guid NodeId,

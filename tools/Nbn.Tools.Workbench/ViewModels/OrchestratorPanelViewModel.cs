@@ -152,8 +152,10 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
         _connections.PropertyChanged += OnConnectionsPropertyChanged;
         Nodes = new ObservableCollection<NodeStatusItem>();
         WorkerEndpoints = new ObservableCollection<WorkerEndpointItem>();
+        WorkerNodeGroups = new ObservableCollection<WorkerNodeGroupItem>();
         Endpoints = new ObservableCollection<EndpointStatusItem>();
         Actors = new ObservableCollection<NodeStatusItem>();
+        ActorNodeGroups = new ObservableCollection<HostedActorNodeGroupItem>();
         Settings = new ObservableCollection<SettingEntryViewModel>();
         Terminations = new ObservableCollection<BrainTerminatedItem>();
         RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(force: true));
@@ -183,8 +185,10 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
 
     public ObservableCollection<NodeStatusItem> Nodes { get; }
     public ObservableCollection<WorkerEndpointItem> WorkerEndpoints { get; }
+    public ObservableCollection<WorkerNodeGroupItem> WorkerNodeGroups { get; }
     public ObservableCollection<EndpointStatusItem> Endpoints { get; }
     public ObservableCollection<NodeStatusItem> Actors { get; }
+    public ObservableCollection<HostedActorNodeGroupItem> ActorNodeGroups { get; }
     public ObservableCollection<SettingEntryViewModel> Settings { get; }
     public ObservableCollection<BrainTerminatedItem> Terminations { get; }
 

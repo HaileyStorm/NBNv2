@@ -99,9 +99,8 @@ public sealed partial class OrchestratorPanelViewModel
                 node.IsAlive);
         }
 
-        var rows = new List<(int Rank, long LastSeenMs, WorkerEndpointItem Row)>();
+        var displayEntries = new List<WorkerEndpointDisplayEntry>();
         var staleNodeIds = new List<Guid>();
-        var classifiedEntries = new List<WorkerEndpointGroupEntry>();
         var activeCount = 0;
         var limitedCount = 0;
         var degradedCount = 0;
@@ -115,7 +114,33 @@ public sealed partial class OrchestratorPanelViewModel
                 staleNodeIds.Add(entry.NodeId);
                 continue;
             }
-            classifiedEntries.Add(new WorkerEndpointGroupEntry(entry, status));
+
+            var brainHints = DescribeWorkerBrainHints(workerBrainHints, workerBrainBackends, entry.NodeId);
+            var capabilityChips = DescribeWorkerCapabilityChips(entry);
+            displayEntries.Add(new WorkerEndpointDisplayEntry(
+                entry,
+                status,
+                WorkbenchWorkerHostGrouping.ResolveHostGroupKey(
+                    entry.Address,
+                    entry.LogicalName,
+                    entry.RootActorName,
+                    entry.NodeId),
+                WorkbenchWorkerHostGrouping.ResolveHostDisplayName(
+                    entry.Address,
+                    entry.LogicalName,
+                    entry.NodeId),
+                new WorkerEndpointItem(
+                    entry.NodeId,
+                    entry.LogicalName,
+                    entry.Address,
+                    entry.RootActorName,
+                    brainHints.Preview,
+                    FormatUpdated(entry.LastSeenMs),
+                    status,
+                    entry.PlacementDetail,
+                    capabilityChips.CpuCapability,
+                    capabilityChips.GpuCapability,
+                    brainHints.Count)));
         }
 
         foreach (var staleNodeId in staleNodeIds)
@@ -123,21 +148,17 @@ public sealed partial class OrchestratorPanelViewModel
             _workerEndpointCache.Remove(staleNodeId);
         }
 
-        foreach (var group in classifiedEntries
+        foreach (var group in displayEntries
                      .GroupBy(
-                         entry => WorkbenchWorkerHostGrouping.ResolveHostGroupKey(
-                             entry.Snapshot.Address,
-                             entry.Snapshot.LogicalName,
-                             entry.Snapshot.RootActorName,
-                             entry.Snapshot.NodeId),
+                         entry => entry.GroupKey,
                          StringComparer.Ordinal))
         {
             var entries = group
-                .OrderByDescending(entry => entry.Snapshot.LastSeenMs)
-                .ThenBy(entry => entry.Snapshot.LogicalName, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(entry => entry.Rank)
+                .ThenByDescending(entry => entry.Snapshot.LastSeenMs)
+                .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            var representative = entries[0].Snapshot;
-            var status = ResolveWorkerHostStatus(entries);
+            var status = ResolveWorkerNodeStatus(entries.Select(static entry => entry.Status));
             switch (status)
             {
                 case "active":
@@ -153,35 +174,22 @@ public sealed partial class OrchestratorPanelViewModel
                     failedCount++;
                     break;
             }
-
-            var snapshots = entries.Select(static entry => entry.Snapshot).ToArray();
-            var brainHints = DescribeWorkerBrainHints(
-                workerBrainHints,
-                workerBrainBackends,
-                snapshots.Select(static snapshot => snapshot.NodeId));
-            var capabilityChips = DescribeWorkerCapabilityChips(snapshots);
-            rows.Add((WorkerStatusRank(status), representative.LastSeenMs, new WorkerEndpointItem(
-                representative.NodeId,
-                WorkbenchWorkerHostGrouping.ResolveHostDisplayName(
-                    representative.Address,
-                    representative.LogicalName,
-                    representative.NodeId),
-                BuildWorkerHostAddressSummary(snapshots),
-                BuildWorkerHostRootActorSummary(snapshots),
-                brainHints.Preview,
-                FormatUpdated(representative.LastSeenMs),
-                status,
-                BuildWorkerHostPlacementDetail(entries),
-                capabilityChips.CpuCapability,
-                capabilityChips.GpuCapability,
-                brainHints.Count)));
         }
 
-        var orderedRows = rows
+        var orderedEntries = displayEntries
             .OrderBy(entry => entry.Rank)
-            .ThenByDescending(entry => entry.LastSeenMs)
+            .ThenByDescending(entry => entry.Snapshot.LastSeenMs)
             .ThenBy(entry => entry.Row.LogicalName, StringComparer.OrdinalIgnoreCase)
-            .Select(entry => entry.Row)
+            .ToArray();
+        var orderedRows = orderedEntries
+            .Select(static entry => entry.Row)
+            .ToArray();
+        var orderedGroups = orderedEntries
+            .GroupBy(entry => entry.GroupKey, StringComparer.Ordinal)
+            .Select(group => new WorkerNodeGroupItem(
+                group.First().GroupLabel,
+                WorkbenchWorkerHostGrouping.FormatWorkerCountLabel(group.Count()),
+                group.Select(static entry => entry.Row).ToArray()))
             .ToArray();
 
         var summary = BuildWorkerEndpointSummary(
@@ -189,8 +197,8 @@ public sealed partial class OrchestratorPanelViewModel
             limitedCount,
             degradedCount,
             failedCount,
-            classifiedEntries.Count);
-        return new WorkerEndpointState(orderedRows, activeCount, limitedCount, degradedCount, failedCount, summary);
+            displayEntries.Count);
+        return new WorkerEndpointState(orderedRows, orderedGroups, activeCount, limitedCount, degradedCount, failedCount, summary);
     }
 
     private WorkbenchSystemLoadSummary BuildSystemLoadState(
@@ -538,113 +546,25 @@ public sealed partial class OrchestratorPanelViewModel
         return $"{count} {label} {suffix}";
     }
 
-    private static string ResolveWorkerHostStatus(IReadOnlyList<WorkerEndpointGroupEntry> entries)
+    private static string ResolveWorkerNodeStatus(IEnumerable<string> statuses)
     {
-        if (entries.Any(static entry => string.Equals(entry.Status, "active", StringComparison.OrdinalIgnoreCase)))
+        var statusList = statuses.ToArray();
+        if (statusList.Any(static status => string.Equals(status, "active", StringComparison.OrdinalIgnoreCase)))
         {
             return "active";
         }
 
-        if (entries.Any(static entry => string.Equals(entry.Status, "limited", StringComparison.OrdinalIgnoreCase)))
+        if (statusList.Any(static status => string.Equals(status, "limited", StringComparison.OrdinalIgnoreCase)))
         {
             return "limited";
         }
 
-        if (entries.Any(static entry => string.Equals(entry.Status, "degraded", StringComparison.OrdinalIgnoreCase)))
+        if (statusList.Any(static status => string.Equals(status, "degraded", StringComparison.OrdinalIgnoreCase)))
         {
             return "degraded";
         }
 
         return "failed";
-    }
-
-    private static string BuildWorkerHostAddressSummary(IReadOnlyList<WorkerEndpointSnapshot> snapshots)
-    {
-        if (snapshots.Count == 1)
-        {
-            return snapshots[0].Address;
-        }
-
-        var addresses = snapshots
-            .Select(static snapshot => snapshot.Address)
-            .Where(static address => !string.IsNullOrWhiteSpace(address))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(static address => address, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        return addresses.Length == 0
-            ? "Multiple worker endpoints"
-            : string.Join(", ", addresses);
-    }
-
-    private static string BuildWorkerHostRootActorSummary(IReadOnlyList<WorkerEndpointSnapshot> snapshots)
-    {
-        if (snapshots.Count == 1)
-        {
-            return snapshots[0].RootActorName;
-        }
-
-        var actorNames = snapshots
-            .Select(static snapshot => snapshot.RootActorName)
-            .Where(static actorName => !string.IsNullOrWhiteSpace(actorName))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(static actorName => actorName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        return actorNames.Length == 0
-            ? WorkbenchWorkerHostGrouping.FormatWorkerCountLabel(snapshots.Count)
-            : $"{WorkbenchWorkerHostGrouping.FormatWorkerCountLabel(snapshots.Count)}: {string.Join(", ", actorNames)}";
-    }
-
-    private static string BuildWorkerHostPlacementDetail(IReadOnlyList<WorkerEndpointGroupEntry> entries)
-    {
-        if (entries.Count == 1)
-        {
-            return entries[0].Snapshot.PlacementDetail;
-        }
-
-        var counts = new List<string>();
-        var activeCount = entries.Count(static entry => string.Equals(entry.Status, "active", StringComparison.OrdinalIgnoreCase));
-        var limitedCount = entries.Count(static entry => string.Equals(entry.Status, "limited", StringComparison.OrdinalIgnoreCase));
-        var degradedCount = entries.Count(static entry => string.Equals(entry.Status, "degraded", StringComparison.OrdinalIgnoreCase));
-        var failedCount = entries.Count(static entry => string.Equals(entry.Status, "failed", StringComparison.OrdinalIgnoreCase));
-        if (activeCount > 0)
-        {
-            counts.Add($"{activeCount} active");
-        }
-
-        if (limitedCount > 0)
-        {
-            counts.Add($"{limitedCount} limited");
-        }
-
-        if (degradedCount > 0)
-        {
-            counts.Add($"{degradedCount} degraded");
-        }
-
-        if (failedCount > 0)
-        {
-            counts.Add($"{failedCount} failed");
-        }
-
-        var detail = $"Grouped by node: {string.Join(", ", counts)}.";
-        var placementNotes = entries
-            .Select(static entry =>
-            {
-                var label = string.IsNullOrWhiteSpace(entry.Snapshot.RootActorName)
-                    ? entry.Snapshot.Address
-                    : entry.Snapshot.RootActorName;
-                var note = string.IsNullOrWhiteSpace(entry.Snapshot.PlacementDetail)
-                    ? entry.Status
-                    : entry.Snapshot.PlacementDetail;
-                return string.IsNullOrWhiteSpace(label)
-                    ? note
-                    : $"{label}: {note}";
-            })
-            .Where(static note => !string.IsNullOrWhiteSpace(note))
-            .ToArray();
-        return placementNotes.Length == 0
-            ? detail
-            : $"{detail} {string.Join("; ", placementNotes)}";
     }
 
     private static WorkerBrainHintSummary DescribeWorkerBrainHints(
@@ -784,6 +704,7 @@ public sealed partial class OrchestratorPanelViewModel
 
     private sealed record WorkerEndpointState(
         IReadOnlyList<WorkerEndpointItem> Rows,
+        IReadOnlyList<WorkerNodeGroupItem> Groups,
         int ActiveCount,
         int LimitedCount,
         int DegradedCount,
@@ -794,9 +715,15 @@ public sealed partial class OrchestratorPanelViewModel
         int Count,
         string Preview);
 
-    private sealed record WorkerEndpointGroupEntry(
+    private sealed record WorkerEndpointDisplayEntry(
         WorkerEndpointSnapshot Snapshot,
-        string Status);
+        string Status,
+        string GroupKey,
+        string GroupLabel,
+        WorkerEndpointItem Row)
+    {
+        public int Rank => WorkerStatusRank(Status);
+    }
 
     private enum WorkerBrainBackendHint
     {

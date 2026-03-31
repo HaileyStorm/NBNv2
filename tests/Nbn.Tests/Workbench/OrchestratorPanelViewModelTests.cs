@@ -1133,6 +1133,7 @@ public class OrchestratorPanelViewModelTests
         Assert.True(connections.WorkerDiscoverable);
         Assert.Equal("2 active nodes", connections.WorkerStatus);
         Assert.Equal(2, vm.WorkerEndpoints.Count);
+        Assert.Equal(2, vm.WorkerNodeGroups.Count);
         Assert.All(vm.WorkerEndpoints, endpoint => Assert.Equal("active", endpoint.Status));
         Assert.All(vm.WorkerEndpoints, endpoint => Assert.Equal("none", endpoint.BrainHints));
         Assert.Equal("2 active nodes", vm.WorkerEndpointSummary);
@@ -1248,11 +1249,14 @@ public class OrchestratorPanelViewModelTests
 
         Assert.True(connections.WorkerDiscoverable);
         Assert.Equal("1 active node (2 workers)", connections.WorkerStatus);
-        var workerEndpoint = Assert.Single(vm.WorkerEndpoints);
-        Assert.Equal("edge-box", workerEndpoint.LogicalName);
-        Assert.Contains("edge-box:12041", workerEndpoint.Address, StringComparison.Ordinal);
-        Assert.Contains("edge-box:12042", workerEndpoint.Address, StringComparison.Ordinal);
-        Assert.Contains("2 workers", workerEndpoint.RootActor, StringComparison.Ordinal);
+        Assert.Equal(2, vm.WorkerEndpoints.Count);
+        Assert.Contains(vm.WorkerEndpoints, endpoint => string.Equals(endpoint.LogicalName, "nbn.worker.alpha", StringComparison.Ordinal));
+        Assert.Contains(vm.WorkerEndpoints, endpoint => string.Equals(endpoint.LogicalName, "nbn.worker.beta", StringComparison.Ordinal));
+        var workerGroup = Assert.Single(vm.WorkerNodeGroups);
+        Assert.Equal("edge-box", workerGroup.NodeLabel);
+        Assert.Equal(2, workerGroup.Workers.Count);
+        Assert.Contains(workerGroup.Workers, endpoint => string.Equals(endpoint.Address, "edge-box:12041", StringComparison.Ordinal));
+        Assert.Contains(workerGroup.Workers, endpoint => string.Equals(endpoint.Address, "edge-box:12042", StringComparison.Ordinal));
         Assert.Equal("1 active node (2 workers)", vm.WorkerEndpointSummary);
         Assert.Contains("CPU 6/12 cores", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
         Assert.Contains("RAM 12 GiB/25.6 GiB", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
@@ -1948,6 +1952,9 @@ public class OrchestratorPanelViewModelTests
         Assert.Contains("brain", controllerRow.LogicalName, StringComparison.OrdinalIgnoreCase);
         Assert.Contains($"brain {HostedActorBrainToken(brainId)}", controllerRow.LogicalName, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("online", controllerRow.Status);
+        var actorGroup = Assert.Single(vm.ActorNodeGroups);
+        Assert.Equal("127.0.0.1", actorGroup.NodeLabel);
+        Assert.Single(actorGroup.Actors, node => node.RootActor == controllerActor);
         var workerEndpoint = Assert.Single(vm.WorkerEndpoints, endpoint => endpoint.NodeId == workerId);
         Assert.Equal(ShortBrainId(brainId), workerEndpoint.BrainHints);
     }
