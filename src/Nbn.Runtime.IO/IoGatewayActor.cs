@@ -1,6 +1,7 @@
 using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
+using Nbn.Shared.HiveMind;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
 
@@ -114,6 +115,9 @@ public sealed partial class IoGatewayActor : IActor
             case ResetBrainRuntimeState message:
                 await ForwardRuntimeStateResetAsync(context, message);
                 break;
+            case ApplyBrainRuntimeResetAtBarrier message:
+                await ApplyRuntimeStateResetAtBarrierAsync(context, message);
+                break;
             case SubscribeOutputs message:
                 await ForwardOutputAsync(context, message);
                 break;
@@ -144,10 +148,10 @@ public sealed partial class IoGatewayActor : IActor
             case ApplyTickCost message:
                 ApplyTickCost(context, message);
                 break;
-            case RegisterBrain message:
+            case Nbn.Proto.Io.RegisterBrain message:
                 await RegisterBrainAsync(context, message);
                 break;
-            case UnregisterBrain message:
+            case Nbn.Proto.Io.UnregisterBrain message:
                 UnregisterBrain(context, message);
                 break;
             case DrainInputs message:

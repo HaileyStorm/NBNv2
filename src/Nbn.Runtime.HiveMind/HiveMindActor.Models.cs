@@ -2,6 +2,7 @@ using Nbn.Runtime.Brain;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
 using Proto;
+using ProtoIo = Nbn.Proto.Io;
 using ProtoControl = Nbn.Proto.Control;
 
 namespace Nbn.Runtime.HiveMind;
@@ -117,6 +118,21 @@ public sealed partial class HiveMindActor
         public Dictionary<Guid, long> BrainTickCosts { get; } = new();
     }
 
+    private sealed class PendingRuntimeResetState
+    {
+        public PendingRuntimeResetState(Guid brainId, bool resetBuffer, bool resetAccumulator)
+        {
+            BrainId = brainId;
+            ResetBuffer = resetBuffer;
+            ResetAccumulator = resetAccumulator;
+        }
+
+        public Guid BrainId { get; }
+        public bool ResetBuffer { get; }
+        public bool ResetAccumulator { get; }
+        public TaskCompletionSource<ProtoIo.IoCommandAck> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
     private sealed class BrainState
     {
         public BrainState(Guid brainId, ProtoControl.OutputVectorSource outputVectorSource)
@@ -199,6 +215,7 @@ public sealed partial class HiveMindActor
         public Dictionary<ShardId32, PID> Shards { get; } = new();
         public Dictionary<ShardId32, ulong> ShardRegistrationEpochs { get; } = new();
         public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
+        public PendingRuntimeResetState? PendingRuntimeReset { get; set; }
     }
 
     private sealed class PendingSpawnState

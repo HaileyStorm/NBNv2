@@ -1,6 +1,7 @@
 using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Shared;
+using Nbn.Shared.HiveMind;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
 
@@ -79,6 +80,51 @@ public sealed partial class IoGatewayActor
             return;
         }
 
+        try
+        {
+            if (_hiveMindPid is null)
+            {
+                RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "hivemind_unavailable");
+                return;
+            }
+
+            var ack = await context.RequestAsync<IoCommandAck>(
+                    _hiveMindPid,
+                    new RequestBrainRuntimeReset(brainId, message.ResetBuffer, message.ResetAccumulator),
+                    DefaultRequestTimeout)
+                .ConfigureAwait(false);
+            if (ack is null)
+            {
+                RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "hivemind_empty_response");
+                return;
+            }
+
+            context.Respond(ack);
+        }
+        catch (Exception ex)
+        {
+            RespondCommandAck(
+                context,
+                message.BrainId,
+                "reset_brain_runtime_state",
+                success: false,
+                $"hivemind_request_failed:{ex.GetBaseException().Message}");
+        }
+    }
+
+    private async Task ApplyRuntimeStateResetAtBarrierAsync(IContext context, ApplyBrainRuntimeResetAtBarrier message)
+    {
+        var resetMessage = new ResetBrainRuntimeState
+        {
+            BrainId = message.BrainId.ToProtoUuid(),
+            ResetBuffer = message.ResetBuffer,
+            ResetAccumulator = message.ResetAccumulator
+        };
+        await ApplyRuntimeStateResetAsync(context, message.BrainId, resetMessage).ConfigureAwait(false);
+    }
+
+    private async Task ApplyRuntimeStateResetAsync(IContext context, Guid brainId, ResetBrainRuntimeState message)
+    {
         var resetInputCoordinatorState = message.ResetAccumulator;
         BrainIoEntry? entry = null;
         if (resetInputCoordinatorState)
@@ -332,7 +378,7 @@ public sealed partial class IoGatewayActor
                 return null;
             }
 
-            var register = new RegisterBrain
+            var register = new Nbn.Proto.Io.RegisterBrain
             {
                 BrainId = brainId.ToProtoUuid(),
                 InputWidth = info.InputWidth,
@@ -368,7 +414,7 @@ public sealed partial class IoGatewayActor
     private async Task TryPopulateArtifactMetadataFromHiveMindAsync(
         IContext context,
         Guid brainId,
-        RegisterBrain register,
+        Nbn.Proto.Io.RegisterBrain register,
         TimeSpan requestTimeout)
     {
         if (_hiveMindPid is null)

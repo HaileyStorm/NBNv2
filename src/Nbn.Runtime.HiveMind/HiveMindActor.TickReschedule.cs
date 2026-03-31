@@ -295,17 +295,30 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        if (!RemovePendingDeliver(brainId))
-        {
-            EmitTickDeliverDoneIgnored(context, message, "untracked_payload", expectedSender);
-            return;
-        }
-
         if (LogVizDiagnostics)
         {
             var senderLabel = context.Sender is null ? "<missing>" : PidLabel(context.Sender);
             Log(
                 $"VizDiag TickDeliverDone accepted tick={message.TickId} brain={brainId} sender={senderLabel} expectedSender={PidLabel(expectedSender)} pendingAfter={_pendingDeliver.Count}");
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brainState))
+        {
+            EmitTickDeliverDoneIgnored(context, message, "brain_not_registered", expectedSender);
+            return;
+        }
+
+        if (brainState.PendingRuntimeReset is not null)
+        {
+            _pendingDeliverSenders.Remove(brainId);
+            StartPendingRuntimeReset(context, brainState);
+            return;
+        }
+
+        if (!RemovePendingDeliver(brainId))
+        {
+            EmitTickDeliverDoneIgnored(context, message, "untracked_payload", expectedSender);
+            return;
         }
 
         _tick.CompletedDeliverCount++;
@@ -356,6 +369,7 @@ public sealed partial class HiveMindActor
                         LogError($"TickDeliver timeout detail: {DescribePendingDeliver()}");
                     }
                 }
+                FailPendingRuntimeResets("deliver_timeout");
                 ClearPendingDeliver();
                 CompleteTick(context);
                 break;
@@ -473,7 +487,10 @@ public sealed partial class HiveMindActor
             }
         }
 
-        ScheduleNextTick(context, ComputeTickDelay(elapsed, decision.TargetTickHz));
+        if (_pendingBarrierResets.Count == 0)
+        {
+            ScheduleNextTick(context, ComputeTickDelay(elapsed, decision.TargetTickHz));
+        }
     }
 
     private void ApplyTickCosts(IContext context, ulong tickId, Dictionary<Guid, long> costs)
@@ -549,6 +566,23 @@ public sealed partial class HiveMindActor
     {
         _pendingDeliver.Clear();
         _pendingDeliverSenders.Clear();
+    }
+
+    private void FailPendingRuntimeResets(string reason)
+    {
+        foreach (var brain in _brains.Values)
+        {
+            if (brain.PendingRuntimeReset is null)
+            {
+                continue;
+            }
+
+            brain.PendingRuntimeReset.Completion.TrySetResult(
+                BuildRuntimeResetAck(brain.BrainId, success: false, reason));
+            brain.PendingRuntimeReset = null;
+        }
+
+        _pendingBarrierResets.Clear();
     }
 
     private void RemovePendingComputeForBrain(Guid brainId)

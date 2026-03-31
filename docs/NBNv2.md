@@ -311,6 +311,8 @@ HiveMind does not start `TickCompute(tick_id+1)` until:
 
 This ensures that all cross-shard signals produced in tick `N` are delivered and available for tick `N+1` compute, independent of network latency.
 
+Whole-brain runtime-state resets use this same barrier. HiveMind queues the request and only asks IO/Brain runtime surfaces to apply it once that Brain has completed `TickDeliverDone(tick_id)` for the current tick and before `TickCompute(tick_id+1)` is allowed to start.
+
 ### 6.3 Timeouts and late arrivals
 
 For each tick and each phase:
@@ -884,7 +886,7 @@ Direct runtime state writes are also available for tooling and deterministic eva
 
 * `RuntimeNeuronPulse` injects one contribution into a specific neuron.
 * `RuntimeNeuronStateWrite` sets one neuron's current buffer and/or accumulator state.
-* `ResetBrainRuntimeState` clears transient neuron buffer and/or accumulator state across the entire Brain without changing the `.nbn` definition or runtime feature toggles such as cost/energy, plasticity, or homeostasis.
+* `ResetBrainRuntimeState` clears transient neuron buffer and/or accumulator state across the entire Brain without changing the `.nbn` definition or runtime feature toggles such as cost/energy, plasticity, or homeostasis. HiveMind queues the reset and executes it at the per-brain deliver-to-compute barrier so reset cannot interleave with in-flight delivery for that Brain.
 
 ### 13.4 Output mapping
 

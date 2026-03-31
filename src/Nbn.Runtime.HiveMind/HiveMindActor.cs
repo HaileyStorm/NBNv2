@@ -54,6 +54,7 @@ public sealed partial class HiveMindActor : IActor
     private readonly Dictionary<ShardKey, PID> _pendingComputeSenders = new();
     private readonly HashSet<Guid> _pendingDeliver = new();
     private readonly Dictionary<Guid, PID> _pendingDeliverSenders = new();
+    private readonly HashSet<Guid> _pendingBarrierResets = new();
     private readonly Dictionary<string, VisualizationSubscriberLease> _vizSubscriberLeases = new(StringComparer.Ordinal);
     private readonly HashSet<string> _knownSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _activeSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
@@ -76,6 +77,7 @@ public sealed partial class HiveMindActor : IActor
     private static readonly QuantizationMap SnapshotBufferQuantization = QuantizationSchemas.DefaultBuffer;
     private static readonly TimeSpan PlacementPeerLatencyRefreshInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan PlacementPeerLatencyProbeTimeout = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan RuntimeResetBarrierTimeout = TimeSpan.FromSeconds(15);
     private const int MaxCompletedSpawnResults = 1024;
     private const float DefaultPlasticityRate = 0.001f;
     private const float DefaultPlasticityDelta = DefaultPlasticityRate;
@@ -175,7 +177,7 @@ public sealed partial class HiveMindActor : IActor
                 _tickLoopEnabled = false;
                 return true;
             case TickStart:
-                if (_tickLoopEnabled && !_rescheduleInProgress && _phase == TickPhase.Idle)
+                if (_tickLoopEnabled && !_rescheduleInProgress && _phase == TickPhase.Idle && _pendingBarrierResets.Count == 0)
                 {
                     StartTick(context);
                 }

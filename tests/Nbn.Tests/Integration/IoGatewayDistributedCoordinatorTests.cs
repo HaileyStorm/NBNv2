@@ -558,7 +558,7 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
-    public async Task ResetBrainRuntimeState_ClearsInputCoordinatorState_Across_CoordinatorMoves()
+    public async Task ApplyBrainRuntimeResetAtBarrier_ClearsInputCoordinatorState_Across_CoordinatorMoves()
     {
         var system = new ActorSystem();
         var root = system.Root;
@@ -604,12 +604,7 @@ public sealed class IoGatewayDistributedCoordinatorTests
 
         var resetAck = await root.RequestAsync<IoCommandAck>(
             gateway,
-            new ResetBrainRuntimeState
-            {
-                BrainId = brainId.ToProtoUuid(),
-                ResetBuffer = true,
-                ResetAccumulator = true
-            });
+            new Nbn.Shared.HiveMind.ApplyBrainRuntimeResetAtBarrier(brainId, ResetBuffer: true, ResetAccumulator: true));
         Assert.True(resetAck.Success);
 
         root.Send(gateway, new RegisterBrain
@@ -985,6 +980,8 @@ public sealed class IoGatewayDistributedCoordinatorTests
                     _registerOutputSinkCount++;
                     _lastOutputSinkPid = register.OutputPid ?? string.Empty;
                     break;
+                case Nbn.Shared.HiveMind.RequestBrainRuntimeReset reset when reset.BrainId == _brainId:
+                    return HandleRequestBrainRuntimeResetAsync(context, reset);
                 case ExportBrainDefinition export when export.BrainId.TryToGuid(out var exportBrainId) && exportBrainId == _brainId:
                     context.Respond(new BrainDefinitionReady
                     {
@@ -1011,6 +1008,35 @@ public sealed class IoGatewayDistributedCoordinatorTests
         {
             await Task.Delay(_brainIoInfoDelay).ConfigureAwait(false);
             context.Respond(BuildBrainIoInfo(request.BrainId));
+        }
+
+        private async Task HandleRequestBrainRuntimeResetAsync(IContext context, Nbn.Shared.HiveMind.RequestBrainRuntimeReset message)
+        {
+            if (context.Sender is null)
+            {
+                context.Respond(new IoCommandAck
+                {
+                    BrainId = message.BrainId.ToProtoUuid(),
+                    Command = "reset_brain_runtime_state",
+                    Success = false,
+                    Message = "gateway_sender_missing"
+                });
+                return;
+            }
+
+            var ack = await context.RequestAsync<IoCommandAck>(
+                    context.Sender,
+                    new Nbn.Shared.HiveMind.ApplyBrainRuntimeResetAtBarrier(message.BrainId, message.ResetBuffer, message.ResetAccumulator),
+                    TimeSpan.FromSeconds(2))
+                .ConfigureAwait(false);
+
+            context.Respond(ack ?? new IoCommandAck
+            {
+                BrainId = message.BrainId.ToProtoUuid(),
+                Command = "reset_brain_runtime_state",
+                Success = false,
+                Message = "gateway_reset_empty_response"
+            });
         }
 
         private ProtoControl.BrainIoInfo BuildBrainIoInfo(Nbn.Proto.Uuid brainId)

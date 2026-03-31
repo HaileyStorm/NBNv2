@@ -27,6 +27,9 @@ public sealed partial class HiveMindActor
                 }
 
                 return true;
+            case RequestBrainRuntimeReset message:
+                HandleRequestBrainRuntimeReset(context, message);
+                return true;
             case GetBrainRouting message:
                 context.Respond(BuildRoutingInfo(message.BrainId));
                 return true;
@@ -114,6 +117,151 @@ public sealed partial class HiveMindActor
             IoGatewayOwnsOutputCoordinator = ioGatewayOwnsOutputCoordinator
         };
     }
+
+    private void HandleRequestBrainRuntimeReset(IContext context, RequestBrainRuntimeReset message)
+    {
+        if (message.BrainId == Guid.Empty)
+        {
+            context.Respond(BuildRuntimeResetAck(Guid.Empty, success: false, "brain_id_invalid"));
+            return;
+        }
+
+        if (!_brains.TryGetValue(message.BrainId, out var brain))
+        {
+            context.Respond(BuildRuntimeResetAck(message.BrainId, success: false, "brain_not_found"));
+            return;
+        }
+
+        if (!message.ResetBuffer && !message.ResetAccumulator)
+        {
+            context.Respond(BuildRuntimeResetAck(message.BrainId, success: false, "nothing_requested"));
+            return;
+        }
+
+        if (_ioPid is null)
+        {
+            context.Respond(BuildRuntimeResetAck(message.BrainId, success: false, "io_gateway_unavailable"));
+            return;
+        }
+
+        if (brain.PendingRuntimeReset is not null)
+        {
+            context.Respond(BuildRuntimeResetAck(message.BrainId, success: false, "reset_already_pending"));
+            return;
+        }
+
+        var pending = new PendingRuntimeResetState(message.BrainId, message.ResetBuffer, message.ResetAccumulator);
+        brain.PendingRuntimeReset = pending;
+        context.ReenterAfter(
+            pending.Completion.Task,
+            task =>
+            {
+                if (task.IsCompletedSuccessfully)
+                {
+                    context.Respond(task.Result);
+                }
+                else
+                {
+                    var detail = task.Exception?.GetBaseException().Message ?? "unknown_error";
+                    context.Respond(BuildRuntimeResetAck(message.BrainId, success: false, $"runtime_reset_failed:{detail}"));
+                }
+
+                return Task.CompletedTask;
+            });
+
+        if (ShouldApplyRuntimeResetImmediately(brain))
+        {
+            StartPendingRuntimeReset(context, brain);
+        }
+    }
+
+    private bool ShouldApplyRuntimeResetImmediately(BrainState brain)
+    {
+        if (_pendingBarrierResets.Contains(brain.BrainId))
+        {
+            return false;
+        }
+
+        if (_tick is null || _phase == TickPhase.Idle)
+        {
+            return true;
+        }
+
+        if (!CanDispatchTickToBrain(brain))
+        {
+            return true;
+        }
+
+        return _phase == TickPhase.Deliver && !_pendingDeliver.Contains(brain.BrainId);
+    }
+
+    private void StartPendingRuntimeReset(IContext context, BrainState brain)
+    {
+        var pending = brain.PendingRuntimeReset;
+        if (pending is null || !_pendingBarrierResets.Add(brain.BrainId) || _ioPid is null)
+        {
+            return;
+        }
+
+        var ioPid = ResolveSendTargetPid(context, _ioPid);
+        context.ReenterAfter(
+            context.RequestAsync<ProtoIo.IoCommandAck>(
+                ioPid,
+                new ApplyBrainRuntimeResetAtBarrier(brain.BrainId, pending.ResetBuffer, pending.ResetAccumulator),
+                RuntimeResetBarrierTimeout),
+            task =>
+            {
+                CompletePendingRuntimeReset(context, brain.BrainId, task);
+                return Task.CompletedTask;
+            });
+    }
+
+    private void CompletePendingRuntimeReset(IContext context, Guid brainId, Task<ProtoIo.IoCommandAck> task)
+    {
+        _pendingBarrierResets.Remove(brainId);
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            return;
+        }
+
+        var pending = brain.PendingRuntimeReset;
+        brain.PendingRuntimeReset = null;
+
+        var ack = task.IsCompletedSuccessfully && task.Result is not null
+            ? task.Result
+            : BuildRuntimeResetAck(
+                brainId,
+                success: false,
+                $"runtime_reset_failed:{task.Exception?.GetBaseException().Message ?? "empty_response"}");
+
+        pending?.Completion.TrySetResult(ack);
+
+        if (_phase == TickPhase.Deliver && _tick is not null && _pendingDeliver.Contains(brainId))
+        {
+            if (RemovePendingDeliver(brainId))
+            {
+                _tick.CompletedDeliverCount++;
+                ReportBrainTick(context, brainId, _tick.TickId);
+                MaybeCompleteDeliver(context);
+            }
+
+            return;
+        }
+
+        if (_tickLoopEnabled && !_rescheduleInProgress && _phase == TickPhase.Idle && _pendingBarrierResets.Count == 0)
+        {
+            ScheduleNextTick(context, TimeSpan.Zero);
+        }
+    }
+
+    private static ProtoIo.IoCommandAck BuildRuntimeResetAck(Guid brainId, bool success, string message)
+        => new()
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Command = "reset_brain_runtime_state",
+            Success = success,
+            Message = message ?? string.Empty
+        };
 
     private void UpdateRoutingTable(IContext? context, BrainState brain)
     {

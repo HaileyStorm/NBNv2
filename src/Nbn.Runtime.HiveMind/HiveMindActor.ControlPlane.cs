@@ -172,6 +172,13 @@ public sealed partial class HiveMindActor
         RemoveQueuedPlacementDispatches(context, brainId, brain.PlacementEpoch);
         DispatchPlacementUnassignments(context, brain, brain.PlacementExecution, reason);
         ReleaseBrainVisualizationSubscribers(context, brain);
+        if (brain.PendingRuntimeReset is not null)
+        {
+            brain.PendingRuntimeReset.Completion.TrySetResult(
+                BuildRuntimeResetAck(brainId, success: false, $"brain_unregistered:{reason}"));
+            _pendingBarrierResets.Remove(brainId);
+            brain.PendingRuntimeReset = null;
+        }
         _brains.Remove(brainId);
 
         if (_pendingSpawns.Remove(brainId, out var pendingSpawn))

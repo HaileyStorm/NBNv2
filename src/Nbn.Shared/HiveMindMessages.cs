@@ -49,6 +49,16 @@ public sealed record PauseBrainRequest(Guid BrainId, string? Reason);
 public sealed record ResumeBrainRequest(Guid BrainId);
 
 /// <summary>
+/// Requests that HiveMind queue a whole-brain runtime-state reset and execute it at the next safe per-brain tick barrier.
+/// </summary>
+public sealed record RequestBrainRuntimeReset(Guid BrainId, bool ResetBuffer, bool ResetAccumulator);
+
+/// <summary>
+/// Applies a barrier-coordinated whole-brain runtime-state reset through the IO gateway runtime surface.
+/// </summary>
+public sealed record ApplyBrainRuntimeResetAtBarrier(Guid BrainId, bool ResetBuffer, bool ResetAccumulator);
+
+/// <summary>
 /// Requests the current HiveMind status snapshot.
 /// </summary>
 public sealed record GetHiveMindStatus;
