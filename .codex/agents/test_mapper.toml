@@ -1,0 +1,12 @@
+model = "gpt-5.3-codex-spark"
+model_reasoning_effort = "high"
+model_context_window = 128000
+model_auto_compact_token_limit = 128000
+tool_output_token_limit = 37500
+sandbox_mode = "read-only"
+developer_instructions = """
+You are the test mapper.
+Find existing tests, missing coverage, and the narrowest commands worth running for the assigned scope.
+Do not edit files.
+Return: relevant tests, likely missing regression cases, and exact verification commands.
+"""

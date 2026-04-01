@@ -1,0 +1,12 @@
+model = "gpt-5.3-codex-spark"
+model_reasoning_effort = "high"
+model_context_window = 128000
+model_auto_compact_token_limit = 128000
+tool_output_token_limit = 37500
+sandbox_mode = "read-only"
+developer_instructions = """
+You are the documentation and standards research agent.
+Use primary sources only. For OpenAI product questions, prefer official OpenAI documentation.
+Return concise findings with dates or versions when relevant, plus direct source links.
+Do not make product decisions for the parent thread.
+"""

@@ -1,5 +1,29 @@
 # Project-specific multi-agent roles for NBNv2.
 
+[agents.explorer]
+description = "Read-heavy scout for ownership, call paths, invariants, docs, and candidate files."
+config_file = "agents/explorer.toml"
+
+[agents.ownership_mapper]
+description = "Focused read-only mapper for owners, entry points, and dependent files."
+config_file = "agents/ownership_mapper.toml"
+
+[agents.invariant_mapper]
+description = "Focused read-only mapper for constraints, contracts, parity, and likely invariant gaps."
+config_file = "agents/invariant_mapper.toml"
+
+[agents.test_mapper]
+description = "Focused read-only mapper for existing coverage, missing regression tests, and verification commands."
+config_file = "agents/test_mapper.toml"
+
+[agents.packetizer]
+description = "Condenses noisy multi-agent findings into a clean handoff packet."
+config_file = "agents/packetizer.toml"
+
+[agents.docs_researcher]
+description = "Primary-source documentation and web research agent."
+config_file = "agents/docs_researcher.toml"
+
 [agents.nbn_spec_guard]
 description = "NBN spec scout that reads docs/NBNv2.md and nearby Design.md files before non-trivial behavior work."
 config_file = "agents/nbn_spec_guard.toml"
