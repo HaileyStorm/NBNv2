@@ -298,25 +298,36 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            if (LogInputTraceDiagnostics)
-            {
-                Console.WriteLine(
-                    $"[IoGatewayInput] drain request brain={brainId} tick={message.TickId} input={PidLabel(entry.InputPid)}");
-            }
-
-            var drain = await context.RequestAsync<InputDrain>(entry.InputPid, message, DefaultRequestTimeout);
-            entry.InputState.ApplyDrain(drain);
-            if (LogInputTraceDiagnostics || drain.Contribs.Count > 0)
-            {
-                Console.WriteLine(
-                    $"[IoGatewayInput] drain response brain={brainId} tick={message.TickId} contribs={drain.Contribs.Count} input={PidLabel(entry.InputPid)}");
-            }
-
+            var drain = await RequestInputDrainAsync(context, entry, message, DefaultRequestTimeout).ConfigureAwait(false);
             context.Respond(drain);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"DrainInputs failed for {brainId}: {ex.Message}");
+
+            if (IsMissingInputCoordinatorFailure(ex))
+            {
+                var recoveredEntry = await TryRecoverInputCoordinatorAsync(context, brainId, entry).ConfigureAwait(false);
+                if (recoveredEntry is not null)
+                {
+                    try
+                    {
+                        var recoveredDrain = await RequestInputDrainAsync(
+                                context,
+                                recoveredEntry,
+                                message,
+                                DefaultRequestTimeout)
+                            .ConfigureAwait(false);
+                        context.Respond(recoveredDrain);
+                        return;
+                    }
+                    catch (Exception retryEx)
+                    {
+                        Console.WriteLine($"DrainInputs retry failed for {brainId}: {retryEx.Message}");
+                    }
+                }
+            }
+
             context.Respond(new InputDrain
             {
                 BrainId = message.BrainId,
@@ -361,39 +372,15 @@ public sealed partial class IoGatewayActor
         try
         {
             var timeout = requestTimeout ?? DefaultRequestTimeout;
-            var info = await context.RequestAsync<ProtoControl.BrainIoInfo>(
-                    _hiveMindPid,
-                    new ProtoControl.GetBrainIoInfo { BrainId = brainId.ToProtoUuid() },
-                    timeout)
+            var register = await TryBuildRegisterBrainRegistrationAsync(
+                    context,
+                    brainId,
+                    timeout,
+                    includeArtifacts: !bootstrapOnly)
                 .ConfigureAwait(false);
-
-            if (info is null
-                || (info.InputWidth == 0
-                    && info.OutputWidth == 0
-                    && string.IsNullOrWhiteSpace(info.InputCoordinatorPid)
-                    && string.IsNullOrWhiteSpace(info.OutputCoordinatorPid)
-                    && !info.IoGatewayOwnsInputCoordinator
-                    && !info.IoGatewayOwnsOutputCoordinator))
+            if (register is null)
             {
                 return null;
-            }
-
-            var register = new Nbn.Proto.Io.RegisterBrain
-            {
-                BrainId = brainId.ToProtoUuid(),
-                InputWidth = info.InputWidth,
-                OutputWidth = info.OutputWidth,
-                InputCoordinatorMode = info.InputCoordinatorMode,
-                OutputVectorSource = info.OutputVectorSource,
-                InputCoordinatorPid = info.InputCoordinatorPid,
-                OutputCoordinatorPid = info.OutputCoordinatorPid,
-                IoGatewayOwnsInputCoordinator = info.IoGatewayOwnsInputCoordinator,
-                IoGatewayOwnsOutputCoordinator = info.IoGatewayOwnsOutputCoordinator
-            };
-
-            if (!bootstrapOnly)
-            {
-                await TryPopulateArtifactMetadataFromHiveMindAsync(context, brainId, register, timeout).ConfigureAwait(false);
             }
 
             await RegisterBrainAsync(context, register, bootstrapOnly: bootstrapOnly);
@@ -409,6 +396,189 @@ public sealed partial class IoGatewayActor
         }
 
         return null;
+    }
+
+    private async Task<Nbn.Proto.Io.RegisterBrain?> TryBuildRegisterBrainRegistrationAsync(
+        IContext context,
+        Guid brainId,
+        TimeSpan requestTimeout,
+        bool includeArtifacts)
+    {
+        if (_hiveMindPid is null)
+        {
+            return null;
+        }
+
+        var info = await context.RequestAsync<ProtoControl.BrainIoInfo>(
+                _hiveMindPid,
+                new ProtoControl.GetBrainIoInfo { BrainId = brainId.ToProtoUuid() },
+                requestTimeout)
+            .ConfigureAwait(false);
+
+        if (info is null
+            || (info.InputWidth == 0
+                && info.OutputWidth == 0
+                && string.IsNullOrWhiteSpace(info.InputCoordinatorPid)
+                && string.IsNullOrWhiteSpace(info.OutputCoordinatorPid)
+                && !info.IoGatewayOwnsInputCoordinator
+                && !info.IoGatewayOwnsOutputCoordinator))
+        {
+            return null;
+        }
+
+        var register = new Nbn.Proto.Io.RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = info.InputWidth,
+            OutputWidth = info.OutputWidth,
+            InputCoordinatorMode = info.InputCoordinatorMode,
+            OutputVectorSource = info.OutputVectorSource,
+            InputCoordinatorPid = info.InputCoordinatorPid,
+            OutputCoordinatorPid = info.OutputCoordinatorPid,
+            IoGatewayOwnsInputCoordinator = info.IoGatewayOwnsInputCoordinator,
+            IoGatewayOwnsOutputCoordinator = info.IoGatewayOwnsOutputCoordinator
+        };
+
+        if (includeArtifacts)
+        {
+            await TryPopulateArtifactMetadataFromHiveMindAsync(context, brainId, register, requestTimeout).ConfigureAwait(false);
+        }
+
+        return register;
+    }
+
+    private async Task<InputDrain> RequestInputDrainAsync(
+        IContext context,
+        BrainIoEntry entry,
+        DrainInputs message,
+        TimeSpan timeout)
+    {
+        if (LogInputTraceDiagnostics)
+        {
+            Console.WriteLine(
+                $"[IoGatewayInput] drain request brain={entry.BrainId} tick={message.TickId} input={PidLabel(entry.InputPid)}");
+        }
+
+        var drain = await context.RequestAsync<InputDrain>(entry.InputPid, message, timeout).ConfigureAwait(false);
+        entry.InputState.ApplyDrain(drain);
+        if (LogInputTraceDiagnostics || drain.Contribs.Count > 0)
+        {
+            Console.WriteLine(
+                $"[IoGatewayInput] drain response brain={entry.BrainId} tick={message.TickId} contribs={drain.Contribs.Count} input={PidLabel(entry.InputPid)}");
+        }
+
+        return drain;
+    }
+
+    private static bool IsMissingInputCoordinatorFailure(Exception ex)
+    {
+        var failure = ex.GetBaseException();
+        if (failure is TimeoutException)
+        {
+            return false;
+        }
+
+        var detail = failure.Message;
+        return !string.IsNullOrWhiteSpace(detail)
+               && (detail.Contains("no longer exists", StringComparison.OrdinalIgnoreCase)
+                   || detail.Contains("unknown actor", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<BrainIoEntry?> TryRecoverInputCoordinatorAsync(
+        IContext context,
+        Guid brainId,
+        BrainIoEntry failedEntry)
+    {
+        var failedInputPid = failedEntry.InputPid;
+        Nbn.Proto.Io.RegisterBrain? register;
+        try
+        {
+            register = await TryBuildRegisterBrainRegistrationAsync(
+                    context,
+                    brainId,
+                    DefaultRequestTimeout,
+                    includeArtifacts: false)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Recover input coordinator failed for {brainId}: {ex.Message}");
+            return null;
+        }
+
+        if (register is null)
+        {
+            return null;
+        }
+
+        BrainIoEntry refreshedEntry;
+        try
+        {
+            await RegisterBrainAsync(context, register, bootstrapOnly: false).ConfigureAwait(false);
+            if (!_brains.TryGetValue(brainId, out refreshedEntry!))
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(register.InputCoordinatorPid)
+                && PidEquals(failedInputPid, refreshedEntry.InputPid))
+            {
+                refreshedEntry = await ReplaceWithOwnedInputCoordinatorFallbackAsync(
+                        context,
+                        refreshedEntry,
+                        register.InputWidth,
+                        register.InputCoordinatorMode)
+                    .ConfigureAwait(false);
+            }
+            else if (PidEquals(failedInputPid, refreshedEntry.InputPid))
+            {
+                await ReplayInputStateAsync(context, refreshedEntry, DefaultRequestTimeout).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Recover input coordinator replay failed for {brainId}: {ex.Message}");
+            return null;
+        }
+
+        if (LogInputTraceDiagnostics)
+        {
+            Console.WriteLine(
+                $"[IoGatewayInput] drain recovery brain={brainId} previous={PidLabel(failedInputPid)} current={PidLabel(refreshedEntry.InputPid)} ownsInput={refreshedEntry.OwnsInputCoordinator}");
+        }
+
+        return refreshedEntry;
+    }
+
+    private async Task<BrainIoEntry> ReplaceWithOwnedInputCoordinatorFallbackAsync(
+        IContext context,
+        BrainIoEntry entry,
+        uint requestedInputWidth,
+        ProtoControl.InputCoordinatorMode requestedInputMode)
+    {
+        var inputWidth = entry.InputWidth;
+        if (requestedInputWidth > inputWidth)
+        {
+            inputWidth = requestedInputWidth;
+        }
+
+        var inputMode = NormalizeInputCoordinatorMode(requestedInputMode);
+        var previousPid = entry.InputPid;
+        var previousOwned = entry.OwnsInputCoordinator;
+        var replacementPid = SpawnOwnedInputCoordinator(context, entry.BrainId, inputWidth, inputMode);
+
+        if (previousOwned && !PidEquals(previousPid, replacementPid))
+        {
+            context.Stop(previousPid);
+        }
+
+        entry.InputPid = replacementPid;
+        entry.OwnsInputCoordinator = true;
+        entry.InputWidth = inputWidth;
+        entry.InputCoordinatorMode = inputMode;
+        entry.InputState.UpdateConfiguration(inputWidth, inputMode);
+        await ReplayInputStateAsync(context, entry, DefaultRequestTimeout).ConfigureAwait(false);
+        return entry;
     }
 
     private async Task TryPopulateArtifactMetadataFromHiveMindAsync(
@@ -789,15 +959,19 @@ public sealed partial class IoGatewayActor
         return true;
     }
 
-    private static async Task ReplayInputStateAsync(IContext context, BrainIoEntry entry)
+    private static async Task ReplayInputStateAsync(
+        IContext context,
+        BrainIoEntry entry,
+        TimeSpan? timeout = null)
     {
         await DispatchCoordinatorMessageAsync(
                 context,
                 entry.InputPid,
-                new UpdateInputCoordinatorMode(entry.InputCoordinatorMode))
+                new UpdateInputCoordinatorMode(entry.InputCoordinatorMode),
+                timeout)
             .ConfigureAwait(false);
         await entry.InputState
-            .ReplayToAsync(message => DispatchCoordinatorMessageAsync(context, entry.InputPid, message))
+            .ReplayToAsync(message => DispatchCoordinatorMessageAsync(context, entry.InputPid, message, timeout))
             .ConfigureAwait(false);
     }
 
@@ -822,9 +996,13 @@ public sealed partial class IoGatewayActor
         }
     }
 
-    private static async Task<IoCommandAck> DispatchCoordinatorMessageAsync(IContext context, PID target, object message)
+    private static async Task<IoCommandAck> DispatchCoordinatorMessageAsync(
+        IContext context,
+        PID target,
+        object message,
+        TimeSpan? timeout = null)
     {
-        return await context.RequestAsync<IoCommandAck>(target, message, DefaultRequestTimeout).ConfigureAwait(false);
+        return await context.RequestAsync<IoCommandAck>(target, message, timeout ?? DefaultRequestTimeout).ConfigureAwait(false);
     }
 
     private static void RespondOutputCommandAck(IContext context, object message, Uuid? brainId, bool success, string ackMessage)

@@ -558,6 +558,67 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
+    public async Task DrainInputs_Replaces_Stale_RemoteInputCoordinator_When_HiveMind_Drops_InputPid()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPid = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(
+            brainId,
+            3,
+            ProtoControl.InputCoordinatorMode.ReplayLatestVector)));
+        var outputPid = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+        var routerPid = root.Spawn(Props.FromProducer(() => new InputRouterProbeActor(brainId)));
+        var hivePid = root.Spawn(Props.FromProducer(() => new BrainIoInfoHiveProbeActor(
+            brainId,
+            inputPid,
+            outputPid,
+            routerPid,
+            inputWidth: 3,
+            outputWidth: 1,
+            inputMode: ProtoControl.InputCoordinatorMode.ReplayLatestVector)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hivePid)));
+
+        root.Send(gateway, new InputVector
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Values = { 0.25f, 0.5f, 0.75f }
+        });
+
+        await WaitForAsync(
+            async () =>
+            {
+                var seededDrain = await root.RequestAsync<InputDrain>(
+                    inputPid,
+                    new DrainInputs
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        TickId = 1
+                    });
+                return seededDrain.Contribs.Select(static contrib => contrib.Value).SequenceEqual([0.25f, 0.5f, 0.75f]);
+            },
+            timeoutMs: 2_000);
+
+        root.Stop(inputPid);
+        await Task.Delay(100);
+        root.Send(hivePid, new BrainIoInfoHiveProbeActor.UpdateInputCoordinator(null));
+
+        var recoveredDrain = await root.RequestAsync<InputDrain>(
+            gateway,
+            new DrainInputs
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TickId = 42
+            },
+            TimeSpan.FromSeconds(5));
+
+        Assert.Equal([0.25f, 0.5f, 0.75f], recoveredDrain.Contribs.Select(static contrib => contrib.Value).ToArray());
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ApplyBrainRuntimeResetAtBarrier_ClearsInputCoordinatorState_Across_CoordinatorMoves()
     {
         var system = new ActorSystem();
@@ -912,8 +973,8 @@ public sealed class IoGatewayDistributedCoordinatorTests
     private sealed class BrainIoInfoHiveProbeActor : IActor
     {
         private readonly Guid _brainId;
-        private readonly PID _inputCoordinatorPid;
-        private readonly PID _outputCoordinatorPid;
+        private PID? _inputCoordinatorPid;
+        private PID? _outputCoordinatorPid;
         private PID _routerPid;
         private readonly uint _inputWidth;
         private readonly uint _outputWidth;
@@ -926,8 +987,8 @@ public sealed class IoGatewayDistributedCoordinatorTests
 
         public BrainIoInfoHiveProbeActor(
             Guid brainId,
-            PID inputCoordinatorPid,
-            PID outputCoordinatorPid,
+            PID? inputCoordinatorPid,
+            PID? outputCoordinatorPid,
             PID routerPid,
             uint inputWidth,
             uint outputWidth,
@@ -952,6 +1013,10 @@ public sealed class IoGatewayDistributedCoordinatorTests
 
         public sealed record UpdateRouter(PID RouterPid);
 
+        public sealed record UpdateInputCoordinator(PID? InputCoordinatorPid);
+
+        public sealed record UpdateOutputCoordinator(PID? OutputCoordinatorPid);
+
         public sealed record Snapshot(int RegisterOutputSinkCount, string LastOutputSinkPid);
 
         public Task ReceiveAsync(IContext context)
@@ -975,6 +1040,12 @@ public sealed class IoGatewayDistributedCoordinatorTests
                     break;
                 case UpdateRouter update:
                     _routerPid = update.RouterPid;
+                    break;
+                case UpdateInputCoordinator update:
+                    _inputCoordinatorPid = update.InputCoordinatorPid;
+                    break;
+                case UpdateOutputCoordinator update:
+                    _outputCoordinatorPid = update.OutputCoordinatorPid;
                     break;
                 case ProtoControl.RegisterOutputSink register when register.BrainId.TryToGuid(out var registeredBrainId) && registeredBrainId == _brainId:
                     _registerOutputSinkCount++;
@@ -1047,8 +1118,8 @@ public sealed class IoGatewayDistributedCoordinatorTests
                 OutputWidth = _outputWidth,
                 InputCoordinatorMode = _inputMode,
                 OutputVectorSource = ProtoControl.OutputVectorSource.Potential,
-                InputCoordinatorPid = PidLabel(_inputCoordinatorPid),
-                OutputCoordinatorPid = PidLabel(_outputCoordinatorPid),
+                InputCoordinatorPid = _inputCoordinatorPid is null ? string.Empty : PidLabel(_inputCoordinatorPid),
+                OutputCoordinatorPid = _outputCoordinatorPid is null ? string.Empty : PidLabel(_outputCoordinatorPid),
                 IoGatewayOwnsInputCoordinator = false,
                 IoGatewayOwnsOutputCoordinator = false
             };
