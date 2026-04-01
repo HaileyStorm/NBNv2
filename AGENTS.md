@@ -35,6 +35,8 @@
   3. `test_mapper` or `verifier` for regression surface and commands
 - Prefer multiple narrow agents over one broad worker; keep final synthesis and merge decisions in the main thread.
 - When the spec or code surface is large, split it across fresh read-only agents and compress the findings with `packetizer` before editing.
+- After any failed, aborted, or partially-applied edit attempt, immediately re-read the affected file(s) from disk and inspect `git diff` before making the next edit. Never assume a large patch landed exactly as intended.
+- For large-file edits, prefer smaller verified patches over one broad rewrite, and verify exact anchor text before every scripted replacement.
 - Continue to refer back to `docs/NBNv2.md` and nearby `Design.md` docs throughout edits, verification, and handoff; re-run targeted repo agents when scope shifts.
 
 ## Repo-specific agent roles

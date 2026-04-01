@@ -1,6 +1,7 @@
 using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Proto.Repro;
+using Nbn.Shared;
 using Nbn.Shared.HiveMind;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
@@ -71,154 +72,255 @@ public sealed partial class IoGatewayActor : IActor
     /// </summary>
     public async Task ReceiveAsync(IContext context)
     {
-        switch (context.Message)
+        try
         {
-            case Started:
-                Console.WriteLine($"IO Gateway actor online: {PidLabel(context.Self)}");
-                break;
-            case Terminated terminated:
-                HandleClientTerminated(context, terminated);
-                break;
-            case Connect message:
-                HandleConnect(context, message);
-                break;
+            switch (context.Message)
+            {
+                case Started:
+                    Console.WriteLine($"IO Gateway actor online: {PidLabel(context.Self)}");
+                    break;
+                case Terminated terminated:
+                    HandleClientTerminated(context, terminated);
+                    break;
+                case Connect message:
+                    HandleConnect(context, message);
+                    break;
+                case GetPlacementWorkerInventory:
+                    await HandlePlacementWorkerInventoryAsync(context);
+                    break;
+                case SpawnBrainViaIO message:
+                    await HandleSpawnBrain(context, message);
+                    break;
+                case AwaitSpawnPlacementViaIO message:
+                    await HandleAwaitSpawnPlacementAsync(context, message);
+                    break;
+                case KillBrainViaIO message:
+                    HandleKillBrain(context, message);
+                    break;
+                case SetOutputVectorSource message:
+                    await HandleSetOutputVectorSourceAsync(context, message);
+                    break;
+                case BrainInfoRequest message:
+                    await HandleBrainInfoAsync(context, message);
+                    break;
+                case InputWrite message:
+                    await ForwardInputAsync(context, message);
+                    break;
+                case InputVector message:
+                    await ForwardInputAsync(context, message);
+                    break;
+                case RuntimeNeuronPulse message:
+                    await ForwardRuntimeNeuronAsync(context, message);
+                    break;
+                case RuntimeNeuronStateWrite message:
+                    await ForwardRuntimeNeuronAsync(context, message);
+                    break;
+                case ResetBrainRuntimeState message:
+                    await ForwardRuntimeStateResetAsync(context, message);
+                    break;
+                case ApplyBrainRuntimeResetAtBarrier message:
+                    await ApplyRuntimeStateResetAtBarrierAsync(context, message);
+                    break;
+                case SubscribeOutputs message:
+                    await ForwardOutputAsync(context, message);
+                    break;
+                case UnsubscribeOutputs message:
+                    await ForwardOutputAsync(context, message);
+                    break;
+                case SubscribeOutputsVector message:
+                    await ForwardOutputAsync(context, message);
+                    break;
+                case UnsubscribeOutputsVector message:
+                    await ForwardOutputAsync(context, message);
+                    break;
+                case EnergyCredit message:
+                    ApplyEnergyCredit(context, message);
+                    break;
+                case EnergyRate message:
+                    ApplyEnergyRate(context, message);
+                    break;
+                case SetCostEnergyEnabled message:
+                    ApplyCostEnergyFlags(context, message);
+                    break;
+                case SetPlasticityEnabled message:
+                    ApplyPlasticityFlags(context, message);
+                    break;
+                case SetHomeostasisEnabled message:
+                    ApplyHomeostasisFlags(context, message);
+                    break;
+                case ApplyTickCost message:
+                    ApplyTickCost(context, message);
+                    break;
+                case Nbn.Proto.Io.RegisterBrain message:
+                    await RegisterBrainAsync(context, message);
+                    break;
+                case Nbn.Proto.Io.UnregisterBrain message:
+                    UnregisterBrain(context, message);
+                    break;
+                case DrainInputs message:
+                    await HandleDrainInputsAsync(context, message);
+                    break;
+                case UpdateBrainSnapshot message:
+                    UpdateSnapshot(message);
+                    break;
+                case ProtoControl.BrainTerminated message:
+                    HandleBrainTerminated(context, message);
+                    break;
+                case RequestSnapshot message:
+                    await HandleRequestSnapshotAsync(context, message);
+                    break;
+                case ExportBrainDefinition message:
+                    HandleExportBrainDefinition(context, message);
+                    break;
+                case ReproduceByBrainIds message:
+                    HandleReproduceByBrainIds(context, message);
+                    break;
+                case ReproduceByArtifacts message:
+                    HandleReproduceByArtifacts(context, message);
+                    break;
+                case AssessCompatibilityByBrainIds message:
+                    HandleAssessCompatibilityByBrainIds(context, message);
+                    break;
+                case AssessCompatibilityByArtifacts message:
+                    HandleAssessCompatibilityByArtifacts(context, message);
+                    break;
+                case SpeciationStatus message:
+                    HandleSpeciationStatus(context, message);
+                    break;
+                case SpeciationGetConfig message:
+                    HandleSpeciationGetConfig(context, message);
+                    break;
+                case SpeciationSetConfig message:
+                    HandleSpeciationSetConfig(context, message);
+                    break;
+                case SpeciationResetAll message:
+                    HandleSpeciationResetAll(context, message);
+                    break;
+                case SpeciationDeleteEpoch message:
+                    HandleSpeciationDeleteEpoch(context, message);
+                    break;
+                case SpeciationEvaluate message:
+                    HandleSpeciationEvaluate(context, message);
+                    break;
+                case SpeciationAssign message:
+                    HandleSpeciationAssign(context, message);
+                    break;
+                case SpeciationBatchEvaluateApply message:
+                    HandleSpeciationBatchEvaluateApply(context, message);
+                    break;
+                case SpeciationListMemberships message:
+                    HandleSpeciationListMemberships(context, message);
+                    break;
+                case SpeciationQueryMembership message:
+                    HandleSpeciationQueryMembership(context, message);
+                    break;
+                case SpeciationListHistory message:
+                    HandleSpeciationListHistory(context, message);
+                    break;
+                case DiscoverySnapshotApplied snapshot:
+                    ApplyDiscoverySnapshot(snapshot);
+                    break;
+                case EndpointStateObserved observed:
+                    ApplyObservedEndpoint(observed.Observation, source: "update");
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            HandleReceiveFailure(context, context.Message, ex);
+        }
+    }
+
+    private void HandleReceiveFailure(IContext context, object? message, Exception ex)
+    {
+        var detail = ex.GetBaseException().Message;
+        Console.WriteLine($"[ERROR] IO Gateway handler {message?.GetType().Name ?? "unknown"} failed: {detail}");
+
+        switch (message)
+        {
             case GetPlacementWorkerInventory:
-                await HandlePlacementWorkerInventoryAsync(context);
+                context.Respond(BuildPlacementWorkerInventoryFailure(
+                    reasonCode: "io_gateway_internal_error",
+                    failureMessage: $"Worker capacity query failed: IO Gateway internal error ({detail})."));
                 break;
-            case SpawnBrainViaIO message:
-                await HandleSpawnBrain(context, message);
+            case SpawnBrainViaIO:
+                var spawnAck = BuildSpawnFailureAck(
+                    reasonCode: "spawn_request_failed",
+                    failureMessage: $"Spawn failed: IO Gateway internal error ({detail}).");
+                context.Respond(new SpawnBrainViaIOAck
+                {
+                    Ack = spawnAck,
+                    FailureReasonCode = spawnAck.FailureReasonCode,
+                    FailureMessage = spawnAck.FailureMessage
+                });
                 break;
-            case AwaitSpawnPlacementViaIO message:
-                await HandleAwaitSpawnPlacementAsync(context, message);
+            case AwaitSpawnPlacementViaIO:
+                var placementAck = BuildSpawnFailureAck(
+                    reasonCode: "spawn_request_failed",
+                    failureMessage: $"Spawn wait failed: IO Gateway internal error ({detail}).");
+                context.Respond(new AwaitSpawnPlacementViaIOAck
+                {
+                    Ack = placementAck,
+                    FailureReasonCode = placementAck.FailureReasonCode,
+                    FailureMessage = placementAck.FailureMessage
+                });
                 break;
-            case KillBrainViaIO message:
-                HandleKillBrain(context, message);
+            case KillBrainViaIO:
+                context.Respond(new KillBrainViaIOAck
+                {
+                    Accepted = false,
+                    FailureReasonCode = "kill_request_failed",
+                    FailureMessage = $"Kill failed: IO Gateway internal error ({detail})."
+                });
                 break;
-            case SetOutputVectorSource message:
-                await HandleSetOutputVectorSourceAsync(context, message);
+            case SetOutputVectorSource outputSourceMessage:
+                context.Respond(new SetOutputVectorSourceAck
+                {
+                    Success = false,
+                    FailureReasonCode = "output_vector_source_internal_error",
+                    FailureMessage = $"Output vector source update failed: IO Gateway internal error ({detail}).",
+                    OutputVectorSource = DefaultOutputVectorSource,
+                    BrainId = outputSourceMessage.BrainId?.Clone()
+                });
                 break;
-            case BrainInfoRequest message:
-                await HandleBrainInfoAsync(context, message);
+            case BrainInfoRequest brainInfo:
+                context.Respond(new BrainInfo
+                {
+                    BrainId = brainInfo.BrainId,
+                    BaseDefinition = new ArtifactRef(),
+                    LastSnapshot = new ArtifactRef()
+                });
                 break;
-            case InputWrite message:
-                await ForwardInputAsync(context, message);
+            case ResetBrainRuntimeState reset:
+                RespondCommandAck(
+                    context,
+                    reset.BrainId,
+                    "reset_brain_runtime_state",
+                    success: false,
+                    $"io_gateway_internal_error:{detail}");
                 break;
-            case InputVector message:
-                await ForwardInputAsync(context, message);
+            case SubscribeOutputs or UnsubscribeOutputs or SubscribeOutputsVector or UnsubscribeOutputsVector:
+                if (TryGetBrainId(message, out var outputBrainId))
+                {
+                    RespondOutputCommandAck(context, message, outputBrainId.ToProtoUuid(), success: false, $"io_gateway_internal_error:{detail}");
+                }
+                else
+                {
+                    RespondOutputCommandAck(context, message, Guid.Empty.ToProtoUuid(), success: false, $"io_gateway_internal_error:{detail}");
+                }
                 break;
-            case RuntimeNeuronPulse message:
-                await ForwardRuntimeNeuronAsync(context, message);
+            case DrainInputs drain:
+                context.Respond(new InputDrain
+                {
+                    BrainId = drain.BrainId,
+                    TickId = drain.TickId
+                });
                 break;
-            case RuntimeNeuronStateWrite message:
-                await ForwardRuntimeNeuronAsync(context, message);
+            case RequestSnapshot snapshot:
+                context.Respond(new SnapshotReady { BrainId = snapshot.BrainId });
                 break;
-            case ResetBrainRuntimeState message:
-                await ForwardRuntimeStateResetAsync(context, message);
-                break;
-            case ApplyBrainRuntimeResetAtBarrier message:
-                await ApplyRuntimeStateResetAtBarrierAsync(context, message);
-                break;
-            case SubscribeOutputs message:
-                await ForwardOutputAsync(context, message);
-                break;
-            case UnsubscribeOutputs message:
-                await ForwardOutputAsync(context, message);
-                break;
-            case SubscribeOutputsVector message:
-                await ForwardOutputAsync(context, message);
-                break;
-            case UnsubscribeOutputsVector message:
-                await ForwardOutputAsync(context, message);
-                break;
-            case EnergyCredit message:
-                ApplyEnergyCredit(context, message);
-                break;
-            case EnergyRate message:
-                ApplyEnergyRate(context, message);
-                break;
-            case SetCostEnergyEnabled message:
-                ApplyCostEnergyFlags(context, message);
-                break;
-            case SetPlasticityEnabled message:
-                ApplyPlasticityFlags(context, message);
-                break;
-            case SetHomeostasisEnabled message:
-                ApplyHomeostasisFlags(context, message);
-                break;
-            case ApplyTickCost message:
-                ApplyTickCost(context, message);
-                break;
-            case Nbn.Proto.Io.RegisterBrain message:
-                await RegisterBrainAsync(context, message);
-                break;
-            case Nbn.Proto.Io.UnregisterBrain message:
-                UnregisterBrain(context, message);
-                break;
-            case DrainInputs message:
-                await HandleDrainInputsAsync(context, message);
-                break;
-            case UpdateBrainSnapshot message:
-                UpdateSnapshot(message);
-                break;
-            case ProtoControl.BrainTerminated message:
-                HandleBrainTerminated(context, message);
-                break;
-            case RequestSnapshot message:
-                await HandleRequestSnapshotAsync(context, message);
-                break;
-            case ExportBrainDefinition message:
-                HandleExportBrainDefinition(context, message);
-                break;
-            case ReproduceByBrainIds message:
-                HandleReproduceByBrainIds(context, message);
-                break;
-            case ReproduceByArtifacts message:
-                HandleReproduceByArtifacts(context, message);
-                break;
-            case AssessCompatibilityByBrainIds message:
-                HandleAssessCompatibilityByBrainIds(context, message);
-                break;
-            case AssessCompatibilityByArtifacts message:
-                HandleAssessCompatibilityByArtifacts(context, message);
-                break;
-            case SpeciationStatus message:
-                HandleSpeciationStatus(context, message);
-                break;
-            case SpeciationGetConfig message:
-                HandleSpeciationGetConfig(context, message);
-                break;
-            case SpeciationSetConfig message:
-                HandleSpeciationSetConfig(context, message);
-                break;
-            case SpeciationResetAll message:
-                HandleSpeciationResetAll(context, message);
-                break;
-            case SpeciationDeleteEpoch message:
-                HandleSpeciationDeleteEpoch(context, message);
-                break;
-            case SpeciationEvaluate message:
-                HandleSpeciationEvaluate(context, message);
-                break;
-            case SpeciationAssign message:
-                HandleSpeciationAssign(context, message);
-                break;
-            case SpeciationBatchEvaluateApply message:
-                HandleSpeciationBatchEvaluateApply(context, message);
-                break;
-            case SpeciationListMemberships message:
-                HandleSpeciationListMemberships(context, message);
-                break;
-            case SpeciationQueryMembership message:
-                HandleSpeciationQueryMembership(context, message);
-                break;
-            case SpeciationListHistory message:
-                HandleSpeciationListHistory(context, message);
-                break;
-            case DiscoverySnapshotApplied snapshot:
-                ApplyDiscoverySnapshot(snapshot);
-                break;
-            case EndpointStateObserved observed:
-                ApplyObservedEndpoint(observed.Observation, source: "update");
+            case ExportBrainDefinition export:
+                context.Respond(new BrainDefinitionReady { BrainId = export.BrainId });
                 break;
         }
     }
