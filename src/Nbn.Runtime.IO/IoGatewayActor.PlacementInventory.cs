@@ -6,33 +6,22 @@ namespace Nbn.Runtime.IO;
 
 public sealed partial class IoGatewayActor
 {
-    private Task HandlePlacementWorkerInventoryAsync(IContext context)
+    private async Task HandlePlacementWorkerInventoryAsync(IContext context)
     {
         if (_hiveMindPid is null)
         {
             context.Respond(BuildPlacementWorkerInventoryFailure(
                 reasonCode: "capacity_unavailable",
                 failureMessage: "Worker capacity query failed: HiveMind endpoint is not configured."));
-            return Task.CompletedTask;
+            return;
         }
 
-        var inventoryTask = context.RequestAsync<ProtoControl.PlacementWorkerInventory>(
-            _hiveMindPid,
-            new ProtoControl.PlacementWorkerInventoryRequest(),
-            DefaultRequestTimeout);
-        context.ReenterAfter(inventoryTask, completed =>
+        try
         {
-            if (completed.IsFaulted)
-            {
-                var ex = completed.Exception?.GetBaseException();
-                Console.WriteLine($"GetPlacementWorkerInventory failed: {ex?.Message}");
-                context.Respond(BuildPlacementWorkerInventoryFailure(
-                    reasonCode: "capacity_request_failed",
-                    failureMessage: $"Worker capacity query failed: request forwarding to HiveMind failed ({ex?.Message ?? "unknown"})."));
-                return;
-            }
-
-            var inventory = completed.Result;
+            var inventory = await context.RequestAsync<ProtoControl.PlacementWorkerInventory>(
+                _hiveMindPid,
+                new ProtoControl.PlacementWorkerInventoryRequest(),
+                DefaultRequestTimeout);
             if (inventory is null)
             {
                 context.Respond(BuildPlacementWorkerInventoryFailure(
@@ -46,8 +35,14 @@ public sealed partial class IoGatewayActor
                 Success = true,
                 Inventory = inventory
             });
-        });
-        return Task.CompletedTask;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"GetPlacementWorkerInventory failed: {ex.Message}");
+            context.Respond(BuildPlacementWorkerInventoryFailure(
+                reasonCode: "capacity_request_failed",
+                failureMessage: $"Worker capacity query failed: request forwarding to HiveMind failed ({ex.GetBaseException().Message})."));
+        }
     }
 
     private static PlacementWorkerInventoryResult BuildPlacementWorkerInventoryFailure(
