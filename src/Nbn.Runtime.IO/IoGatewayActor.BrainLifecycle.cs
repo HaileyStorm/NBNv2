@@ -8,7 +8,7 @@ namespace Nbn.Runtime.IO;
 
 public sealed partial class IoGatewayActor
 {
-    private async Task HandleSpawnBrain(IContext context, SpawnBrainViaIO message)
+    private Task HandleSpawnBrain(IContext context, SpawnBrainViaIO message)
     {
         if (_hiveMindPid is null)
         {
@@ -21,15 +21,24 @@ public sealed partial class IoGatewayActor
                 FailureReasonCode = ack.FailureReasonCode,
                 FailureMessage = ack.FailureMessage
             });
-            return;
+            return Task.CompletedTask;
         }
 
-        try
+        var spawnTask = context.RequestAsync<ProtoControl.SpawnBrainAck>(_hiveMindPid, message.Request, SpawnRequestTimeout);
+        context.ReenterAfter(spawnTask, completed =>
         {
-            var ack = await context.RequestAsync<ProtoControl.SpawnBrainAck>(_hiveMindPid, message.Request, SpawnRequestTimeout);
-            if (ack is null)
+            ProtoControl.SpawnBrainAck ack;
+            if (completed.IsFaulted)
             {
+                var ex = completed.Exception?.GetBaseException();
+                Console.WriteLine($"SpawnBrainViaIO failed: {ex?.Message}");
                 ack = BuildSpawnFailureAck(
+                    reasonCode: "spawn_request_failed",
+                    failureMessage: $"Spawn failed: request forwarding to HiveMind failed ({ex?.Message ?? "unknown"}).");
+            }
+            else
+            {
+                ack = completed.Result ?? BuildSpawnFailureAck(
                     reasonCode: "spawn_empty_response",
                     failureMessage: "Spawn failed: HiveMind returned an empty spawn acknowledgment.");
             }
@@ -40,23 +49,11 @@ public sealed partial class IoGatewayActor
                 FailureReasonCode = ack.FailureReasonCode,
                 FailureMessage = ack.FailureMessage
             });
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"SpawnBrainViaIO failed: {ex.Message}");
-            var ack = BuildSpawnFailureAck(
-                reasonCode: "spawn_request_failed",
-                failureMessage: $"Spawn failed: request forwarding to HiveMind failed ({ex.GetBaseException().Message}).");
-            context.Respond(new SpawnBrainViaIOAck
-            {
-                Ack = ack,
-                FailureReasonCode = ack.FailureReasonCode,
-                FailureMessage = ack.FailureMessage
-            });
-        }
+        });
+        return Task.CompletedTask;
     }
 
-    private async Task HandleAwaitSpawnPlacementAsync(IContext context, AwaitSpawnPlacementViaIO message)
+    private Task HandleAwaitSpawnPlacementAsync(IContext context, AwaitSpawnPlacementViaIO message)
     {
         if (_hiveMindPid is null)
         {
@@ -69,7 +66,7 @@ public sealed partial class IoGatewayActor
                 FailureReasonCode = ack.FailureReasonCode,
                 FailureMessage = ack.FailureMessage
             });
-            return;
+            return Task.CompletedTask;
         }
 
         if (!TryGetBrainId(message.BrainId, out var brainId))
@@ -83,73 +80,87 @@ public sealed partial class IoGatewayActor
                 FailureReasonCode = ack.FailureReasonCode,
                 FailureMessage = ack.FailureMessage
             });
-            return;
+            return Task.CompletedTask;
         }
 
-        try
+        var completionTask = HandleAwaitSpawnPlacementCoreAsync(context, message, brainId);
+        context.ReenterAfter(completionTask, completed =>
         {
-            var requestedTimeoutMs = message.TimeoutMs;
-            var transportTimeoutMs = requestedTimeoutMs >= (ulong)int.MaxValue - 1_000
-                ? int.MaxValue
-                : requestedTimeoutMs == 0
+            if (completed.IsFaulted)
+            {
+                var ex = completed.Exception?.GetBaseException();
+                Console.WriteLine($"AwaitSpawnPlacementViaIO failed: {ex?.Message}");
+                var ack = BuildSpawnFailureAck(
+                    reasonCode: "spawn_request_failed",
+                    failureMessage: $"Spawn wait failed: request forwarding to HiveMind failed ({ex?.Message ?? "unknown"}).");
+                context.Respond(new AwaitSpawnPlacementViaIOAck
+                {
+                    Ack = ack,
+                    FailureReasonCode = ack.FailureReasonCode,
+                    FailureMessage = ack.FailureMessage
+                });
+                return;
+            }
+
+            context.Respond(completed.Result);
+        });
+        return Task.CompletedTask;
+    }
+
+    private async Task<AwaitSpawnPlacementViaIOAck> HandleAwaitSpawnPlacementCoreAsync(
+        IContext context,
+        AwaitSpawnPlacementViaIO message,
+        Guid brainId)
+    {
+        var requestedTimeoutMs = message.TimeoutMs;
+        var transportTimeoutMs = requestedTimeoutMs >= (ulong)int.MaxValue - 1_000
+            ? int.MaxValue
+            : requestedTimeoutMs == 0
                 ? (int)Math.Max(100, TimeSpan.FromMinutes(10).TotalMilliseconds)
                 : (int)Math.Max(100, requestedTimeoutMs + 1_000UL);
-            var ack = await context.RequestAsync<ProtoControl.SpawnBrainAck>(
-                _hiveMindPid,
+        var ack = await context.RequestAsync<ProtoControl.SpawnBrainAck>(
+                _hiveMindPid!,
                 new ProtoControl.AwaitSpawnPlacement
                 {
                     BrainId = brainId.ToProtoUuid(),
                     TimeoutMs = requestedTimeoutMs
                 },
-                TimeSpan.FromMilliseconds(transportTimeoutMs)).ConfigureAwait(false);
-            if (ack is null)
-            {
-                ack = BuildSpawnFailureAck(
-                    reasonCode: "spawn_empty_response",
-                    failureMessage: "Spawn wait failed: HiveMind returned an empty placement acknowledgment.");
-            }
-            else if (ack.AcceptedForPlacement
-                     && ack.PlacementReady
-                     && ack.BrainId.TryToGuid(out var awaitedBrainId)
-                     && awaitedBrainId != Guid.Empty)
-            {
-                var brainEntry = _brains.TryGetValue(awaitedBrainId, out var existing)
-                    ? existing
-                    : await EnsureBrainEntryAsync(
-                            context,
-                            awaitedBrainId,
-                            BrainInfoResolveTimeout,
-                            bootstrapOnly: true)
-                        .ConfigureAwait(false);
-                if (brainEntry is null)
-                {
-                    ack.FailureReasonCode = "spawn_brain_info_timeout";
-                    ack.FailureMessage = $"Spawn wait failed: brain {awaitedBrainId} became placed but IO metadata was not visible in time.";
-                    ack.AcceptedForPlacement = true;
-                    ack.PlacementReady = false;
-                }
-            }
-
-            context.Respond(new AwaitSpawnPlacementViaIOAck
-            {
-                Ack = ack,
-                FailureReasonCode = ack.FailureReasonCode,
-                FailureMessage = ack.FailureMessage
-            });
-        }
-        catch (Exception ex)
+                TimeSpan.FromMilliseconds(transportTimeoutMs))
+            .ConfigureAwait(false);
+        if (ack is null)
         {
-            Console.WriteLine($"AwaitSpawnPlacementViaIO failed: {ex.Message}");
-            var ack = BuildSpawnFailureAck(
-                reasonCode: "spawn_request_failed",
-                failureMessage: $"Spawn wait failed: request forwarding to HiveMind failed ({ex.GetBaseException().Message}).");
-            context.Respond(new AwaitSpawnPlacementViaIOAck
-            {
-                Ack = ack,
-                FailureReasonCode = ack.FailureReasonCode,
-                FailureMessage = ack.FailureMessage
-            });
+            ack = BuildSpawnFailureAck(
+                reasonCode: "spawn_empty_response",
+                failureMessage: "Spawn wait failed: HiveMind returned an empty placement acknowledgment.");
         }
+        else if (ack.AcceptedForPlacement
+                 && ack.PlacementReady
+                 && ack.BrainId.TryToGuid(out var awaitedBrainId)
+                 && awaitedBrainId != Guid.Empty)
+        {
+            var brainEntry = _brains.TryGetValue(awaitedBrainId, out var existing)
+                ? existing
+                : await EnsureBrainEntryAsync(
+                        context,
+                        awaitedBrainId,
+                        BrainInfoResolveTimeout,
+                        bootstrapOnly: true)
+                    .ConfigureAwait(false);
+            if (brainEntry is null)
+            {
+                ack.FailureReasonCode = "spawn_brain_info_timeout";
+                ack.FailureMessage = $"Spawn wait failed: brain {awaitedBrainId} became placed but IO metadata was not visible in time.";
+                ack.AcceptedForPlacement = true;
+                ack.PlacementReady = false;
+            }
+        }
+
+        return new AwaitSpawnPlacementViaIOAck
+        {
+            Ack = ack,
+            FailureReasonCode = ack.FailureReasonCode,
+            FailureMessage = ack.FailureMessage
+        };
     }
 
     private void HandleKillBrain(IContext context, KillBrainViaIO message)
