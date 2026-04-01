@@ -615,6 +615,76 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task PauseBrain_Forwards_To_HiveMind_And_AcksSuccess()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var forwardedPause = new TaskCompletionSource<ProtoControl.PauseBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var forwardedResume = new TaskCompletionSource<ProtoControl.ResumeBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HivePauseResumeProbe(forwardedPause, forwardedResume)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var response = await root.RequestAsync<IoCommandAck>(
+            gateway,
+            new ProtoControl.PauseBrain
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Reason = "basics_spawn_setup"
+            });
+
+        Assert.True(response.Success);
+        Assert.Equal("pause_brain", response.Command);
+        Assert.Equal("queued", response.Message);
+        Assert.NotNull(response.BrainId);
+        Assert.True(response.BrainId.TryToGuid(out var acknowledgedBrainId));
+        Assert.Equal(brainId, acknowledgedBrainId);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var forwarded = await forwardedPause.Task.WaitAsync(cts.Token);
+        Assert.True(forwarded.BrainId.TryToGuid(out var forwardedBrainId));
+        Assert.Equal(brainId, forwardedBrainId);
+        Assert.Equal("basics_spawn_setup", forwarded.Reason);
+        Assert.False(forwardedResume.Task.IsCompleted);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task ResumeBrain_Forwards_To_HiveMind_And_AcksSuccess()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var forwardedPause = new TaskCompletionSource<ProtoControl.PauseBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var forwardedResume = new TaskCompletionSource<ProtoControl.ResumeBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HivePauseResumeProbe(forwardedPause, forwardedResume)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var response = await root.RequestAsync<IoCommandAck>(
+            gateway,
+            new ProtoControl.ResumeBrain
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+
+        Assert.True(response.Success);
+        Assert.Equal("resume_brain", response.Command);
+        Assert.Equal("queued", response.Message);
+        Assert.NotNull(response.BrainId);
+        Assert.True(response.BrainId.TryToGuid(out var acknowledgedBrainId));
+        Assert.Equal(brainId, acknowledgedBrainId);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var forwarded = await forwardedResume.Task.WaitAsync(cts.Token);
+        Assert.True(forwarded.BrainId.TryToGuid(out var forwardedBrainId));
+        Assert.Equal(brainId, forwardedBrainId);
+        Assert.False(forwardedPause.Task.IsCompleted);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SetOutputVectorSource_Forwards_To_HiveMind_And_AcksSuccess()
     {
         var system = new ActorSystem();
@@ -3167,6 +3237,38 @@ public class IoGatewayArtifactReferenceTests
                     {
                         _secondKill.TrySetResult(kill);
                     }
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class HivePauseResumeProbe : IActor
+    {
+        private readonly TaskCompletionSource<ProtoControl.PauseBrain> _pause;
+        private readonly TaskCompletionSource<ProtoControl.ResumeBrain> _resume;
+
+        public HivePauseResumeProbe(
+            TaskCompletionSource<ProtoControl.PauseBrain> pause,
+            TaskCompletionSource<ProtoControl.ResumeBrain> resume)
+        {
+            _pause = pause;
+            _resume = resume;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoControl.GetBrainRouting:
+                    context.Respond(new ProtoControl.BrainRoutingInfo());
+                    break;
+                case ProtoControl.PauseBrain pause:
+                    _pause.TrySetResult(pause);
+                    break;
+                case ProtoControl.ResumeBrain resume:
+                    _resume.TrySetResult(resume);
                     break;
             }
 

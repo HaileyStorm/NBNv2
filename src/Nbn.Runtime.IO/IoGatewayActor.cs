@@ -97,6 +97,12 @@ public sealed partial class IoGatewayActor : IActor
                 case KillBrainViaIO message:
                     HandleKillBrain(context, message);
                     break;
+                case ProtoControl.PauseBrain message:
+                    HandlePauseBrain(context, message);
+                    break;
+                case ProtoControl.ResumeBrain message:
+                    HandleResumeBrain(context, message);
+                    break;
                 case SetOutputVectorSource message:
                     await HandleSetOutputVectorSourceAsync(context, message);
                     break;
@@ -272,6 +278,22 @@ public sealed partial class IoGatewayActor : IActor
                     FailureReasonCode = "kill_request_failed",
                     FailureMessage = $"Kill failed: IO Gateway internal error ({detail})."
                 });
+                break;
+            case ProtoControl.PauseBrain pause:
+                RespondCommandAck(
+                    context,
+                    pause.BrainId,
+                    "pause_brain",
+                    success: false,
+                    $"io_gateway_internal_error:{detail}");
+                break;
+            case ProtoControl.ResumeBrain resume:
+                RespondCommandAck(
+                    context,
+                    resume.BrainId,
+                    "resume_brain",
+                    success: false,
+                    $"io_gateway_internal_error:{detail}");
                 break;
             case SetOutputVectorSource outputSourceMessage:
                 context.Respond(new SetOutputVectorSourceAck

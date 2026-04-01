@@ -199,6 +199,68 @@ public sealed partial class IoGatewayActor
         }
     }
 
+    private void HandlePauseBrain(IContext context, ProtoControl.PauseBrain message)
+    {
+        if (_hiveMindPid is null)
+        {
+            RespondCommandAck(context, message.BrainId, "pause_brain", success: false, "pause_unavailable");
+            return;
+        }
+
+        if (!TryGetBrainId(message.BrainId, out _))
+        {
+            RespondCommandAck(context, message.BrainId, "pause_brain", success: false, "pause_invalid_request");
+            return;
+        }
+
+        try
+        {
+            context.Send(_hiveMindPid, message);
+            RespondCommandAck(context, message.BrainId, "pause_brain", success: true, "queued");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"PauseBrain failed: {ex.Message}");
+            RespondCommandAck(
+                context,
+                message.BrainId,
+                "pause_brain",
+                success: false,
+                $"pause_request_failed:{ex.GetBaseException().Message}");
+        }
+    }
+
+    private void HandleResumeBrain(IContext context, ProtoControl.ResumeBrain message)
+    {
+        if (_hiveMindPid is null)
+        {
+            RespondCommandAck(context, message.BrainId, "resume_brain", success: false, "resume_unavailable");
+            return;
+        }
+
+        if (!TryGetBrainId(message.BrainId, out _))
+        {
+            RespondCommandAck(context, message.BrainId, "resume_brain", success: false, "resume_invalid_request");
+            return;
+        }
+
+        try
+        {
+            context.Send(_hiveMindPid, message);
+            RespondCommandAck(context, message.BrainId, "resume_brain", success: true, "queued");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"ResumeBrain failed: {ex.Message}");
+            RespondCommandAck(
+                context,
+                message.BrainId,
+                "resume_brain",
+                success: false,
+                $"resume_request_failed:{ex.GetBaseException().Message}");
+        }
+    }
+
     private async Task HandleSetOutputVectorSourceAsync(IContext context, SetOutputVectorSource message)
     {
         if (message.BrainId is not null && !TryGetBrainId(message.BrainId, out _))
