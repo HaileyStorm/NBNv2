@@ -33,6 +33,7 @@ public sealed partial class WorkerNodeActor
     {
         public int InputWidth { get; set; }
         public int OutputWidth { get; set; }
+        public InputCoordinatorMode? InputCoordinatorMode { get; set; }
         public ArtifactRef? BaseDefinition { get; set; }
         public ArtifactRef? LastSnapshot { get; set; }
         public bool HasIoMetadata { get; set; }

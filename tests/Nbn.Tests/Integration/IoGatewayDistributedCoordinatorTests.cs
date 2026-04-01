@@ -43,6 +43,14 @@ public sealed class IoGatewayDistributedCoordinatorTests
             },
             timeoutMs: 2_000);
 
+        var preInputRouterSnapshot = await root.RequestAsync<IoGatewayRegistrationProbeActor.Snapshot>(
+            routerPid,
+            new IoGatewayRegistrationProbeActor.GetSnapshot());
+        Assert.True(preInputRouterSnapshot.RegistrationCount >= 1);
+        Assert.Equal(ProtoControl.InputCoordinatorMode.DirtyOnChange, preInputRouterSnapshot.LastInputCoordinatorMode);
+        Assert.False(preInputRouterSnapshot.LastInputTickDrainArmed);
+        Assert.False(preInputRouterSnapshot.ObservedArmedTickDrainRegistration);
+
         root.Send(gateway, new InputWrite
         {
             BrainId = brainId.ToProtoUuid(),
@@ -70,8 +78,11 @@ public sealed class IoGatewayDistributedCoordinatorTests
         var routerSnapshot = await root.RequestAsync<IoGatewayRegistrationProbeActor.Snapshot>(
             routerPid,
             new IoGatewayRegistrationProbeActor.GetSnapshot());
-        Assert.Equal(2, routerSnapshot.RegistrationCount);
+        Assert.Equal(3, routerSnapshot.RegistrationCount);
         Assert.False(string.IsNullOrWhiteSpace(routerSnapshot.LastIoGatewayPid));
+        Assert.Equal(ProtoControl.InputCoordinatorMode.DirtyOnChange, routerSnapshot.LastInputCoordinatorMode);
+        Assert.False(routerSnapshot.LastInputTickDrainArmed);
+        Assert.True(routerSnapshot.ObservedArmedTickDrainRegistration);
 
         var bootstrapOutputTick = 8UL;
         await WaitForAsync(
@@ -1183,6 +1194,9 @@ public sealed class IoGatewayDistributedCoordinatorTests
         private readonly Guid _brainId;
         private int _registrationCount;
         private string _lastIoGatewayPid = string.Empty;
+        private ProtoControl.InputCoordinatorMode _lastInputCoordinatorMode = ProtoControl.InputCoordinatorMode.DirtyOnChange;
+        private bool _lastInputTickDrainArmed;
+        private bool _observedArmedTickDrainRegistration;
 
         public IoGatewayRegistrationProbeActor(Guid brainId)
         {
@@ -1191,7 +1205,12 @@ public sealed class IoGatewayDistributedCoordinatorTests
 
         public sealed record GetSnapshot;
 
-        public sealed record Snapshot(int RegistrationCount, string LastIoGatewayPid);
+        public sealed record Snapshot(
+            int RegistrationCount,
+            string LastIoGatewayPid,
+            ProtoControl.InputCoordinatorMode LastInputCoordinatorMode,
+            bool LastInputTickDrainArmed,
+            bool ObservedArmedTickDrainRegistration);
 
         public Task ReceiveAsync(IContext context)
         {
@@ -1203,9 +1222,17 @@ public sealed class IoGatewayDistributedCoordinatorTests
                          && brainId == _brainId:
                     _registrationCount++;
                     _lastIoGatewayPid = register.IoGatewayPid ?? string.Empty;
+                    _lastInputCoordinatorMode = register.InputCoordinatorMode;
+                    _lastInputTickDrainArmed = register.InputTickDrainArmed;
+                    _observedArmedTickDrainRegistration |= register.InputTickDrainArmed;
                     break;
                 case GetSnapshot:
-                    context.Respond(new Snapshot(_registrationCount, _lastIoGatewayPid));
+                    context.Respond(new Snapshot(
+                        _registrationCount,
+                        _lastIoGatewayPid,
+                        _lastInputCoordinatorMode,
+                        _lastInputTickDrainArmed,
+                        _observedArmedTickDrainRegistration));
                     break;
             }
 

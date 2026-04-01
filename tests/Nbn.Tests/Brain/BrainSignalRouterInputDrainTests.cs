@@ -12,7 +12,7 @@ namespace Nbn.Tests.Brain;
 public class BrainSignalRouterInputDrainTests
 {
     [Fact]
-    public async Task TickDeliver_Drains_Inputs_From_Registered_IoGateway()
+    public async Task TickDeliver_Drains_Inputs_From_Registered_IoGateway_When_Input_Is_Pending()
     {
         var system = new ActorSystem();
         var root = system.Root;
@@ -34,7 +34,15 @@ public class BrainSignalRouterInputDrainTests
         root.Send(router, new RegisterIoGateway
         {
             BrainId = brainId.ToProtoUuid(),
-            IoGatewayPid = PidLabel(ioPid)
+            IoGatewayPid = PidLabel(ioPid),
+            InputCoordinatorMode = InputCoordinatorMode.DirtyOnChange,
+            InputTickDrainArmed = false
+        });
+        root.Send(router, new InputWrite
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputIndex = 0,
+            Value = 1f
         });
 
         var deliverTask = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
@@ -52,6 +60,120 @@ public class BrainSignalRouterInputDrainTests
         var deliverDone = await deliverTask.WaitAsync(timeoutCts.Token);
         Assert.Equal((ulong)1, deliverDone.TickId);
         Assert.True(deliverDone.DeliveredBatches > 0);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickDeliver_DirtyOnChange_Suppresses_IdleDrainRequests_Before_First_Input_And_After_Clean_Drain()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var ioPid = root.Spawn(Props.FromProducer(() => new CountingIoDrainActor(brainId, includeContribution: false)));
+        var inputShardId = ShardId32.From(NbnConstants.InputRegionId, 0);
+        var inputShardPid = root.Spawn(Props.FromProducer(() => new AckingInputShardActor(brainId, inputShardId)));
+
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(inputShardId.Value, inputShardPid)
+        })));
+
+        root.Send(router, new RegisterIoGateway
+        {
+            BrainId = brainId.ToProtoUuid(),
+            IoGatewayPid = PidLabel(ioPid),
+            InputCoordinatorMode = InputCoordinatorMode.DirtyOnChange,
+            InputTickDrainArmed = false
+        });
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+        var tick1Done = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 })
+            .WaitAsync(timeoutCts.Token);
+        Assert.Equal((ulong)1, tick1Done.TickId);
+        Assert.Equal(0, (await root.RequestAsync<DrainRequestCount>(ioPid, new GetDrainRequestCount())).Count);
+
+        root.Send(router, new InputWrite
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputIndex = 0,
+            Value = 0.5f
+        });
+
+        var tick2Done = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 2 })
+            .WaitAsync(timeoutCts.Token);
+        Assert.Equal((ulong)2, tick2Done.TickId);
+        Assert.Equal(1, (await root.RequestAsync<DrainRequestCount>(ioPid, new GetDrainRequestCount())).Count);
+
+        var tick3Done = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 3 })
+            .WaitAsync(timeoutCts.Token);
+        Assert.Equal((ulong)3, tick3Done.TickId);
+        Assert.Equal(1, (await root.RequestAsync<DrainRequestCount>(ioPid, new GetDrainRequestCount())).Count);
+
+        root.Send(router, new InputWrite
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputIndex = 0,
+            Value = 0.75f
+        });
+
+        var tick4Done = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 4 })
+            .WaitAsync(timeoutCts.Token);
+        Assert.Equal((ulong)4, tick4Done.TickId);
+        Assert.Equal(2, (await root.RequestAsync<DrainRequestCount>(ioPid, new GetDrainRequestCount())).Count);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task TickDeliver_ReplayLatestVector_Continues_Requesting_Drains_Before_And_After_Input()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var ioPid = root.Spawn(Props.FromProducer(() => new CountingIoDrainActor(brainId, includeContribution: true)));
+        var inputShardId = ShardId32.From(NbnConstants.InputRegionId, 0);
+        var inputShardPid = root.Spawn(Props.FromProducer(() => new AckingInputShardActor(brainId, inputShardId)));
+
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(inputShardId.Value, inputShardPid)
+        })));
+
+        root.Send(router, new RegisterIoGateway
+        {
+            BrainId = brainId.ToProtoUuid(),
+            IoGatewayPid = PidLabel(ioPid),
+            InputCoordinatorMode = InputCoordinatorMode.ReplayLatestVector,
+            InputTickDrainArmed = true
+        });
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+        var tick1Done = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 })
+            .WaitAsync(timeoutCts.Token);
+        Assert.Equal((ulong)1, tick1Done.TickId);
+        Assert.Equal(1, (await root.RequestAsync<DrainRequestCount>(ioPid, new GetDrainRequestCount())).Count);
+
+        root.Send(router, new InputVector
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Values = { 1f }
+        });
+
+        var tick2Done = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 2 })
+            .WaitAsync(timeoutCts.Token);
+        var tick3Done = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 3 })
+            .WaitAsync(timeoutCts.Token);
+
+        Assert.Equal((ulong)2, tick2Done.TickId);
+        Assert.Equal((ulong)3, tick3Done.TickId);
+        Assert.Equal(3, (await root.RequestAsync<DrainRequestCount>(ioPid, new GetDrainRequestCount())).Count);
 
         await system.ShutdownAsync();
     }
@@ -76,7 +198,15 @@ public class BrainSignalRouterInputDrainTests
         root.Send(router, new RegisterIoGateway
         {
             BrainId = brainId.ToProtoUuid(),
-            IoGatewayPid = PidLabel(ioPid)
+            IoGatewayPid = PidLabel(ioPid),
+            InputCoordinatorMode = InputCoordinatorMode.DirtyOnChange,
+            InputTickDrainArmed = false
+        });
+        root.Send(router, new InputWrite
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputIndex = 0,
+            Value = 1f
         });
 
         var tick1Task = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
@@ -115,7 +245,15 @@ public class BrainSignalRouterInputDrainTests
         root.Send(router, new RegisterIoGateway
         {
             BrainId = brainId.ToProtoUuid(),
-            IoGatewayPid = PidLabel(ioPid)
+            IoGatewayPid = PidLabel(ioPid),
+            InputCoordinatorMode = InputCoordinatorMode.DirtyOnChange,
+            InputTickDrainArmed = false
+        });
+        root.Send(router, new InputWrite
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputIndex = 0,
+            Value = 1f
         });
 
         var tick1Task = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 });
@@ -522,6 +660,10 @@ public class BrainSignalRouterInputDrainTests
         Assert.NotSame(task, completed);
     }
 
+    private sealed record GetDrainRequestCount;
+
+    private sealed record DrainRequestCount(int Count);
+
     private sealed class IoDrainActor : IActor
     {
         private readonly Guid _brainId;
@@ -558,6 +700,53 @@ public class BrainSignalRouterInputDrainTests
             => brainId is not null && brainId.TryToGuid(out var guid) && guid == _brainId;
     }
 
+    private sealed class CountingIoDrainActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly bool _includeContribution;
+        private int _count;
+
+        public CountingIoDrainActor(Guid brainId, bool includeContribution)
+        {
+            _brainId = brainId;
+            _includeContribution = includeContribution;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case DrainInputs request when Matches(request.BrainId):
+                    _count++;
+                    var drain = new InputDrain
+                    {
+                        BrainId = _brainId.ToProtoUuid(),
+                        TickId = request.TickId
+                    };
+
+                    if (_includeContribution)
+                    {
+                        drain.Contribs.Add(new Contribution
+                        {
+                            TargetNeuronId = 0,
+                            Value = 1f
+                        });
+                    }
+
+                    context.Respond(drain);
+                    break;
+                case GetDrainRequestCount:
+                    context.Respond(new DrainRequestCount(_count));
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private bool Matches(Nbn.Proto.Uuid? brainId)
+            => brainId is not null && brainId.TryToGuid(out var guid) && guid == _brainId;
+    }
+
     private sealed class SilentIoDrainActor : IActor
     {
         private readonly Guid _brainId;
@@ -584,6 +773,41 @@ public class BrainSignalRouterInputDrainTests
     private sealed class IgnoreActor : IActor
     {
         public Task ReceiveAsync(IContext context) => Task.CompletedTask;
+    }
+
+    private sealed class AckingInputShardActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly ShardId32 _shardId;
+
+        public AckingInputShardActor(Guid brainId, ShardId32 shardId)
+        {
+            _brainId = brainId;
+            _shardId = shardId;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is SignalBatch batch && Matches(batch.BrainId))
+            {
+                var ack = new SignalBatchAck
+                {
+                    BrainId = _brainId.ToProtoUuid(),
+                    RegionId = (uint)_shardId.RegionId,
+                    ShardId = _shardId.ToProtoShardId32(),
+                    TickId = batch.TickId
+                };
+                if (context.Sender is not null)
+                {
+                    context.Request(context.Sender, ack);
+                }
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private bool Matches(Nbn.Proto.Uuid? brainId)
+            => brainId is not null && brainId.TryToGuid(out var guid) && guid == _brainId;
     }
 
     private sealed class InputShardActor : IActor

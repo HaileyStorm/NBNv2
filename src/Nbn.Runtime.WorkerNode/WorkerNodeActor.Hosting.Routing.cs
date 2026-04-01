@@ -167,11 +167,18 @@ public sealed partial class WorkerNodeActor
             return;
         }
 
-        context.Send(target, new RegisterIoGateway
+        var register = new RegisterIoGateway
         {
             BrainId = brain.BrainId.ToProtoUuid(),
-            IoGatewayPid = PidLabel(ioPid)
-        });
+            IoGatewayPid = PidLabel(ioPid),
+            InputTickDrainArmed = false
+        };
+        if (brain.RuntimeInfo?.InputCoordinatorMode is { } inputCoordinatorMode)
+        {
+            register.InputCoordinatorMode = inputCoordinatorMode;
+        }
+
+        context.Send(target, register);
     }
 
     private void UpdateRuntimeWidthsFromShards(BrainHostingState brain)

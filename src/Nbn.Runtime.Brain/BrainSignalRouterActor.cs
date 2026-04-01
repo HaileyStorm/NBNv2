@@ -24,6 +24,9 @@ public sealed partial class BrainSignalRouterActor : IActor
     private readonly Dictionary<ulong, PendingInputDrain> _pendingInputDrains = new();
 
     private PID? _ioGatewayPid;
+    private bool _inputCoordinatorModeKnown;
+    private InputCoordinatorMode _inputCoordinatorMode = InputCoordinatorMode.DirtyOnChange;
+    private bool _inputDrainPending;
     private RoutingTableSnapshot _routingSnapshot = RoutingTableSnapshot.Empty;
 
     /// <summary>

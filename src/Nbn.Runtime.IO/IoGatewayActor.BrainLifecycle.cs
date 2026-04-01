@@ -556,6 +556,12 @@ public sealed partial class IoGatewayActor
                     await ReplayOutputSubscriptionsAsync(context, existing).ConfigureAwait(false);
                 }
 
+                if ((inputModeChanged || inputCoordinatorChanged)
+                    && _routerCache.TryGetValue(brainId, out var routerPid))
+                {
+                    RegisterIoGatewayPid(context, brainId, routerPid, force: true);
+                }
+
                 if (MergePendingOutputSubscriptions(existing))
                 {
                     await ReplayOutputSubscriptionsAsync(context, existing).ConfigureAwait(false);
@@ -1029,6 +1035,7 @@ public sealed partial class IoGatewayActor
 
         _brains.Remove(entry.BrainId);
         _routerCache.Remove(entry.BrainId);
+        _routerRegistrationTargetCache.Remove(entry.BrainId);
         _routerRegistration.Remove(entry.BrainId);
     }
 

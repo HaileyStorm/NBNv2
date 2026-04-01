@@ -140,6 +140,8 @@ message UnregisterBrain {
 message RegisterIoGateway {
   nbn.Uuid brain_id = 1;
   string io_gateway_pid = 2; // "address/id" or "id" if local
+  optional nbn.control.InputCoordinatorMode input_coordinator_mode = 3;
+  optional bool input_tick_drain_armed = 4;
 }
 
 message SpawnBrainViaIO {

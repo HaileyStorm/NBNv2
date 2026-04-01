@@ -28,7 +28,9 @@ public sealed class BrainRootActorTests
         root.Send(brainRootPid, new RegisterIoGateway
         {
             BrainId = brainId.ToProtoUuid(),
-            IoGatewayPid = "127.0.0.1:12042/IoGateway"
+            IoGatewayPid = "127.0.0.1:12042/IoGateway",
+            InputCoordinatorMode = Nbn.Proto.Control.InputCoordinatorMode.ReplayLatestVector,
+            InputTickDrainArmed = true
         });
         root.Send(brainRootPid, new SetSignalRouter(routerPid));
 
@@ -41,6 +43,8 @@ public sealed class BrainRootActorTests
         Assert.Single(routing.Table.Routes);
         Assert.Equal(route, routing.Table.Routes[0]);
         Assert.Equal("127.0.0.1:12042/IoGateway", ioGateway.IoGatewayPid);
+        Assert.Equal(Nbn.Proto.Control.InputCoordinatorMode.ReplayLatestVector, ioGateway.InputCoordinatorMode);
+        Assert.True(ioGateway.InputTickDrainArmed);
 
         await system.ShutdownAsync();
     }

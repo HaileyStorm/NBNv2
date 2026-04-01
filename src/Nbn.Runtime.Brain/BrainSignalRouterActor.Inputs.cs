@@ -59,6 +59,7 @@ public sealed partial class BrainSignalRouterActor
         }
 
         CaptureIoGateway(context.Sender);
+        _inputDrainPending = true;
         if (LogInputDiagnostics)
         {
             LogInput($"InputWrite received sender={PidLabel(context.Sender)} ioGateway={PidLabel(_ioGatewayPid)} index={message.InputIndex} value={message.Value:0.###}");
@@ -73,6 +74,7 @@ public sealed partial class BrainSignalRouterActor
         }
 
         CaptureIoGateway(context.Sender);
+        _inputDrainPending = true;
         if (LogInputDiagnostics)
         {
             LogInput($"InputVector received sender={PidLabel(context.Sender)} ioGateway={PidLabel(_ioGatewayPid)} width={message.Values.Count}");
@@ -200,6 +202,10 @@ public sealed partial class BrainSignalRouterActor
                 Success = true,
                 Message = $"applied_shards={targets.Length}"
             });
+            if (message.ResetAccumulator)
+            {
+                _inputDrainPending = false;
+            }
         }
         catch (Exception ex)
         {
@@ -233,9 +239,14 @@ public sealed partial class BrainSignalRouterActor
         }
 
         _pendingInputDrains.Remove(message.TickId);
+        if (_inputCoordinatorModeKnown && _inputCoordinatorMode != InputCoordinatorMode.ReplayLatestVector)
+        {
+            _inputDrainPending = false;
+        }
         if (LogInputTraceDiagnostics || message.Contribs.Count > 0)
         {
-            LogInput($"InputDrain accepted tick={message.TickId} sender={PidLabel(context.Sender)} contribs={message.Contribs.Count}");
+            LogInput(
+                $"InputDrain accepted tick={message.TickId} sender={PidLabel(context.Sender)} contribs={message.Contribs.Count} drainPending={_inputDrainPending} modeKnown={_inputCoordinatorModeKnown}");
         }
 
         ProcessTickDeliver(context, message.TickId, pending.ReplyTo, message.Contribs, pending.Stopwatch);
@@ -252,18 +263,32 @@ public sealed partial class BrainSignalRouterActor
             && TryParsePid(message.IoGatewayPid, out var parsed))
         {
             _ioGatewayPid = parsed;
+            if (message.HasInputCoordinatorMode)
+            {
+                _inputCoordinatorMode = NormalizeInputCoordinatorMode(message.InputCoordinatorMode);
+                _inputCoordinatorModeKnown = true;
+            }
+            ApplyInputDrainRegistration(message);
             if (LogInputDiagnostics)
             {
-                LogInput($"RegisterIoGateway explicit sender={PidLabel(context.Sender)} ioGateway={PidLabel(_ioGatewayPid)}");
+                LogInput(
+                    $"RegisterIoGateway explicit sender={PidLabel(context.Sender)} ioGateway={PidLabel(_ioGatewayPid)} mode={_inputCoordinatorMode} modeKnown={_inputCoordinatorModeKnown} drainPending={_inputDrainPending}");
             }
 
             return;
         }
 
         CaptureIoGateway(context.Sender);
+        if (message.HasInputCoordinatorMode)
+        {
+            _inputCoordinatorMode = NormalizeInputCoordinatorMode(message.InputCoordinatorMode);
+            _inputCoordinatorModeKnown = true;
+        }
+        ApplyInputDrainRegistration(message);
         if (LogInputDiagnostics)
         {
-            LogInput($"RegisterIoGateway sender-capture sender={PidLabel(context.Sender)} ioGateway={PidLabel(_ioGatewayPid)}");
+            LogInput(
+                $"RegisterIoGateway sender-capture sender={PidLabel(context.Sender)} ioGateway={PidLabel(_ioGatewayPid)} mode={_inputCoordinatorMode} modeKnown={_inputCoordinatorModeKnown} drainPending={_inputDrainPending}");
         }
     }
 
@@ -306,8 +331,43 @@ public sealed partial class BrainSignalRouterActor
     }
 
     private bool ShouldDrainInputs()
-        => _ioGatewayPid is not null
-           && _routingTable.Entries.Any(entry => entry.ShardId.RegionId == NbnConstants.InputRegionId);
+    {
+        if (_ioGatewayPid is null
+            || !_routingTable.Entries.Any(entry => entry.ShardId.RegionId == NbnConstants.InputRegionId))
+        {
+            return false;
+        }
+
+        if (!_inputCoordinatorModeKnown)
+        {
+            return true;
+        }
+
+        return _inputCoordinatorMode == InputCoordinatorMode.ReplayLatestVector || _inputDrainPending;
+    }
+
+    private static InputCoordinatorMode NormalizeInputCoordinatorMode(InputCoordinatorMode mode)
+        => mode == InputCoordinatorMode.ReplayLatestVector
+            ? mode
+            : InputCoordinatorMode.DirtyOnChange;
+
+    private void ApplyInputDrainRegistration(RegisterIoGateway message)
+    {
+        if (message.HasInputTickDrainArmed)
+        {
+            _inputDrainPending = (_inputCoordinatorModeKnown
+                                  && _inputCoordinatorMode == InputCoordinatorMode.ReplayLatestVector)
+                                 || message.InputTickDrainArmed;
+            return;
+        }
+
+        if (message.HasInputCoordinatorMode)
+        {
+            // Older/mode-only registrations should preserve the pre-optimization behavior
+            // until IO sends an explicit drain-arm hint or a drain response clears the state.
+            _inputDrainPending = true;
+        }
+    }
 
     private void CaptureIoGateway(PID? sender)
     {

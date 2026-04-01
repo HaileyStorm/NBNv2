@@ -557,6 +557,8 @@ public class ProtoCompatibilityTests
         var registerIoGateway = descriptor.MessageTypes.Single(message => message.Name == "RegisterIoGateway");
         AssertField(registerIoGateway, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(registerIoGateway, "io_gateway_pid", 2, FieldType.String);
+        AssertField(registerIoGateway, "input_coordinator_mode", 3, FieldType.Enum, "nbn.control.InputCoordinatorMode");
+        AssertField(registerIoGateway, "input_tick_drain_armed", 4, FieldType.Bool);
 
         var spawnBrainViaIo = descriptor.MessageTypes.Single(message => message.Name == "SpawnBrainViaIO");
         AssertField(spawnBrainViaIo, "request", 1, FieldType.Message, "nbn.control.SpawnBrain");

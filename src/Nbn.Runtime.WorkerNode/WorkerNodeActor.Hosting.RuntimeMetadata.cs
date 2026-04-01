@@ -125,6 +125,9 @@ public sealed partial class WorkerNodeActor
                     hasMetadata = true;
                 }
 
+                runtime.InputCoordinatorMode = info.InputCoordinatorMode;
+                hasMetadata = true;
+
                 if (HasArtifactRef(info.BaseDefinition))
                 {
                     runtime.BaseDefinition = info.BaseDefinition.Clone();

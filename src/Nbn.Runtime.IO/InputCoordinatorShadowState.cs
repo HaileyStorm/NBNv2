@@ -50,6 +50,10 @@ internal sealed class InputCoordinatorShadowState
         }
     }
 
+    public bool ShouldRequestTickDrain
+        => _mode == ProtoControl.InputCoordinatorMode.ReplayLatestVector
+            || _dirtyIndices.Count > 0;
+
     public void Apply(InputWrite message)
     {
         if (!float.IsFinite(message.Value))

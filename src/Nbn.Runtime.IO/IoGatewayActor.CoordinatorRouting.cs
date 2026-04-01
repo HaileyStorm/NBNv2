@@ -22,8 +22,10 @@ public sealed partial class IoGatewayActor
             entry = await EnsureBrainEntryAsync(context, brainId).ConfigureAwait(false);
         }
 
+        var shouldRequestTickDrainBeforeForward = false;
         if (entry is not null)
         {
+            shouldRequestTickDrainBeforeForward = entry.InputState.ShouldRequestTickDrain;
             TrackInputState(entry, message);
             await DispatchCoordinatorMessageAsync(context, entry.InputPid, message).ConfigureAwait(false);
         }
@@ -35,9 +37,18 @@ public sealed partial class IoGatewayActor
 
         _routerRegistration.TryGetValue(brainId, out var registeredRouterBeforeForward);
         var routerPid = await ResolveRouterPidAsync(context, brainId, allowCached: false).ConfigureAwait(false);
+        var registrationTargetLabel = routerPid is null
+            ? string.Empty
+            : PidLabel(ResolveRegistrationTarget(brainId, routerPid));
         if (hadBrainEntry
             && routerPid is not null
-            && string.Equals(registeredRouterBeforeForward, PidLabel(routerPid), StringComparison.Ordinal))
+            && string.Equals(registeredRouterBeforeForward, registrationTargetLabel, StringComparison.Ordinal))
+        {
+            RegisterIoGatewayPid(context, brainId, routerPid, force: true);
+        }
+        else if (entry is not null
+                 && routerPid is not null
+                 && shouldRequestTickDrainBeforeForward != entry.InputState.ShouldRequestTickDrain)
         {
             RegisterIoGatewayPid(context, brainId, routerPid, force: true);
         }
@@ -165,6 +176,7 @@ public sealed partial class IoGatewayActor
 
             if (resetInputCoordinatorState)
             {
+                var shouldRequestTickDrainBefore = entry!.InputState.ShouldRequestTickDrain;
                 var inputAck = await DispatchCoordinatorMessageAsync(context, entry!.InputPid, message).ConfigureAwait(false);
                 if (inputAck is null)
                 {
@@ -184,6 +196,10 @@ public sealed partial class IoGatewayActor
                 }
 
                 entry.InputState.ResetRuntimeState(resetAccumulator: true);
+                if (shouldRequestTickDrainBefore != entry.InputState.ShouldRequestTickDrain)
+                {
+                    RegisterIoGatewayPid(context, brainId, routerPid, force: true);
+                }
             }
 
             context.Respond(routerAck);
@@ -459,8 +475,14 @@ public sealed partial class IoGatewayActor
                 $"[IoGatewayInput] drain request brain={entry.BrainId} tick={message.TickId} input={PidLabel(entry.InputPid)}");
         }
 
+        var shouldRequestTickDrainBefore = entry.InputState.ShouldRequestTickDrain;
         var drain = await context.RequestAsync<InputDrain>(entry.InputPid, message, timeout).ConfigureAwait(false);
         entry.InputState.ApplyDrain(drain);
+        if (shouldRequestTickDrainBefore != entry.InputState.ShouldRequestTickDrain
+            && _routerCache.TryGetValue(entry.BrainId, out var routerPid))
+        {
+            RegisterIoGatewayPid(context, entry.BrainId, routerPid, force: true);
+        }
         if (LogInputTraceDiagnostics || drain.Contribs.Count > 0)
         {
             Console.WriteLine(
@@ -1045,6 +1067,7 @@ public sealed partial class IoGatewayActor
                 return cached;
             }
 
+            var hasRootPid = TryParsePid(info.BrainRootPid, out var rootPid) && rootPid is not null;
             if (TryParsePid(info.SignalRouterPid, out var routerPid) && routerPid is not null)
             {
                 if (LogInputTraceDiagnostics || !PidEquals(cached, routerPid))
@@ -1058,27 +1081,36 @@ public sealed partial class IoGatewayActor
                     _routerRegistration.Remove(brainId);
                 }
 
+                var registrationTarget = hasRootPid ? rootPid! : routerPid;
+                if (!_routerRegistrationTargetCache.TryGetValue(brainId, out var cachedRegistrationTarget)
+                    || !PidEquals(cachedRegistrationTarget, registrationTarget))
+                {
+                    _routerRegistration.Remove(brainId);
+                    _routerRegistrationTargetCache[brainId] = registrationTarget;
+                }
+
                 _routerCache[brainId] = routerPid;
                 RegisterIoGatewayPid(context, brainId, routerPid);
                 return routerPid;
             }
 
-            if (TryParsePid(info.BrainRootPid, out var rootPid) && rootPid is not null)
+            if (hasRootPid)
             {
-                if (LogInputTraceDiagnostics || !PidEquals(cached, rootPid))
+                if (LogInputTraceDiagnostics || !PidEquals(cached, rootPid!))
                 {
                     Console.WriteLine(
                         $"[IoGatewayInput] router resolved brain={brainId} target=brain_root previous={PidLabel(cached)} current={PidLabel(rootPid)}");
                 }
 
-                if (!PidEquals(cached, rootPid))
+                if (!PidEquals(cached, rootPid!))
                 {
                     _routerRegistration.Remove(brainId);
                 }
 
-                _routerCache[brainId] = rootPid;
-                RegisterIoGatewayPid(context, brainId, rootPid);
-                return rootPid;
+                _routerCache[brainId] = rootPid!;
+                _routerRegistrationTargetCache[brainId] = rootPid!;
+                RegisterIoGatewayPid(context, brainId, rootPid!);
+                return rootPid!;
             }
         }
         catch (Exception ex)
@@ -1104,7 +1136,8 @@ public sealed partial class IoGatewayActor
 
     private void RegisterIoGatewayPid(IContext context, Guid brainId, PID routerPid, bool force = false)
     {
-        var routerLabel = PidLabel(routerPid);
+        var registrationTarget = ResolveRegistrationTarget(brainId, routerPid);
+        var routerLabel = PidLabel(registrationTarget);
         if (!force
             && _routerRegistration.TryGetValue(brainId, out var registered)
             && registered == routerLabel)
@@ -1113,14 +1146,26 @@ public sealed partial class IoGatewayActor
         }
 
         var selfPid = ToRemotePid(context, context.Self);
-        context.Send(routerPid, new RegisterIoGateway
+        var register = new RegisterIoGateway
         {
             BrainId = brainId.ToProtoUuid(),
             IoGatewayPid = PidLabel(selfPid)
-        });
+        };
+        if (_brains.TryGetValue(brainId, out var entry))
+        {
+            register.InputCoordinatorMode = entry.InputCoordinatorMode;
+            register.InputTickDrainArmed = entry.InputState.ShouldRequestTickDrain;
+        }
+
+        context.Send(registrationTarget, register);
 
         _routerRegistration[brainId] = routerLabel;
     }
+
+    private PID ResolveRegistrationTarget(Guid brainId, PID routerPid)
+        => _routerRegistrationTargetCache.TryGetValue(brainId, out var target)
+            ? target
+            : routerPid;
 
     private static bool TryGetOutputSubscriptionCommand(object message, out OutputSubscriptionCommand command)
     {
