@@ -126,6 +126,55 @@ public sealed class SettingsMonitorBrainLifecycleTests
     }
 
     [Fact]
+    public async Task PruneStaleNonLiveBrainsAsync_RemovesOnlyRowsWhoseBrainAndControllerAreBothStale()
+    {
+        using var db = new TempDatabaseScope("settings-monitor.db");
+        var store = new SettingsMonitorStore(db.DatabasePath);
+        await store.InitializeAsync();
+
+        var nodeId = Guid.NewGuid();
+        var staleActiveBrainId = Guid.NewGuid();
+        var staleRecoveringBrainId = Guid.NewGuid();
+        var freshControllerBrainId = Guid.NewGuid();
+        var recentBrainId = Guid.NewGuid();
+        var deadBrainId = Guid.NewGuid();
+
+        await store.UpsertNodeAsync(new NodeRegistration(nodeId, "worker-a", "127.0.0.1:12041", "worker-node"), timeMs: 100);
+
+        await store.UpsertBrainAsync(staleActiveBrainId, "Active", spawnedMs: 100, lastTickId: 1, updatedMs: 100);
+        await store.UpsertBrainControllerAsync(
+            new BrainControllerRegistration(staleActiveBrainId, nodeId, "worker-node/brain-stale-active-root"),
+            timeMs: 100);
+
+        await store.UpsertBrainAsync(staleRecoveringBrainId, "Recovering", spawnedMs: 120, lastTickId: 2, updatedMs: 120);
+
+        await store.UpsertBrainAsync(freshControllerBrainId, "Active", spawnedMs: 140, lastTickId: 3, updatedMs: 140);
+        await store.UpsertBrainControllerAsync(
+            new BrainControllerRegistration(freshControllerBrainId, nodeId, "worker-node/brain-fresh-controller-root"),
+            timeMs: 900);
+
+        await store.UpsertBrainAsync(recentBrainId, "Recovering", spawnedMs: 160, lastTickId: 4, updatedMs: 900);
+
+        await store.UpsertBrainAsync(deadBrainId, "Dead", spawnedMs: 180, lastTickId: 5, updatedMs: 100);
+        await store.UpsertBrainControllerAsync(
+            new BrainControllerRegistration(deadBrainId, nodeId, "worker-node/brain-dead-root"),
+            timeMs: 100);
+
+        var result = await store.PruneStaleNonLiveBrainsAsync(cutoffMs: 500);
+
+        Assert.Equal(2, result.DeletedBrains);
+        Assert.Equal(1, result.DeletedControllers);
+        Assert.Null(await store.GetBrainAsync(staleActiveBrainId));
+        Assert.Null(await store.GetBrainControllerAsync(staleActiveBrainId));
+        Assert.Null(await store.GetBrainAsync(staleRecoveringBrainId));
+        Assert.NotNull(await store.GetBrainAsync(freshControllerBrainId));
+        Assert.NotNull(await store.GetBrainControllerAsync(freshControllerBrainId));
+        Assert.NotNull(await store.GetBrainAsync(recentBrainId));
+        Assert.NotNull(await store.GetBrainAsync(deadBrainId));
+        Assert.NotNull(await store.GetBrainControllerAsync(deadBrainId));
+    }
+
+    [Fact]
     public async Task InitializeAsync_MigratesLegacyBrainsTable_ToIncludeUpdatedMs_And_BackfillsLegacyRows()
     {
         using var db = new TempDatabaseScope("settings-monitor.db");

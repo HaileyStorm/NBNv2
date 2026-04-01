@@ -70,20 +70,31 @@ public sealed partial class SettingsMonitorActor
         }
 
         _staleDeadBrainPruneInFlight = true;
-        var cutoffMs = NowMs() - checked((long)_staleDeadBrainRetention.TotalMilliseconds);
-        var task = _store.PruneStaleDeadBrainsAsync(cutoffMs);
+        var nowMs = NowMs();
+        var deadCutoffMs = nowMs - checked((long)_staleDeadBrainRetention.TotalMilliseconds);
+        var nonLiveCutoffMs = nowMs - checked((long)_staleNonLiveBrainRetention.TotalMilliseconds);
+        var task = PruneStaleBrainRowsAsync(deadCutoffMs, nonLiveCutoffMs);
         context.ReenterAfter(task, completed =>
         {
             try
             {
                 if (completed.IsFaulted)
                 {
-                    LogError($"Dead-brain prune failed: {completed.Exception?.GetBaseException().Message}");
+                    LogError($"Brain-row prune failed: {completed.Exception?.GetBaseException().Message}");
                 }
-                else if (completed.Result.DeletedBrains > 0 || completed.Result.DeletedControllers > 0)
+                else
                 {
-                    Console.WriteLine(
-                        $"[{DateTime.UtcNow:O}] [SettingsMonitor] Pruned stale dead brain rows: {completed.Result.DeletedBrains} brains, {completed.Result.DeletedControllers} controllers.");
+                    if (completed.Result.DeadRows.DeletedBrains > 0 || completed.Result.DeadRows.DeletedControllers > 0)
+                    {
+                        Console.WriteLine(
+                            $"[{DateTime.UtcNow:O}] [SettingsMonitor] Pruned stale dead brain rows: {completed.Result.DeadRows.DeletedBrains} brains, {completed.Result.DeadRows.DeletedControllers} controllers.");
+                    }
+
+                    if (completed.Result.NonLiveRows.DeletedBrains > 0 || completed.Result.NonLiveRows.DeletedControllers > 0)
+                    {
+                        Console.WriteLine(
+                            $"[{DateTime.UtcNow:O}] [SettingsMonitor] Pruned stale non-live brain rows: {completed.Result.NonLiveRows.DeletedBrains} brains, {completed.Result.NonLiveRows.DeletedControllers} controllers.");
+                    }
                 }
             }
             finally
@@ -94,6 +105,13 @@ public sealed partial class SettingsMonitorActor
 
             return Task.CompletedTask;
         });
+    }
+
+    private async Task<PrunedBrainCleanup> PruneStaleBrainRowsAsync(long deadCutoffMs, long nonLiveCutoffMs)
+    {
+        var deadRows = await _store.PruneStaleDeadBrainsAsync(deadCutoffMs).ConfigureAwait(false);
+        var nonLiveRows = await _store.PruneStaleNonLiveBrainsAsync(nonLiveCutoffMs).ConfigureAwait(false);
+        return new PrunedBrainCleanup(deadRows, nonLiveRows);
     }
 
     private static void ScheduleSelf(IContext context, TimeSpan delay, object message)
@@ -123,4 +141,8 @@ public sealed partial class SettingsMonitorActor
     {
         public static readonly PruneStaleDeadBrains Instance = new();
     }
+
+    private sealed record PrunedBrainCleanup(
+        SettingsMonitorStore.PrunedBrainRows DeadRows,
+        SettingsMonitorStore.PrunedBrainRows NonLiveRows);
 }

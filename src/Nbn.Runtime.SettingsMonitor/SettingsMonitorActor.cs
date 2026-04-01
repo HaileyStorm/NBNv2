@@ -11,11 +11,13 @@ public sealed partial class SettingsMonitorActor : IActor
     private static readonly TimeSpan DefaultExternalSettingsPollInterval = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan DefaultStaleDeadBrainPruneInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan DefaultStaleDeadBrainRetention = TimeSpan.FromHours(6);
+    private static readonly TimeSpan DefaultStaleNonLiveBrainRetention = TimeSpan.FromHours(24);
 
     private readonly SettingsMonitorStore _store;
     private readonly TimeSpan _externalSettingsPollInterval;
     private readonly TimeSpan _staleDeadBrainPruneInterval;
     private readonly TimeSpan _staleDeadBrainRetention;
+    private readonly TimeSpan _staleNonLiveBrainRetention;
     private readonly Dictionary<string, PID> _subscribers = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, NodeStatus> _nodes = new();
     private readonly Dictionary<string, ObservedSetting> _observedSettings = new(StringComparer.OrdinalIgnoreCase);
@@ -29,7 +31,8 @@ public sealed partial class SettingsMonitorActor : IActor
         SettingsMonitorStore store,
         TimeSpan? externalSettingsPollInterval = null,
         TimeSpan? staleDeadBrainPruneInterval = null,
-        TimeSpan? staleDeadBrainRetention = null)
+        TimeSpan? staleDeadBrainRetention = null,
+        TimeSpan? staleNonLiveBrainRetention = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         var pollInterval = externalSettingsPollInterval.GetValueOrDefault(DefaultExternalSettingsPollInterval);
@@ -44,6 +47,10 @@ public sealed partial class SettingsMonitorActor : IActor
         _staleDeadBrainRetention = pruneRetention > TimeSpan.Zero
             ? pruneRetention
             : DefaultStaleDeadBrainRetention;
+        var staleNonLiveRetention = staleNonLiveBrainRetention.GetValueOrDefault(DefaultStaleNonLiveBrainRetention);
+        _staleNonLiveBrainRetention = staleNonLiveRetention > TimeSpan.Zero
+            ? staleNonLiveRetention
+            : DefaultStaleNonLiveBrainRetention;
     }
 
     /// <summary>

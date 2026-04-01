@@ -147,6 +147,32 @@ WHERE state = 'Dead'
   AND updated_ms <= @cutoff_ms;
 """;
 
+    private const string DeleteStaleNonLiveBrainControllersSql = """
+DELETE FROM brain_controllers
+WHERE brain_id IN (
+    SELECT b.brain_id
+    FROM brains b
+    LEFT JOIN brain_controllers c ON c.brain_id = b.brain_id
+    WHERE b.state <> 'Dead'
+      AND b.spawned_ms <= @cutoff_ms
+      AND b.updated_ms <= @cutoff_ms
+      AND (c.brain_id IS NULL OR c.last_seen_ms <= @cutoff_ms)
+);
+""";
+
+    private const string DeleteStaleNonLiveBrainsSql = """
+DELETE FROM brains
+WHERE state <> 'Dead'
+  AND spawned_ms <= @cutoff_ms
+  AND updated_ms <= @cutoff_ms
+  AND NOT EXISTS (
+      SELECT 1
+      FROM brain_controllers c
+      WHERE c.brain_id = brains.brain_id
+        AND c.last_seen_ms > @cutoff_ms
+  );
+""";
+
     /// <summary>
     /// Inserts or refreshes the controller row for a hosted brain.
     /// </summary>
@@ -421,6 +447,33 @@ WHERE state = 'Dead'
         var deletedBrains = await connection.ExecuteAsync(
             new CommandDefinition(
                 DeleteStaleDeadBrainsSql,
+                new { cutoff_ms = cutoffMs },
+                transaction,
+                cancellationToken: cancellationToken));
+        await transaction.CommitAsync(cancellationToken);
+        return new PrunedBrainRows(deletedBrains, deletedControllers);
+    }
+
+    /// <summary>
+    /// Deletes persisted non-dead brain rows whose spawn age, last brain update, and controller heartbeat are all older than the supplied cutoff.
+    /// </summary>
+    /// <param name="cutoffMs">Inclusive retention cutoff in milliseconds.</param>
+    /// <param name="cancellationToken">Cancels the prune operation.</param>
+    public async Task<PrunedBrainRows> PruneStaleNonLiveBrainsAsync(
+        long cutoffMs,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var deletedControllers = await connection.ExecuteAsync(
+            new CommandDefinition(
+                DeleteStaleNonLiveBrainControllersSql,
+                new { cutoff_ms = cutoffMs },
+                transaction,
+                cancellationToken: cancellationToken));
+        var deletedBrains = await connection.ExecuteAsync(
+            new CommandDefinition(
+                DeleteStaleNonLiveBrainsSql,
                 new { cutoff_ms = cutoffMs },
                 transaction,
                 cancellationToken: cancellationToken));
