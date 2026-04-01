@@ -200,7 +200,7 @@ public sealed partial class OrchestratorPanelViewModel
                 .Select(static entry => entry.Item)
                 .ToList();
             RecordBrainTerminations(brainListAll);
-            _brainsUpdated?.Invoke(brainListAll);
+            _brainsUpdated?.Invoke(brainRenderSelection.PublishedBrainList);
 
             if (force)
             {
@@ -1374,7 +1374,10 @@ public sealed partial class OrchestratorPanelViewModel
         return new BrainRenderSelection(
             orderedEntries,
             visibleEntries,
-            visibleEntries.Select(static entry => entry.Item).ToList(),
+            orderedEntries
+                .Where(static entry => entry.IncludeInHostedActors)
+                .Select(static entry => entry.Item)
+                .ToList(),
             orderedEntries.Count,
             canShowMore);
     }
@@ -1382,7 +1385,7 @@ public sealed partial class OrchestratorPanelViewModel
     private sealed record BrainRenderSelection(
         IReadOnlyList<BrainRenderEntry> AllEntries,
         IReadOnlyList<BrainRenderEntry> VisibleEntries,
-        IReadOnlyList<BrainListItem> VisibleBrainList,
+        IReadOnlyList<BrainListItem> PublishedBrainList,
         int TotalBrainCount,
         bool CanShowMore)
     {

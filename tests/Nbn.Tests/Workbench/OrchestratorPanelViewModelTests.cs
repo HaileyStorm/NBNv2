@@ -3024,7 +3024,7 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
-    public async Task RefreshSettingsAsync_HostedActors_CapIncludesDeadBrains_AndHidesShowMore_WhenOnlyDeadRemain()
+    public async Task RefreshSettingsAsync_HostedActors_CapIncludesDeadBrains_ButPublishedBrainsStayLiveOnly()
     {
         var connections = new ConnectionViewModel();
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -3092,13 +3092,100 @@ public class OrchestratorPanelViewModelTests
         await vm.RefreshSettingsAsync();
 
         Assert.NotNull(publishedBrains);
-        Assert.Equal(80, publishedBrains!.Count);
-        Assert.Equal(70, publishedBrains.Count(entry => string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase)));
+        Assert.Equal(10, publishedBrains!.Count);
+        Assert.DoesNotContain(publishedBrains, entry => string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(10, client.GetPlacementLifecycleCallCount);
         Assert.Equal(10, client.RequestPlacementReconcileCallCount);
         Assert.False(vm.CanShowMoreHostedActors);
         Assert.Equal(10, vm.Actors.Count);
         Assert.Contains("64 of 80", vm.HostedActorSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_PublishedBrains_ExcludeStaleControllers_ButKeepRecentSpawnWithoutController()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerNodeId = Guid.NewGuid();
+        var liveBrainId = Guid.NewGuid();
+        var recentBrainId = Guid.NewGuid();
+        var staleBrainId = Guid.NewGuid();
+        IReadOnlyList<BrainListItem>? publishedBrains = null;
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = workerNodeId.ToProtoUuid(),
+                        LogicalName = connections.WorkerLogicalName,
+                        Address = $"{connections.WorkerHost}:{connections.WorkerPortText}",
+                        RootActorName = connections.WorkerRootName,
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse
+            {
+                Brains =
+                {
+                    new BrainStatus
+                    {
+                        BrainId = liveBrainId.ToProtoUuid(),
+                        SpawnedMs = (ulong)(nowMs - 5_000),
+                        LastTickId = 12,
+                        State = "Active"
+                    },
+                    new BrainStatus
+                    {
+                        BrainId = recentBrainId.ToProtoUuid(),
+                        SpawnedMs = (ulong)(nowMs - 2_000),
+                        LastTickId = 0,
+                        State = "Recovering"
+                    },
+                    new BrainStatus
+                    {
+                        BrainId = staleBrainId.ToProtoUuid(),
+                        SpawnedMs = (ulong)(nowMs - 60_000),
+                        LastTickId = 44,
+                        State = "Active"
+                    }
+                },
+                Controllers =
+                {
+                    new BrainControllerStatus
+                    {
+                        BrainId = liveBrainId.ToProtoUuid(),
+                        NodeId = workerNodeId.ToProtoUuid(),
+                        ActorName = $"worker-node/brain-{liveBrainId:N}-root",
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    },
+                    new BrainControllerStatus
+                    {
+                        BrainId = staleBrainId.ToProtoUuid(),
+                        NodeId = workerNodeId.ToProtoUuid(),
+                        ActorName = $"worker-node/brain-{staleBrainId:N}-root",
+                        LastSeenMs = (ulong)(nowMs - 60_000),
+                        IsAlive = true
+                    }
+                }
+            },
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client, brainsUpdated: brains => publishedBrains = brains);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.NotNull(publishedBrains);
+        Assert.Contains(publishedBrains!, entry => entry.BrainId == liveBrainId);
+        Assert.Contains(publishedBrains!, entry => entry.BrainId == recentBrainId);
+        Assert.DoesNotContain(publishedBrains!, entry => entry.BrainId == staleBrainId);
     }
 
     [Fact]
