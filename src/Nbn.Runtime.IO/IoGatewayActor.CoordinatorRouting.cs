@@ -83,7 +83,7 @@ public sealed partial class IoGatewayActor
         context.Send(routerPid, message);
     }
 
-    private async Task ForwardRuntimeStateResetAsync(IContext context, ResetBrainRuntimeState message)
+    private void ForwardRuntimeStateReset(IContext context, ResetBrainRuntimeState message)
     {
         if (!TryGetBrainId(message, out var brainId))
         {
@@ -91,36 +91,43 @@ public sealed partial class IoGatewayActor
             return;
         }
 
-        try
+        if (_hiveMindPid is null)
         {
-            if (_hiveMindPid is null)
-            {
-                RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "hivemind_unavailable");
-                return;
-            }
-
-            var ack = await context.RequestAsync<IoCommandAck>(
-                    _hiveMindPid,
-                    new RequestBrainRuntimeReset(brainId, message.ResetBuffer, message.ResetAccumulator),
-                    DefaultRequestTimeout)
-                .ConfigureAwait(false);
-            if (ack is null)
-            {
-                RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "hivemind_empty_response");
-                return;
-            }
-
-            context.Respond(ack);
+            RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "hivemind_unavailable");
+            return;
         }
-        catch (Exception ex)
-        {
-            RespondCommandAck(
-                context,
-                message.BrainId,
-                "reset_brain_runtime_state",
-                success: false,
-                $"hivemind_request_failed:{ex.GetBaseException().Message}");
-        }
+
+        var requestTask = context.RequestAsync<IoCommandAck>(
+            _hiveMindPid,
+            new RequestBrainRuntimeReset(brainId, message.ResetBuffer, message.ResetAccumulator),
+            DefaultRequestTimeout);
+        context.ReenterAfter(
+            requestTask,
+            completed =>
+            {
+                if (completed.IsCompletedSuccessfully)
+                {
+                    if (completed.Result is not null)
+                    {
+                        context.Respond(completed.Result);
+                    }
+                    else
+                    {
+                        RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "hivemind_empty_response");
+                    }
+
+                    return Task.CompletedTask;
+                }
+
+                var detail = completed.Exception?.GetBaseException().Message ?? "request canceled";
+                RespondCommandAck(
+                    context,
+                    message.BrainId,
+                    "reset_brain_runtime_state",
+                    success: false,
+                    $"hivemind_request_failed:{detail}");
+                return Task.CompletedTask;
+            });
     }
 
     private async Task ApplyRuntimeStateResetAtBarrierAsync(IContext context, ApplyBrainRuntimeResetAtBarrier message)

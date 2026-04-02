@@ -123,7 +123,7 @@ public sealed partial class IoGatewayActor : IActor
                     await ForwardRuntimeNeuronAsync(context, message);
                     break;
                 case ResetBrainRuntimeState message:
-                    await ForwardRuntimeStateResetAsync(context, message);
+                    ForwardRuntimeStateReset(context, message);
                     break;
                 case ApplyBrainRuntimeResetAtBarrier message:
                     await ApplyRuntimeStateResetAtBarrierAsync(context, message);
