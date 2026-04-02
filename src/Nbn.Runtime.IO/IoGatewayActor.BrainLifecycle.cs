@@ -57,7 +57,7 @@ public sealed partial class IoGatewayActor
         }
     }
 
-    private async Task HandleAwaitSpawnPlacementAsync(IContext context, AwaitSpawnPlacementViaIO message)
+    private void HandleAwaitSpawnPlacement(IContext context, AwaitSpawnPlacementViaIO message)
     {
         if (_hiveMindPid is null)
         {
@@ -87,66 +87,26 @@ public sealed partial class IoGatewayActor
             return;
         }
 
+        var replyTo = context.Sender;
+        var system = context.System;
+        var startedAtTimestamp = Stopwatch.GetTimestamp();
+
         try
         {
-            var totalStopwatch = Stopwatch.StartNew();
-            var hiveMindWait = TimeSpan.Zero;
-            var metadataVisibilityWait = TimeSpan.Zero;
             var requestedTimeoutMs = message.TimeoutMs;
-            var transportTimeoutMs = requestedTimeoutMs >= (ulong)int.MaxValue - 1_000
+            var transportTimeoutMs = requestedTimeoutMs >= (ulong)int.MaxValue - 250
                 ? int.MaxValue
                 : requestedTimeoutMs == 0
                 ? (int)Math.Max(100, TimeSpan.FromMinutes(10).TotalMilliseconds)
-                : (int)Math.Max(100, requestedTimeoutMs + 1_000UL);
-            var ack = await context.RequestAsync<ProtoControl.SpawnBrainAck>(
-                _hiveMindPid,
-                new ProtoControl.AwaitSpawnPlacement
-                {
-                    BrainId = brainId.ToProtoUuid(),
-                    TimeoutMs = requestedTimeoutMs
-                },
-                TimeSpan.FromMilliseconds(transportTimeoutMs)).ConfigureAwait(false);
-            hiveMindWait = totalStopwatch.Elapsed;
-            if (ack is null)
-            {
-                ack = BuildSpawnFailureAck(
-                    reasonCode: "spawn_empty_response",
-                    failureMessage: "Spawn wait failed: HiveMind returned an empty placement acknowledgment.");
-            }
-            else if (ack.AcceptedForPlacement
-                     && ack.PlacementReady
-                     && ack.BrainId.TryToGuid(out var awaitedBrainId)
-                     && awaitedBrainId != Guid.Empty)
-            {
-                var brainEntry = _brains.TryGetValue(awaitedBrainId, out var existing)
-                    ? existing
-                    : await EnsureBrainEntryAsync(
-                            context,
-                            awaitedBrainId,
-                            ResolveBrainInfoVisibilityTimeout(requestedTimeoutMs, hiveMindWait),
-                            bootstrapOnly: true)
-                        .ConfigureAwait(false);
-                metadataVisibilityWait = totalStopwatch.Elapsed - hiveMindWait;
-                if (brainEntry is null)
-                {
-                    var visibilityTimeout = ResolveBrainInfoVisibilityTimeout(requestedTimeoutMs, hiveMindWait);
-                    ack.FailureReasonCode = "spawn_brain_info_timeout";
-                    ack.FailureMessage = $"Spawn wait failed: brain {awaitedBrainId} became placed but IO metadata was not visible within {FormatElapsed(visibilityTimeout)} after total={FormatElapsed(totalStopwatch.Elapsed)}, hivemind={FormatElapsed(hiveMindWait)}, metadata={FormatElapsed(metadataVisibilityWait)}.";
-                    ack.AcceptedForPlacement = true;
-                    ack.PlacementReady = false;
-                }
+                : (int)Math.Max(100, requestedTimeoutMs + 250UL);
 
-                MaybeLogSlowPlacementVisibility(awaitedBrainId, totalStopwatch.Elapsed, hiveMindWait, metadataVisibilityWait, ack.PlacementReady);
-            }
-
-            RecordAwaitSpawnPlacementTelemetry(ack, totalStopwatch.Elapsed, hiveMindWait, metadataVisibilityWait);
-
-            context.Respond(new AwaitSpawnPlacementViaIOAck
-            {
-                Ack = ack,
-                FailureReasonCode = ack.FailureReasonCode,
-                FailureMessage = ack.FailureMessage
-            });
+            _ = CompleteAwaitSpawnPlacementAsync(
+                system,
+                replyTo,
+                brainId,
+                requestedTimeoutMs,
+                transportTimeoutMs,
+                startedAtTimestamp);
         }
         catch (Exception ex)
         {
@@ -164,6 +124,96 @@ public sealed partial class IoGatewayActor
         }
     }
 
+    private async Task CompleteAwaitSpawnPlacementAsync(
+        ActorSystem system,
+        PID? replyTo,
+        Guid brainId,
+        ulong requestedTimeoutMs,
+        int transportTimeoutMs,
+        long startedAtTimestamp)
+    {
+        ProtoControl.SpawnBrainAck ack;
+        var hiveMindWait = TimeSpan.Zero;
+        var metadataVisibilityWait = TimeSpan.Zero;
+        try
+        {
+            ack = await system.Root.RequestAsync<ProtoControl.SpawnBrainAck>(
+                    _hiveMindPid!,
+                    new ProtoControl.AwaitSpawnPlacement
+                    {
+                        BrainId = brainId.ToProtoUuid(),
+                        TimeoutMs = requestedTimeoutMs
+                    },
+                    TimeSpan.FromMilliseconds(transportTimeoutMs))
+                .ConfigureAwait(false)
+                ?? BuildSpawnFailureAck(
+                    reasonCode: "spawn_empty_response",
+                    failureMessage: "Spawn wait failed: HiveMind returned an empty placement acknowledgment.");
+            var hiveMindCompletedAtTimestamp = Stopwatch.GetTimestamp();
+            hiveMindWait = Stopwatch.GetElapsedTime(startedAtTimestamp, hiveMindCompletedAtTimestamp);
+
+            if (ack.AcceptedForPlacement
+                && ack.PlacementReady
+                && ack.BrainId.TryToGuid(out var awaitedBrainId)
+                && awaitedBrainId != Guid.Empty)
+            {
+                var visibilityTimeout = ResolveBrainInfoVisibilityTimeout(requestedTimeoutMs, hiveMindWait);
+                try
+                {
+                    var register = await TryBuildBootstrapRegisterBrainRegistrationAsync(system, awaitedBrainId, visibilityTimeout)
+                        .ConfigureAwait(false);
+                    metadataVisibilityWait = Stopwatch.GetElapsedTime(hiveMindCompletedAtTimestamp) ;
+                    if (register is null)
+                    {
+                        ack.FailureReasonCode = "spawn_brain_info_timeout";
+                        ack.FailureMessage =
+                            $"Spawn wait failed: brain {awaitedBrainId} became placed but IO metadata was not visible within {FormatElapsed(visibilityTimeout)} after total={FormatElapsed(Stopwatch.GetElapsedTime(startedAtTimestamp))}, hivemind={FormatElapsed(hiveMindWait)}, metadata={FormatElapsed(metadataVisibilityWait)}.";
+                        ack.AcceptedForPlacement = true;
+                        ack.PlacementReady = false;
+                    }
+                    else
+                    {
+                        MaybeLogSlowPlacementVisibility(
+                            awaitedBrainId,
+                            Stopwatch.GetElapsedTime(startedAtTimestamp),
+                            hiveMindWait,
+                            metadataVisibilityWait,
+                            ack.PlacementReady);
+                    }
+                }
+                catch (Exception registerEx)
+                {
+                    Console.WriteLine($"AwaitSpawnPlacementViaIO metadata resolve failed: {registerEx.GetBaseException().Message}");
+                    metadataVisibilityWait = Stopwatch.GetElapsedTime(hiveMindCompletedAtTimestamp);
+                    ack.FailureReasonCode = "spawn_brain_info_timeout";
+                    ack.FailureMessage =
+                        $"Spawn wait failed: brain {awaitedBrainId} became placed but IO metadata lookup failed within {FormatElapsed(visibilityTimeout)} after total={FormatElapsed(Stopwatch.GetElapsedTime(startedAtTimestamp))}, hivemind={FormatElapsed(hiveMindWait)}, metadata={FormatElapsed(metadataVisibilityWait)}.";
+                    ack.AcceptedForPlacement = true;
+                    ack.PlacementReady = false;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"AwaitSpawnPlacementViaIO failed: {ex.Message}");
+            ack = BuildSpawnFailureAck(
+                reasonCode: "spawn_request_failed",
+                failureMessage: $"Spawn wait failed: request forwarding to HiveMind failed ({ex.GetBaseException().Message}).");
+        }
+
+        RecordAwaitSpawnPlacementTelemetry(ack, Stopwatch.GetElapsedTime(startedAtTimestamp), hiveMindWait, metadataVisibilityWait);
+        var response = new AwaitSpawnPlacementViaIOAck
+        {
+            Ack = ack.Clone(),
+            FailureReasonCode = ack.FailureReasonCode,
+            FailureMessage = ack.FailureMessage
+        };
+        if (replyTo is not null)
+        {
+            system.Root.Send(replyTo, response);
+        }
+    }
+
     private static TimeSpan ResolveBrainInfoVisibilityTimeout(ulong requestedTimeoutMs, TimeSpan hiveMindWait)
     {
         if (requestedTimeoutMs == 0)
@@ -176,6 +226,47 @@ public sealed partial class IoGatewayActor
         return remaining <= TimeSpan.FromMilliseconds(100)
             ? TimeSpan.FromMilliseconds(100)
             : remaining;
+    }
+
+    private async Task<RegisterBrain?> TryBuildBootstrapRegisterBrainRegistrationAsync(
+        ActorSystem system,
+        Guid brainId,
+        TimeSpan requestTimeout)
+    {
+        if (_hiveMindPid is null)
+        {
+            return null;
+        }
+
+        var info = await system.Root.RequestAsync<ProtoControl.BrainIoInfo>(
+                _hiveMindPid,
+                new ProtoControl.GetBrainIoInfo { BrainId = brainId.ToProtoUuid() },
+                requestTimeout)
+            .ConfigureAwait(false);
+
+        if (info is null
+            || (info.InputWidth == 0
+                && info.OutputWidth == 0
+                && string.IsNullOrWhiteSpace(info.InputCoordinatorPid)
+                && string.IsNullOrWhiteSpace(info.OutputCoordinatorPid)
+                && !info.IoGatewayOwnsInputCoordinator
+                && !info.IoGatewayOwnsOutputCoordinator))
+        {
+            return null;
+        }
+
+        return new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = info.InputWidth,
+            OutputWidth = info.OutputWidth,
+            InputCoordinatorMode = info.InputCoordinatorMode,
+            OutputVectorSource = info.OutputVectorSource,
+            InputCoordinatorPid = info.InputCoordinatorPid,
+            OutputCoordinatorPid = info.OutputCoordinatorPid,
+            IoGatewayOwnsInputCoordinator = info.IoGatewayOwnsInputCoordinator,
+            IoGatewayOwnsOutputCoordinator = info.IoGatewayOwnsOutputCoordinator
+        };
     }
 
     private static void RecordAwaitSpawnPlacementTelemetry(

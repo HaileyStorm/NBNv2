@@ -592,6 +592,47 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task AwaitSpawnPlacementViaIO_AllowsConcurrentWaits_WithoutSerializingGatewayMailbox()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainIds = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
+        var hiveProbeActor = new ConcurrentAwaitPlacementHiveProbe(
+            brainIds,
+            TimeSpan.FromMilliseconds(250));
+        var hiveProbe = root.Spawn(Props.FromProducer(() => hiveProbeActor));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var started = Stopwatch.GetTimestamp();
+        var responses = await Task.WhenAll(
+            brainIds.Select(brainId => root.RequestAsync<AwaitSpawnPlacementViaIOAck>(
+                gateway,
+                new AwaitSpawnPlacementViaIO
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    TimeoutMs = 5_000
+                },
+                TimeSpan.FromSeconds(2))));
+        var elapsedMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+
+        Assert.All(
+            responses,
+            response =>
+            {
+                Assert.NotNull(response.Ack);
+                Assert.True(response.Ack.AcceptedForPlacement);
+                Assert.False(response.Ack.PlacementReady);
+                Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureReasonCode), response.Ack.FailureMessage);
+            });
+        Assert.True(
+            hiveProbeActor.MaxObservedConcurrentAwaits >= 2,
+            $"Expected overlapping await-placement requests, observed {hiveProbeActor.MaxObservedConcurrentAwaits}.");
+        Assert.True(elapsedMs < 900d, $"Concurrent await-placement requests took {elapsedMs:0.##} ms.");
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SpawnBrainViaIO_Returns_Actionable_Failure_When_HiveMind_Is_Unavailable()
     {
         var system = new ActorSystem();
@@ -3163,6 +3204,56 @@ public class IoGatewayArtifactReferenceTests
                     break;
             }
 
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ConcurrentAwaitPlacementHiveProbe : IActor
+    {
+        private readonly HashSet<Guid> _brainIds;
+        private readonly TimeSpan _responseDelay;
+        private int _activeAwaits;
+
+        public ConcurrentAwaitPlacementHiveProbe(IEnumerable<Guid> brainIds, TimeSpan responseDelay)
+        {
+            _brainIds = brainIds.ToHashSet();
+            _responseDelay = responseDelay;
+        }
+
+        public int MaxObservedConcurrentAwaits { get; private set; }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is not ProtoControl.AwaitSpawnPlacement request
+                || request.BrainId is null
+                || !request.BrainId.TryToGuid(out var requestedBrainId)
+                || !_brainIds.Contains(requestedBrainId))
+            {
+                return Task.CompletedTask;
+            }
+
+            var active = Interlocked.Increment(ref _activeAwaits);
+            if (active > MaxObservedConcurrentAwaits)
+            {
+                MaxObservedConcurrentAwaits = active;
+            }
+
+            context.ReenterAfter(
+                Task.Delay(_responseDelay),
+                _ =>
+                {
+                    Interlocked.Decrement(ref _activeAwaits);
+                    context.Respond(new ProtoControl.SpawnBrainAck
+                    {
+                        BrainId = request.BrainId,
+                        AcceptedForPlacement = true,
+                        PlacementReady = false,
+                        PlacementEpoch = 1,
+                        LifecycleState = ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning,
+                        ReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown
+                    });
+                    return Task.CompletedTask;
+                });
             return Task.CompletedTask;
         }
     }

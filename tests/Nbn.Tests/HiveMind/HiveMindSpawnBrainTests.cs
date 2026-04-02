@@ -467,6 +467,19 @@ public sealed class HiveMindSpawnBrainTests
             Assert.True(failedPlacement.Ack.AcceptedForPlacement);
             Assert.False(failedPlacement.Ack.PlacementReady);
             Assert.False(string.IsNullOrWhiteSpace(failedPlacement.Ack.FailureReasonCode));
+            var failedKill = await root.RequestAsync<ProtoIo.KillBrainViaIOAck>(
+                ioGateway,
+                new ProtoIo.KillBrainViaIO
+                {
+                    Request = new KillBrain
+                    {
+                        BrainId = failedBrainId.ToProtoUuid(),
+                        Reason = "failed_spawn_timeout_cleanup"
+                    }
+                },
+                TimeSpan.FromSeconds(5));
+            Assert.True(failedKill.Accepted, failedKill.FailureMessage);
+            await Task.Delay(250);
 
             root.Send(workerPid, new SetSpawnPlacementWorkerDropAcks(false));
 
@@ -485,7 +498,7 @@ public sealed class HiveMindSpawnBrainTests
             Assert.NotEqual(Guid.Empty, successfulBrainId);
             Assert.NotEqual(failedBrainId, successfulBrainId);
 
-            var successfulPlacement = await AwaitSpawnPlacementViaIoAsync(root, ioGateway, successfulBrainId, timeoutMs: 5_000);
+            var successfulPlacement = await AwaitSpawnPlacementViaIoAsync(root, ioGateway, successfulBrainId, timeoutMs: 10_000);
             Assert.NotNull(successfulPlacement.Ack);
             Assert.True(successfulPlacement.Ack.AcceptedForPlacement);
             Assert.True(successfulPlacement.Ack.PlacementReady);
