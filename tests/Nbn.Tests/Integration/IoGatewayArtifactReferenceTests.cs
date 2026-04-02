@@ -347,6 +347,43 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task SpawnBrainViaIO_Forwards_StartPaused_To_HiveMind()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var forwarded = new TaskCompletionSource<ProtoControl.SpawnBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveSpawnProbe(
+            forwarded,
+            new ProtoControl.SpawnBrainAck
+            {
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                AcceptedForPlacement = true,
+                PlacementReady = false
+            })));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var response = await root.RequestAsync<SpawnBrainViaIOAck>(
+            gateway,
+            new SpawnBrainViaIO
+            {
+                Request = new ProtoControl.SpawnBrain
+                {
+                    BrainDef = new string('9', 64).ToArtifactRef(99, "application/x-nbn", "test-store"),
+                    StartPaused = true
+                }
+            });
+
+        Assert.NotNull(response.Ack);
+        Assert.True(response.Ack.AcceptedForPlacement);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var forwardedRequest = await forwarded.Task.WaitAsync(cts.Token);
+        Assert.True(forwardedRequest.StartPaused);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SpawnBrainViaIO_Waits_For_Slow_HiveMind_Ack_Within_SpawnTimeout()
     {
         var system = new ActorSystem();

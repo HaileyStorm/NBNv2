@@ -119,6 +119,12 @@ public sealed partial class HiveMindActor
                 brain.PausePriority = message.PausePriority;
             }
 
+            if (message.StartPaused)
+            {
+                brain.Paused = true;
+                brain.PausedReason = "spawn_start_paused";
+            }
+
             var spawnCompletionTimeoutMs = ComputeSpawnCompletionTimeoutMs(brain);
             var pending = new PendingSpawnState(brain.BrainId, brain.PlacementEpoch, spawnCompletionTimeoutMs);
             _pendingSpawns[brain.BrainId] = pending;
