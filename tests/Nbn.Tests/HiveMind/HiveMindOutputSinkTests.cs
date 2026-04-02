@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Nbn.Proto.Control;
 using Nbn.Proto.Debug;
 using Nbn.Runtime.HiveMind;
+using Nbn.Runtime.IO;
 using Nbn.Shared;
 using Nbn.Shared.Addressing;
 using Nbn.Tests.TestSupport;
@@ -762,6 +763,68 @@ public class HiveMindOutputSinkTests
 
         var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
         Assert.Equal((uint)1, status.RegisteredBrains);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task PauseResume_Routed_Through_IoGateway_Works()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var debugProbePid = root.Spawn(Props.FromProducer(static () => new DebugProbeActor()));
+        const string ioGatewayName = "io-gateway";
+        var trustedIoPid = new PID(string.Empty, ioGatewayName);
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(),
+            debugHubPid: debugProbePid,
+            ioPid: trustedIoPid)));
+        var gateway = root.SpawnNamed(
+            Props.FromProducer(() => new IoGatewayActor(CreateIoOptions(ioGatewayName), hiveMindPid: hiveMind)),
+            ioGatewayName);
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var debugBefore = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+        var pausedBefore = debugBefore.Count("brain.paused");
+        var resumedBefore = debugBefore.Count("brain.resumed");
+
+        var pauseAck = await root.RequestAsync<ProtoIo.IoCommandAck>(gateway, new PauseBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "io_pause"
+        });
+        Assert.True(pauseAck.Success);
+        Assert.Equal("queued", pauseAck.Message);
+
+        var pausedAfter = await WaitForDebugCountAsync(
+            root,
+            debugProbePid,
+            "brain.paused",
+            pausedBefore + 1,
+            timeoutMs: 2_000);
+        Assert.Equal(pausedBefore + 1, pausedAfter.Count("brain.paused"));
+
+        var resumeAck = await root.RequestAsync<ProtoIo.IoCommandAck>(gateway, new ResumeBrain
+        {
+            BrainId = brainId.ToProtoUuid()
+        });
+        Assert.True(resumeAck.Success);
+        Assert.Equal("queued", resumeAck.Message);
+
+        var resumedAfter = await WaitForDebugCountAsync(
+            root,
+            debugProbePid,
+            "brain.resumed",
+            resumedBefore + 1,
+            timeoutMs: 2_000);
+        Assert.Equal(resumedBefore + 1, resumedAfter.Count("brain.resumed"));
 
         await system.ShutdownAsync();
     }
@@ -2217,6 +2280,24 @@ public class HiveMindOutputSinkTests
             SettingsName: "SettingsMonitor",
             IoAddress: null,
             IoName: null);
+
+    private static IoOptions CreateIoOptions(string gatewayName)
+        => new(
+            BindHost: "127.0.0.1",
+            Port: 0,
+            AdvertisedHost: null,
+            AdvertisedPort: null,
+            GatewayName: gatewayName,
+            ServerName: "nbn.io.tests",
+            SettingsHost: null,
+            SettingsPort: 0,
+            SettingsName: "SettingsMonitor",
+            HiveMindAddress: null,
+            HiveMindName: null,
+            ReproAddress: null,
+            ReproName: null,
+            SpeciationAddress: null,
+            SpeciationName: null);
 
     private static async Task AssertNoTickOrRescheduleSideEffects(
         IRootContext root,

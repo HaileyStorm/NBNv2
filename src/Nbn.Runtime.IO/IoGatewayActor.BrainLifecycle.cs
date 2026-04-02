@@ -243,7 +243,7 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            context.Send(_hiveMindPid, message);
+            context.Request(_hiveMindPid, message);
             RespondCommandAck(context, message.BrainId, "pause_brain", success: true, "queued");
         }
         catch (Exception ex)
@@ -274,7 +274,7 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            context.Send(_hiveMindPid, message);
+            context.Request(_hiveMindPid, message);
             RespondCommandAck(context, message.BrainId, "resume_brain", success: true, "queued");
         }
         catch (Exception ex)
