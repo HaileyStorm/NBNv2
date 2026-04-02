@@ -786,6 +786,8 @@ public class OrchestratorPanelViewModelTests
         var workerEndpoint = Assert.Single(vm.WorkerEndpoints);
         Assert.Equal(3, workerEndpoint.BrainCount);
         Assert.Contains("Brains (3):", workerEndpoint.BrainHintSummary, StringComparison.Ordinal);
+        Assert.Equal("1 limited node", connections.WorkerStatus);
+        Assert.Equal("1 limited node (3 brains)", vm.WorkerEndpointSummary);
         Assert.Contains("CPU 6/12 cores", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
         Assert.Contains("RAM 8 GiB/25.6 GiB", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
         Assert.Contains("storage 64 GiB/230.4 GiB", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
@@ -1195,6 +1197,9 @@ public class OrchestratorPanelViewModelTests
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var workerA = Guid.NewGuid();
         var workerB = Guid.NewGuid();
+        var brainA = Guid.NewGuid();
+        var brainB = Guid.NewGuid();
+        var brainC = Guid.NewGuid();
         var client = new FakeWorkbenchClient
         {
             NodesResponse = new NodeListResponse
@@ -1278,7 +1283,21 @@ public class OrchestratorPanelViewModelTests
                     }
                 }
             },
-            BrainsResponse = new BrainListResponse(),
+            BrainsResponse = new BrainListResponse
+            {
+                Controllers =
+                {
+                    new BrainControllerStatus { BrainId = brainA.ToProtoUuid(), NodeId = workerA.ToProtoUuid(), ActorName = "controller-a", LastSeenMs = (ulong)nowMs, IsAlive = true },
+                    new BrainControllerStatus { BrainId = brainB.ToProtoUuid(), NodeId = workerA.ToProtoUuid(), ActorName = "controller-b", LastSeenMs = (ulong)nowMs, IsAlive = true },
+                    new BrainControllerStatus { BrainId = brainC.ToProtoUuid(), NodeId = workerB.ToProtoUuid(), ActorName = "controller-c", LastSeenMs = (ulong)nowMs, IsAlive = true }
+                },
+                Brains =
+                {
+                    new BrainStatus { BrainId = brainA.ToProtoUuid(), State = "Running", SpawnedMs = (ulong)nowMs },
+                    new BrainStatus { BrainId = brainB.ToProtoUuid(), State = "Running", SpawnedMs = (ulong)nowMs },
+                    new BrainStatus { BrainId = brainC.ToProtoUuid(), State = "Running", SpawnedMs = (ulong)nowMs }
+                }
+            },
             SettingsResponse = new SettingListResponse(),
             HiveMindStatusResponse = new HiveMindStatus
             {
@@ -1306,7 +1325,8 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(2, workerGroup.Workers.Count);
         Assert.Contains(workerGroup.Workers, endpoint => string.Equals(endpoint.Address, "edge-box:12041", StringComparison.Ordinal));
         Assert.Contains(workerGroup.Workers, endpoint => string.Equals(endpoint.Address, "edge-box:12042", StringComparison.Ordinal));
-        Assert.Equal("1 active node (2 workers)", vm.WorkerEndpointSummary);
+        Assert.Equal("1 active node (2 workers)", connections.WorkerStatus);
+        Assert.Equal("1 active node (2 workers, 3 brains)", vm.WorkerEndpointSummary);
         Assert.Contains("CPU 6/12 cores", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
         Assert.Contains("RAM 12 GiB/25.6 GiB", vm.SystemLoadResourceSummary, StringComparison.Ordinal);
         Assert.Contains("storage 64 GiB/230.4 GiB", vm.SystemLoadResourceSummary, StringComparison.Ordinal);

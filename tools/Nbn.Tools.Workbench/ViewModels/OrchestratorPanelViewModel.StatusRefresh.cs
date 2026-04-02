@@ -99,6 +99,12 @@ public sealed partial class OrchestratorPanelViewModel
                     brainRenderSelection.VisibleEntries,
                     settingsNowMs)
                 .ConfigureAwait(false);
+            var activeWorkerBrainCount = CountActiveWorkerBrains(
+                sortedNodes,
+                controllers,
+                brainRenderSelection.PublishedBrainList,
+                actorRowsResult.WorkerBrainHints,
+                settingsNowMs);
             var workerEndpointState = BuildWorkerEndpointState(
                 sortedNodes,
                 workerInventory,
@@ -175,7 +181,9 @@ public sealed partial class OrchestratorPanelViewModel
                     UpdateHiveMindEndpoint(nodes, settingsNowMs);
                 }
 
-                WorkerEndpointSummary = workerEndpointState.SummaryText;
+                WorkerEndpointSummary = BuildWorkerCardSummary(
+                    workerEndpointState.SummaryText,
+                    activeWorkerBrainCount);
                 SetHostedActorRenderState(
                     brainRenderSelection.VisibleBrainCount,
                     brainRenderSelection.TotalBrainCount,
@@ -1305,6 +1313,54 @@ public sealed partial class OrchestratorPanelViewModel
                 .ConfigureAwait(false);
             return (brainId, node, report);
         }
+    }
+
+    private int CountActiveWorkerBrains(
+        IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
+        IReadOnlyList<Nbn.Proto.Settings.BrainControllerStatus> controllers,
+        IReadOnlyList<BrainListItem> publishedBrains,
+        IReadOnlyDictionary<Guid, HashSet<Guid>> workerBrainHints,
+        long nowMs)
+    {
+        var activeBrainIds = publishedBrains
+            .Select(static entry => entry.BrainId)
+            .ToHashSet();
+        if (activeBrainIds.Count == 0)
+        {
+            return 0;
+        }
+
+        var workerBrainIds = workerBrainHints.Values
+            .SelectMany(static brainIds => brainIds)
+            .ToHashSet();
+        var freshWorkerNodeIds = nodes
+            .Where(node =>
+                node.IsAlive
+                && IsFresh(node.LastSeenMs, nowMs)
+                && IsWorkerHostCandidate(node)
+                && node.NodeId is not null
+                && node.NodeId.TryToGuid(out _))
+            .Select(node => node.NodeId!.ToGuid())
+            .ToHashSet();
+
+        foreach (var controller in controllers)
+        {
+            if (controller.BrainId is null
+                || !controller.BrainId.TryToGuid(out var brainId)
+                || !activeBrainIds.Contains(brainId)
+                || !controller.IsAlive
+                || !IsFresh(controller.LastSeenMs, nowMs)
+                || controller.NodeId is null
+                || !controller.NodeId.TryToGuid(out var nodeId)
+                || !freshWorkerNodeIds.Contains(nodeId))
+            {
+                continue;
+            }
+
+            workerBrainIds.Add(brainId);
+        }
+
+        return workerBrainIds.Count;
     }
 
     private static string BuildHostedActorKey(

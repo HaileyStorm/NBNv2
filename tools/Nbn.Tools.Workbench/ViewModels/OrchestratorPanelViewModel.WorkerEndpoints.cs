@@ -472,6 +472,26 @@ public sealed partial class OrchestratorPanelViewModel
         return summary;
     }
 
+    private static string BuildWorkerCardSummary(string summary, int activeBrainCount)
+    {
+        if (string.IsNullOrWhiteSpace(summary)
+            || string.Equals(summary, "No active nodes.", StringComparison.Ordinal))
+        {
+            return summary;
+        }
+
+        var normalizedActiveBrainCount = Math.Max(0, activeBrainCount);
+        if (normalizedActiveBrainCount == 0)
+        {
+            return summary;
+        }
+
+        var brainLabel = $"{normalizedActiveBrainCount} brain{(normalizedActiveBrainCount == 1 ? string.Empty : "s")}";
+        return summary.EndsWith(")", StringComparison.Ordinal)
+            ? $"{summary[..^1]}, {brainLabel})"
+            : $"{summary} ({brainLabel})";
+    }
+
     private static string DescribeWorkerPlacementStatus(Nbn.Proto.Settings.WorkerReadinessCapability worker, out string detail)
     {
         detail = string.Empty;
