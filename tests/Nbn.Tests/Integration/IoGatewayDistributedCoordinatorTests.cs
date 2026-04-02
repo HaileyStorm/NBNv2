@@ -710,6 +710,147 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
+    public async Task ResetBrainRuntimeState_StaysReentrant_During_ConcurrentMultiBrainBarrierCallbacks()
+    {
+        const int brainCount = 4;
+
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brains = new List<(Guid BrainId, PID InputPid, PID RouterPid)>(brainCount);
+        var routes = new List<ConcurrentBarrierResetHiveProbeActor.BrainRoute>(brainCount);
+
+        for (var i = 0; i < brainCount; i++)
+        {
+            var brainId = Guid.NewGuid();
+            var inputPid = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(
+                brainId,
+                2,
+                ProtoControl.InputCoordinatorMode.ReplayLatestVector)));
+            var outputPid = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+            var routerPid = root.Spawn(Props.FromProducer(() => new InputRouterProbeActor(brainId)));
+
+            brains.Add((brainId, inputPid, routerPid));
+            routes.Add(new ConcurrentBarrierResetHiveProbeActor.BrainRoute(
+                brainId,
+                inputPid,
+                outputPid,
+                routerPid,
+                InputWidth: 2,
+                OutputWidth: 1,
+                InputMode: ProtoControl.InputCoordinatorMode.ReplayLatestVector));
+        }
+
+        var hivePid = root.Spawn(Props.FromProducer(() => new ConcurrentBarrierResetHiveProbeActor(routes, brainCount)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hivePid)));
+        root.Send(hivePid, new ConcurrentBarrierResetHiveProbeActor.UpdateGateway(gateway));
+
+        foreach (var brain in brains)
+        {
+            root.Send(gateway, new RegisterBrain
+            {
+                BrainId = brain.BrainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 1,
+                InputCoordinatorMode = ProtoControl.InputCoordinatorMode.ReplayLatestVector,
+                InputCoordinatorPid = PidLabel(brain.InputPid),
+                OutputCoordinatorPid = PidLabel(routes.Single(route => route.BrainId == brain.BrainId).OutputCoordinatorPid),
+                IoGatewayOwnsInputCoordinator = false,
+                IoGatewayOwnsOutputCoordinator = false
+            });
+            var info = await root.RequestAsync<BrainInfo>(
+                gateway,
+                new BrainInfoRequest { BrainId = brain.BrainId.ToProtoUuid() },
+                TimeSpan.FromSeconds(5));
+            Assert.Equal((uint)2, info.InputWidth);
+            Assert.Equal((uint)1, info.OutputWidth);
+
+            root.Send(brain.InputPid, new InputVector
+            {
+                BrainId = brain.BrainId.ToProtoUuid(),
+                Values = { 0.25f, 0.5f }
+            });
+        }
+
+        await WaitForAsync(
+            async () =>
+            {
+                foreach (var brain in brains)
+                {
+                    var drain = await root.RequestAsync<InputDrain>(
+                        brain.InputPid,
+                        new DrainInputs
+                        {
+                            BrainId = brain.BrainId.ToProtoUuid(),
+                            TickId = 1
+                        },
+                        TimeSpan.FromSeconds(5));
+                    if (!drain.Contribs.Select(static contrib => contrib.Value).SequenceEqual([0.25f, 0.5f]))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            },
+            timeoutMs: 2_000);
+
+        var resetTasks = brains.Select(
+                brain => root.RequestAsync<IoCommandAck>(
+                    gateway,
+                    new ResetBrainRuntimeState
+                    {
+                        BrainId = brain.BrainId.ToProtoUuid(),
+                        ResetBuffer = true,
+                        ResetAccumulator = true
+                    },
+                    TimeSpan.FromSeconds(5)))
+            .ToArray();
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<ConcurrentBarrierResetHiveProbeActor.Snapshot>(
+                    hivePid,
+                    new ConcurrentBarrierResetHiveProbeActor.GetSnapshot());
+                return snapshot.PendingCount == brainCount;
+            },
+            timeoutMs: 2_000);
+
+        Assert.All(resetTasks, static task => Assert.False(task.IsCompleted));
+
+        await root.RequestAsync<ConcurrentBarrierResetHiveProbeActor.ReleaseBatchAck>(
+            hivePid,
+            new ConcurrentBarrierResetHiveProbeActor.ReleaseBatch());
+
+        var resetAcks = await Task.WhenAll(resetTasks).WaitAsync(TimeSpan.FromSeconds(5));
+        foreach (var ack in resetAcks)
+        {
+            Assert.True(ack.Success, ack.Message);
+            Assert.DoesNotContain("hivemind_request_failed", ack.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("runtime_reset_failed", ack.Message, StringComparison.Ordinal);
+        }
+
+        foreach (var brain in brains)
+        {
+            var routerSnapshot = await root.RequestAsync<InputRouterProbeActor.Snapshot>(
+                brain.RouterPid,
+                new InputRouterProbeActor.GetSnapshot());
+            Assert.Equal(1, routerSnapshot.ResetCount);
+
+            var drain = await root.RequestAsync<InputDrain>(
+                brain.InputPid,
+                new DrainInputs
+                {
+                    BrainId = brain.BrainId.ToProtoUuid(),
+                    TickId = 99
+                });
+            Assert.Equal([0f, 0f], drain.Contribs.Select(static contrib => contrib.Value).ToArray());
+        }
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task QueuedOutputUnsubscribe_BeforeBrainRegistration_Prevents_ReplayedSubscription()
     {
         var system = new ActorSystem();
@@ -1186,6 +1327,230 @@ public sealed class IoGatewayDistributedCoordinatorTests
             }
 
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ConcurrentBarrierResetHiveProbeActor : IActor
+    {
+        private readonly Dictionary<Guid, BrainRoute> _brains;
+        private readonly int _expectedResetCount;
+        private readonly List<PendingReset> _pendingResets = new();
+        private PID? _gatewayPid;
+        private bool _batchReleased;
+
+        public ConcurrentBarrierResetHiveProbeActor(IEnumerable<BrainRoute> brains, int expectedResetCount)
+        {
+            _brains = brains.ToDictionary(static route => route.BrainId);
+            _expectedResetCount = expectedResetCount;
+        }
+
+        public sealed record BrainRoute(
+            Guid BrainId,
+            PID InputCoordinatorPid,
+            PID OutputCoordinatorPid,
+            PID RouterPid,
+            uint InputWidth,
+            uint OutputWidth,
+            ProtoControl.InputCoordinatorMode InputMode);
+
+        private sealed class PendingReset
+        {
+            public PendingReset(Nbn.Shared.HiveMind.RequestBrainRuntimeReset request)
+            {
+                Request = request;
+                Completion = new TaskCompletionSource<IoCommandAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
+            public Nbn.Shared.HiveMind.RequestBrainRuntimeReset Request { get; }
+
+            public TaskCompletionSource<IoCommandAck> Completion { get; }
+        }
+
+        public sealed record GetSnapshot;
+
+        public sealed record Snapshot(int PendingCount, bool BatchReleased);
+
+        public sealed record ReleaseBatch;
+
+        public sealed record ReleaseBatchAck;
+
+        public sealed record UpdateGateway(PID GatewayPid);
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case UpdateGateway update:
+                    _gatewayPid = update.GatewayPid;
+                    break;
+                case ProtoControl.GetBrainIoInfo request
+                    when request.BrainId.TryToGuid(out var infoBrainId)
+                         && _brains.TryGetValue(infoBrainId, out var infoRoute):
+                    context.Respond(new ProtoControl.BrainIoInfo
+                    {
+                        BrainId = request.BrainId,
+                        InputWidth = infoRoute.InputWidth,
+                        OutputWidth = infoRoute.OutputWidth,
+                        InputCoordinatorMode = infoRoute.InputMode,
+                        OutputVectorSource = ProtoControl.OutputVectorSource.Potential,
+                        InputCoordinatorPid = PidLabel(infoRoute.InputCoordinatorPid),
+                        OutputCoordinatorPid = PidLabel(infoRoute.OutputCoordinatorPid),
+                        IoGatewayOwnsInputCoordinator = false,
+                        IoGatewayOwnsOutputCoordinator = false
+                    });
+                    break;
+                case ProtoControl.GetBrainRouting request
+                    when request.BrainId.TryToGuid(out var routingBrainId)
+                         && _brains.TryGetValue(routingBrainId, out var routingRoute):
+                    context.Respond(new ProtoControl.BrainRoutingInfo
+                    {
+                        BrainId = request.BrainId,
+                        SignalRouterPid = PidLabel(routingRoute.RouterPid)
+                    });
+                    break;
+                case Nbn.Shared.HiveMind.RequestBrainRuntimeReset reset
+                    when _brains.ContainsKey(reset.BrainId):
+                    if (context.Sender is null)
+                    {
+                        context.Respond(new IoCommandAck
+                        {
+                            BrainId = reset.BrainId.ToProtoUuid(),
+                            Command = "reset_brain_runtime_state",
+                            Success = false,
+                            Message = "gateway_sender_missing"
+                        });
+                        break;
+                    }
+
+                    var pendingReset = new PendingReset(reset);
+                    _pendingResets.Add(pendingReset);
+                    context.ReenterAfter(
+                        pendingReset.Completion.Task,
+                        task =>
+                        {
+                            if (task.IsCompletedSuccessfully)
+                            {
+                                context.Respond(task.Result);
+                            }
+                            else
+                            {
+                                context.Respond(new IoCommandAck
+                                {
+                                    BrainId = reset.BrainId.ToProtoUuid(),
+                                    Command = "reset_brain_runtime_state",
+                                    Success = false,
+                                    Message = $"gateway_apply_failed:{task.Exception?.GetBaseException().Message ?? "unknown_error"}"
+                                });
+                            }
+
+                            return Task.CompletedTask;
+                        });
+                    break;
+                case ReleaseBatch:
+                    if (!_batchReleased && _pendingResets.Count == _expectedResetCount)
+                    {
+                        _batchReleased = true;
+                        var pending = _pendingResets.ToArray();
+                        context.ReenterAfter(
+                            ApplyPendingResetsAsync(context, _gatewayPid, pending),
+                            task =>
+                            {
+                                if (task.IsCompletedSuccessfully)
+                                {
+                                    foreach (var result in task.Result)
+                                    {
+                                        result.Pending.Completion.TrySetResult(result.Ack);
+                                    }
+                                }
+                                else
+                                {
+                                    var detail = task.Exception?.GetBaseException().Message ?? "unknown_error";
+                                    foreach (var item in pending)
+                                    {
+                                        item.Completion.TrySetResult(new IoCommandAck
+                                        {
+                                            BrainId = item.Request.BrainId.ToProtoUuid(),
+                                            Command = "reset_brain_runtime_state",
+                                            Success = false,
+                                            Message = $"gateway_apply_failed:{detail}"
+                                        });
+                                    }
+                                }
+
+                                _pendingResets.Clear();
+                                return Task.CompletedTask;
+                            });
+                    }
+
+                    context.Respond(new ReleaseBatchAck());
+                    break;
+                case GetSnapshot:
+                    context.Respond(new Snapshot(_pendingResets.Count, _batchReleased));
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private static async Task<(PendingReset Pending, IoCommandAck Ack)[]> ApplyPendingResetsAsync(
+            IContext context,
+            PID? gatewayPid,
+            IReadOnlyList<PendingReset> pending)
+        {
+            if (gatewayPid is null)
+            {
+                return pending.Select(
+                        item => (
+                            item,
+                            new IoCommandAck
+                            {
+                                BrainId = item.Request.BrainId.ToProtoUuid(),
+                                Command = "reset_brain_runtime_state",
+                                Success = false,
+                                Message = "gateway_pid_missing"
+                            }))
+                    .ToArray();
+            }
+
+            return await Task.WhenAll(
+                    pending.Select(
+                        async item =>
+                        {
+                            try
+                            {
+                                var ack = await context.RequestAsync<IoCommandAck>(
+                                        gatewayPid,
+                                        new Nbn.Shared.HiveMind.ApplyBrainRuntimeResetAtBarrier(
+                                            item.Request.BrainId,
+                                            item.Request.ResetBuffer,
+                                            item.Request.ResetAccumulator),
+                                        TimeSpan.FromSeconds(2))
+                                    .ConfigureAwait(false);
+
+                                return (
+                                    item,
+                                    ack ?? new IoCommandAck
+                                    {
+                                        BrainId = item.Request.BrainId.ToProtoUuid(),
+                                        Command = "reset_brain_runtime_state",
+                                        Success = false,
+                                        Message = "gateway_apply_empty_response"
+                                    });
+                            }
+                            catch (Exception ex)
+                            {
+                                return (
+                                    item,
+                                    new IoCommandAck
+                                    {
+                                        BrainId = item.Request.BrainId.ToProtoUuid(),
+                                        Command = "reset_brain_runtime_state",
+                                        Success = false,
+                                        Message = $"gateway_apply_failed:{ex.GetBaseException().Message}"
+                                    });
+                            }
+                        }))
+                .ConfigureAwait(false);
         }
     }
 

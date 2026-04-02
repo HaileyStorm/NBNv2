@@ -404,6 +404,122 @@ public class HiveMindTickBarrierTests
     }
 
     [Fact]
+    public async Task RequestBrainRuntimeReset_WaitsForConcurrentMultiBrainDeliverBarriers_BeforeCallingIo()
+    {
+        const int brainCount = 4;
+
+        var system = new ActorSystem();
+        var options = CreateOptions();
+
+        var root = system.Root;
+        var ioProbe = root.Spawn(Props.FromProducer(() => new BarrierResetIoProbeActor(autoRespond: false)));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options, ioPid: ioProbe)));
+        var brains = new List<(Guid BrainId, PID ShardPid, TaskCompletionSource<ulong> DeliverObserved)>(brainCount);
+
+        for (var i = 0; i < brainCount; i++)
+        {
+            var brainId = Guid.NewGuid();
+            var brainRoot = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, hiveMind)));
+            var router = await WaitForSignalRouter(root, brainRoot, TimeSpan.FromSeconds(2));
+
+            await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == (uint)(i + 1), TimeSpan.FromSeconds(2));
+
+            var deliverObserved = new TaskCompletionSource<ulong>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var shardId = ShardId32.From(1, i);
+            var shardPid = root.Spawn(Props.FromProducer(() => new ControlledDeliverResetShardActor(brainId, shardId, router, deliverObserved)));
+            await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new ProtoControl.RegisterShard
+            {
+                BrainId = brainId.ToProtoUuid(),
+                RegionId = (uint)shardId.RegionId,
+                ShardIndex = (uint)shardId.ShardIndex,
+                ShardPid = PidLabel(shardPid),
+                NeuronStart = 0,
+                NeuronCount = 1
+            }));
+
+            await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));
+            brains.Add((brainId, shardPid, deliverObserved));
+        }
+
+        root.Send(hiveMind, new StartTickLoop());
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        await Task.WhenAll(brains.Select(static brain => brain.DeliverObserved.Task)).WaitAsync(timeoutCts.Token);
+        await WaitForStatus(
+            root,
+            hiveMind,
+            status => status.LastCompletedTickId == 0 && status.PendingDeliver == (uint)brainCount,
+            TimeSpan.FromSeconds(2));
+
+        var resetTasks = brains.Select(
+                brain => root.RequestAsync<ProtoIo.IoCommandAck>(
+                    hiveMind,
+                    new RequestBrainRuntimeReset(brain.BrainId, ResetBuffer: true, ResetAccumulator: true),
+                    TimeSpan.FromSeconds(8)))
+            .ToArray();
+
+        var busyAcks = await Task.WhenAll(
+                brains.Select(
+                    brain => root.RequestAsync<ProtoIo.IoCommandAck>(
+                        hiveMind,
+                        new RequestBrainRuntimeReset(brain.BrainId, ResetBuffer: true, ResetAccumulator: true),
+                        TimeSpan.FromSeconds(2))))
+            .WaitAsync(timeoutCts.Token);
+        foreach (var busyAck in busyAcks)
+        {
+            Assert.False(busyAck.Success);
+            Assert.Equal("reset_already_pending", busyAck.Message);
+        }
+        Assert.All(resetTasks, static task => Assert.False(task.IsCompleted));
+
+        var snapshotBeforeRelease = await root.RequestAsync<BarrierResetIoProbeActor.Snapshot>(
+            ioProbe,
+            new BarrierResetIoProbeActor.GetSnapshot());
+        Assert.Equal(0, snapshotBeforeRelease.ApplyCount);
+        Assert.Equal(0, snapshotBeforeRelease.PendingCount);
+
+        foreach (var brain in brains)
+        {
+            await root.RequestAsync<ControlledDeliverResetShardActor.EmitAckAck>(
+                brain.ShardPid,
+                new ControlledDeliverResetShardActor.EmitAck());
+        }
+
+        await WaitForAsync(
+            async () =>
+            {
+                var snapshot = await root.RequestAsync<BarrierResetIoProbeActor.Snapshot>(
+                    ioProbe,
+                    new BarrierResetIoProbeActor.GetSnapshot());
+                return snapshot.ApplyCount == brainCount && snapshot.PendingCount == brainCount;
+            },
+            timeoutMs: 2_000);
+
+        for (var i = 0; i < brainCount; i++)
+        {
+            await root.RequestAsync<BarrierResetIoProbeActor.ReleaseAck>(
+                ioProbe,
+                new BarrierResetIoProbeActor.ReleaseNext(Success: true, Message: $"applied_{i}"));
+        }
+
+        var resetAcks = await Task.WhenAll(resetTasks).WaitAsync(timeoutCts.Token);
+        foreach (var ack in resetAcks)
+        {
+            Assert.True(ack.Success, ack.Message);
+            Assert.DoesNotContain("runtime_reset_failed", ack.Message, StringComparison.Ordinal);
+        }
+
+        await WaitForStatus(
+            root,
+            hiveMind,
+            status => status.LastCompletedTickId >= 1 && status.PendingCompute == 0 && status.PendingDeliver == 0,
+            TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StopTickLoop());
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public void BackpressureController_TimeoutStreak_RequestsReschedule_And_HealthyTick_Resets()
     {
         var controller = new BackpressureController(CreateOptions(
