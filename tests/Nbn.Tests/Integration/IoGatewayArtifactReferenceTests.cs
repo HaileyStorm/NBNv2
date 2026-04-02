@@ -430,6 +430,7 @@ public class IoGatewayArtifactReferenceTests
     [Fact]
     public async Task AwaitSpawnPlacementViaIO_DoesNotBlockOnArtifactBootstrap_WhenBrainIsAlreadyVisible()
     {
+        using var metrics = new MeterCollector(IoTelemetry.MeterNameValue);
         var system = new ActorSystem();
         var root = system.Root;
         var brainId = Guid.NewGuid();
@@ -456,6 +457,108 @@ public class IoGatewayArtifactReferenceTests
         Assert.True(response.Ack.PlacementReady);
         Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureReasonCode));
         Assert.True(elapsedMs < 1_000d, $"AwaitSpawnPlacementViaIO took {elapsedMs:0.##} ms.");
+        Assert.Equal(
+            1,
+            metrics.SumLong(
+                "nbn.io.await_spawn_placement.completed",
+                ("outcome", "ready"),
+                ("placement_ready", bool.TrueString),
+                ("brain_id", brainId.ToString("D"))));
+        Assert.True(
+            metrics.CountDouble(
+                "nbn.io.await_spawn_placement.metadata.ms",
+                ("outcome", "ready"),
+                ("placement_ready", bool.TrueString),
+                ("brain_id", brainId.ToString("D"))) >= 1);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task AwaitSpawnPlacementViaIO_UsesRemainingCallerBudget_For_MetadataVisibility()
+    {
+        using var metrics = new MeterCollector(IoTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new AwaitPlacementHiveProbe(
+            brainId,
+            artifactDelay: TimeSpan.Zero,
+            brainInfoDelay: TimeSpan.FromSeconds(4))));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var started = Stopwatch.GetTimestamp();
+        var response = await root.RequestAsync<AwaitSpawnPlacementViaIOAck>(
+            gateway,
+            new AwaitSpawnPlacementViaIO
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TimeoutMs = 8_000
+            },
+            TimeSpan.FromSeconds(10));
+        var elapsedMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+
+        Assert.NotNull(response.Ack);
+        Assert.True(response.Ack.AcceptedForPlacement);
+        Assert.True(response.Ack.PlacementReady);
+        Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureReasonCode));
+        Assert.True(elapsedMs >= 3_500d, $"AwaitSpawnPlacementViaIO unexpectedly completed in {elapsedMs:0.##} ms.");
+        Assert.Equal(
+            1,
+            metrics.SumLong(
+                "nbn.io.await_spawn_placement.completed",
+                ("outcome", "ready"),
+                ("placement_ready", bool.TrueString),
+                ("brain_id", brainId.ToString("D"))));
+        Assert.True(
+            metrics.CountDouble(
+                "nbn.io.await_spawn_placement.metadata.ms",
+                ("outcome", "ready"),
+                ("placement_ready", bool.TrueString),
+                ("brain_id", brainId.ToString("D"))) >= 1);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task AwaitSpawnPlacementViaIO_MetadataVisibilityTimeout_EmitsFailureTelemetry()
+    {
+        using var metrics = new MeterCollector(IoTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new AwaitPlacementHiveProbe(
+            brainId,
+            artifactDelay: TimeSpan.Zero,
+            brainInfoDelay: TimeSpan.FromSeconds(5))));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var response = await root.RequestAsync<AwaitSpawnPlacementViaIOAck>(
+            gateway,
+            new AwaitSpawnPlacementViaIO
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TimeoutMs = 2_000
+            },
+            TimeSpan.FromSeconds(5));
+
+        Assert.NotNull(response.Ack);
+        Assert.True(response.Ack.AcceptedForPlacement);
+        Assert.False(response.Ack.PlacementReady);
+        Assert.Equal("spawn_brain_info_timeout", response.Ack.FailureReasonCode);
+        Assert.Equal(
+            1,
+            metrics.SumLong(
+                "nbn.io.await_spawn_placement.failed",
+                ("outcome", "spawn_brain_info_timeout"),
+                ("placement_ready", bool.FalseString),
+                ("brain_id", brainId.ToString("D"))));
+        Assert.True(
+            metrics.CountDouble(
+                "nbn.io.await_spawn_placement.metadata.ms",
+                ("outcome", "spawn_brain_info_timeout"),
+                ("placement_ready", bool.FalseString),
+                ("brain_id", brainId.ToString("D"))) >= 1);
 
         await system.ShutdownAsync();
     }
@@ -2943,11 +3046,13 @@ public class IoGatewayArtifactReferenceTests
     {
         private readonly Guid _brainId;
         private readonly TimeSpan _artifactDelay;
+        private readonly TimeSpan _brainInfoDelay;
 
-        public AwaitPlacementHiveProbe(Guid brainId, TimeSpan artifactDelay)
+        public AwaitPlacementHiveProbe(Guid brainId, TimeSpan artifactDelay, TimeSpan? brainInfoDelay = null)
         {
             _brainId = brainId;
             _artifactDelay = artifactDelay;
+            _brainInfoDelay = brainInfoDelay ?? TimeSpan.Zero;
         }
 
         public async Task ReceiveAsync(IContext context)
@@ -2972,6 +3077,10 @@ public class IoGatewayArtifactReferenceTests
                     when request.BrainId is not null
                          && request.BrainId.TryToGuid(out var infoBrainId)
                          && infoBrainId == _brainId:
+                    if (_brainInfoDelay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(_brainInfoDelay).ConfigureAwait(false);
+                    }
                     context.Respond(new ProtoControl.BrainIoInfo
                     {
                         BrainId = request.BrainId,

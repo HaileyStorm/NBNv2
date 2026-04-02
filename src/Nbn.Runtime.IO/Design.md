@@ -9,7 +9,8 @@ Owns IO Gateway and per-brain coordinator integration paths for external command
 - Normalizes upstream service failures into explicit, stable contract reason codes (unavailable, empty response, request failed) before returning to callers.
 - Forwards speciation stateful and batch requests to the dedicated Speciation manager endpoint without embedding assignment policy in the gateway.
 - Tracks coordinator PID ownership/location metadata from HiveMind so input/output traffic can route to worker-hosted coordinators and preserve subscriptions/pending input state across coordinator moves.
-- Resolves missing `BrainInfo` entries through HiveMind metadata bootstrap with a tolerance for moderately slow metadata replies, while still falling back to a default empty `BrainInfo` when HiveMind does not answer in time. `AwaitSpawnPlacementViaIO` uses that same metadata visibility path so the wait response only reports success once the placed brain is queryable through IO.
+- Resolves missing `BrainInfo` entries through HiveMind metadata bootstrap with a tolerance for moderately slow metadata replies, while still falling back to a default empty `BrainInfo` when HiveMind does not answer in time. `AwaitSpawnPlacementViaIO` uses that same metadata visibility path so the wait response only reports success once the placed brain is queryable through IO, and the metadata-bootstrap portion of that wait now consumes the caller's remaining placement budget rather than a separate fixed short timeout.
+- Emits IO placement-wait telemetry for `AwaitSpawnPlacementViaIO` covering total wait, HiveMind wait, metadata-visibility wait, and success/failure outcomes so placement-visible vs metadata-visible delays are observable without parsing console logs.
 
 ## Maintenance guidance
 
