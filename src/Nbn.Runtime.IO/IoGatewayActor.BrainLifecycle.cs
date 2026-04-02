@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Shared;
@@ -88,6 +89,9 @@ public sealed partial class IoGatewayActor
 
         try
         {
+            var totalStopwatch = Stopwatch.StartNew();
+            var hiveMindWait = TimeSpan.Zero;
+            var metadataVisibilityWait = TimeSpan.Zero;
             var requestedTimeoutMs = message.TimeoutMs;
             var transportTimeoutMs = requestedTimeoutMs >= (ulong)int.MaxValue - 1_000
                 ? int.MaxValue
@@ -102,6 +106,7 @@ public sealed partial class IoGatewayActor
                     TimeoutMs = requestedTimeoutMs
                 },
                 TimeSpan.FromMilliseconds(transportTimeoutMs)).ConfigureAwait(false);
+            hiveMindWait = totalStopwatch.Elapsed;
             if (ack is null)
             {
                 ack = BuildSpawnFailureAck(
@@ -121,13 +126,16 @@ public sealed partial class IoGatewayActor
                             BrainInfoResolveTimeout,
                             bootstrapOnly: true)
                         .ConfigureAwait(false);
+                metadataVisibilityWait = totalStopwatch.Elapsed - hiveMindWait;
                 if (brainEntry is null)
                 {
                     ack.FailureReasonCode = "spawn_brain_info_timeout";
-                    ack.FailureMessage = $"Spawn wait failed: brain {awaitedBrainId} became placed but IO metadata was not visible in time.";
+                    ack.FailureMessage = $"Spawn wait failed: brain {awaitedBrainId} became placed but IO metadata was not visible in time after total={FormatElapsed(totalStopwatch.Elapsed)}, hivemind={FormatElapsed(hiveMindWait)}, metadata={FormatElapsed(metadataVisibilityWait)}.";
                     ack.AcceptedForPlacement = true;
                     ack.PlacementReady = false;
                 }
+
+                MaybeLogSlowPlacementVisibility(awaitedBrainId, totalStopwatch.Elapsed, hiveMindWait, metadataVisibilityWait, ack.PlacementReady);
             }
 
             context.Respond(new AwaitSpawnPlacementViaIOAck
@@ -151,6 +159,26 @@ public sealed partial class IoGatewayActor
             });
         }
     }
+
+    private static void MaybeLogSlowPlacementVisibility(
+        Guid brainId,
+        TimeSpan totalWait,
+        TimeSpan hiveMindWait,
+        TimeSpan metadataVisibilityWait,
+        bool placementReady)
+    {
+        if (totalWait < TimeSpan.FromSeconds(2)
+            && metadataVisibilityWait < TimeSpan.FromSeconds(1))
+        {
+            return;
+        }
+
+        Console.WriteLine(
+            $"AwaitSpawnPlacementViaIO slow path: brain={brainId:N} placement_ready={placementReady} total={FormatElapsed(totalWait)} hivemind={FormatElapsed(hiveMindWait)} metadata={FormatElapsed(metadataVisibilityWait)}");
+    }
+
+    private static string FormatElapsed(TimeSpan elapsed)
+        => $"{elapsed.TotalMilliseconds:0}ms";
 
     private void HandleKillBrain(IContext context, KillBrainViaIO message)
     {
