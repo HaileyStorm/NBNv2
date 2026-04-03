@@ -389,7 +389,7 @@ public sealed class HiveMindSpawnBrainTests
             Assert.True(spawnAck.AcceptedForPlacement);
             Assert.False(spawnAck.PlacementReady);
 
-            await Task.Delay(420);
+            await Task.Delay(220);
 
             var observedBeforeRelease = await root.RequestAsync<ObservedSpawnAssignmentIdsResult>(
                 workerPid,
@@ -404,6 +404,63 @@ public sealed class HiveMindSpawnBrainTests
             Assert.True(placementAck.AcceptedForPlacement);
             Assert.True(placementAck.PlacementReady);
             Assert.True(string.IsNullOrWhiteSpace(placementAck.FailureReasonCode), placementAck.FailureMessage);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                DeleteDirectoryWithRetries(artifactRoot);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SpawnBrain_RetryableAssignmentTimeout_UsesSingleAttemptTimeoutWindow_ForRetry()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var workerProbe = new SpawnPlacementWorkerProbe(
+                workerId,
+                dropAcks: true);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 120,
+                    retryBackoffMs: 10,
+                    maxRetries: 3,
+                    reconcileTimeoutMs: 500))));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef
+                },
+                TimeSpan.FromSeconds(10));
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out _));
+            Assert.True(spawnAck.AcceptedForPlacement);
+            Assert.False(spawnAck.PlacementReady);
+
+            await Task.Delay(220);
+
+            var assignmentRequestCount = await root.RequestAsync<int>(
+                workerPid,
+                new GetSpawnPlacementAssignmentRequestCount(),
+                TimeSpan.FromSeconds(5));
+            Assert.True(
+                assignmentRequestCount >= 2,
+                $"Expected retry dispatch after the single-attempt timeout window, but observed only {assignmentRequestCount} assignment dispatch(es).");
 
             await system.ShutdownAsync();
         }
@@ -1611,6 +1668,8 @@ public sealed class HiveMindSpawnBrainTests
 
     private sealed record GetObservedSpawnAssignmentIds;
 
+    private sealed record GetSpawnPlacementAssignmentRequestCount;
+
     private sealed record ObservedSpawnAssignmentIdsResult(IReadOnlyList<string> AssignmentIds);
 
     private sealed record GetObservedSpawnReplyPids;
@@ -1667,6 +1726,9 @@ public sealed class HiveMindSpawnBrainTests
                     break;
                 case GetObservedSpawnAssignmentIds:
                     context.Respond(new ObservedSpawnAssignmentIdsResult(_observedAssignmentIds.ToArray()));
+                    break;
+                case GetSpawnPlacementAssignmentRequestCount:
+                    context.Respond(AssignmentRequestCount);
                     break;
                 case GetObservedSpawnReplyPids:
                     context.Respond(new ObservedSpawnReplyPidsResult(_observedReplyPids.ToArray()));

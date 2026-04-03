@@ -228,6 +228,40 @@ public sealed class ArtifactStoreResolverTests
     }
 
     [Fact]
+    public async Task Resolve_HttpStoreUri_ConcurrentResolvesAndReads_DoNotCorruptResolverOrManifestCache()
+    {
+        await using var server = new HttpArtifactStoreTestServer();
+        var localRoot = Path.Combine(Path.GetTempPath(), $"nbn-artifact-http-concurrent-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(localRoot);
+
+        try
+        {
+            var payload = new byte[] { 41, 42, 43, 44, 45, 46 };
+            var manifest = await server.SeedAsync(payload, "application/x-nbn");
+            var resolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(localRoot));
+
+            await Task.WhenAll(
+                Enumerable.Range(0, 16).Select(async _ =>
+                {
+                    var store = resolver.Resolve(server.BaseUri.AbsoluteUri);
+                    await using var stream = await store.TryOpenArtifactAsync(manifest.ArtifactId);
+                    Assert.NotNull(stream);
+                    Assert.Equal(payload, await ReadAllBytesAsync(stream!));
+                }));
+
+            var cachedArtifactPath = Path.Combine(localRoot, ".cache", "artifacts", manifest.ArtifactId.ToHex());
+            Assert.True(File.Exists(cachedArtifactPath));
+        }
+        finally
+        {
+            if (Directory.Exists(localRoot))
+            {
+                Directory.Delete(localRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Resolve_NonFileStoreUri_Uses_EnvironmentHttpTarget_When_Configured()
     {
         await using var server = new HttpArtifactStoreTestServer();

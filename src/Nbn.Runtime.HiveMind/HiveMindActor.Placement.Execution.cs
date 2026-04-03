@@ -534,7 +534,7 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        var assignmentTimeoutMs = (long)ComputePerAssignmentPlacementWindowMs() * Math.Max(1, serialWindowMultiplier);
+        var assignmentTimeoutMs = (long)ComputePlacementAssignmentAttemptTimeoutMs() * Math.Max(1, serialWindowMultiplier);
         ScheduleSelf(
             context,
             TimeSpan.FromMilliseconds(Math.Min(int.MaxValue, assignmentTimeoutMs)),
@@ -1340,7 +1340,7 @@ public sealed partial class HiveMindActor
 
     private int ComputeSpawnAwaitIdleTimeoutMs()
     {
-        var assignmentTimeoutMs = Math.Max(100, _options.PlacementAssignmentTimeoutMs);
+        var assignmentTimeoutMs = ComputePlacementAssignmentAttemptTimeoutMs();
         var reconcileTimeoutMs = Math.Max(100, _options.PlacementReconcileTimeoutMs);
         var retryBackoffMs = Math.Max(0, _options.PlacementAssignmentRetryBackoffMs);
         var timeoutMs = assignmentTimeoutMs + Math.Min(5_000, reconcileTimeoutMs) + retryBackoffMs;
@@ -1359,10 +1359,13 @@ public sealed partial class HiveMindActor
     private int ComputePerAssignmentPlacementWindowMs()
     {
         var attempts = Math.Max(1, _options.PlacementAssignmentMaxRetries + 1);
-        var assignmentTimeoutWindow = (long)Math.Max(100, _options.PlacementAssignmentTimeoutMs) * attempts;
+        var assignmentTimeoutWindow = (long)ComputePlacementAssignmentAttemptTimeoutMs() * attempts;
         var retryWindow = (long)Math.Max(0, _options.PlacementAssignmentRetryBackoffMs) * Math.Max(0, attempts - 1);
         return (int)Math.Min(int.MaxValue, Math.Max(100L, assignmentTimeoutWindow + retryWindow));
     }
+
+    private int ComputePlacementAssignmentAttemptTimeoutMs()
+        => Math.Max(100, _options.PlacementAssignmentTimeoutMs);
 
     private int EstimateSerialPlacementWindowAssignments(BrainState? brain)
     {

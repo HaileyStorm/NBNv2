@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace Nbn.Runtime.Artifacts;
 
 /// <summary>
@@ -7,7 +9,7 @@ public sealed class CachingArtifactStore : IArtifactStore
 {
     private readonly IArtifactStore _upstream;
     private readonly LocalArtifactCache _cache;
-    private readonly Dictionary<string, ArtifactManifest> _manifestCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ArtifactManifest> _manifestCache = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Initializes a caching wrapper around the provided upstream store.

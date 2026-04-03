@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace Nbn.Runtime.Artifacts;
 
 /// <summary>
@@ -6,7 +8,7 @@ namespace Nbn.Runtime.Artifacts;
 public sealed class ArtifactStoreResolver
 {
     private readonly ArtifactStoreResolverOptions _options;
-    private readonly Dictionary<string, IArtifactStore> _stores = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, IArtifactStore> _stores = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Initializes a resolver using the provided local-root and remote-cache settings.
@@ -22,14 +24,7 @@ public sealed class ArtifactStoreResolver
     public IArtifactStore Resolve(string? storeUri)
     {
         var cacheKey = BuildCacheKey(storeUri);
-        if (_stores.TryGetValue(cacheKey, out var cached))
-        {
-            return cached;
-        }
-
-        var store = CreateStore(storeUri);
-        _stores[cacheKey] = store;
-        return store;
+        return _stores.GetOrAdd(cacheKey, _ => CreateStore(storeUri));
     }
 
     /// <summary>
