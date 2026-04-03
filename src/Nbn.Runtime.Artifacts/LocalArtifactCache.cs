@@ -1,9 +1,12 @@
+using System.Collections.Concurrent;
+
 namespace Nbn.Runtime.Artifacts;
 
 public sealed class LocalArtifactCache : IArtifactCache
 {
     private readonly IArtifactStore _store;
     private readonly ArtifactCacheOptions _options;
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _writeGates = new(StringComparer.OrdinalIgnoreCase);
 
     public LocalArtifactCache(IArtifactStore store, ArtifactCacheOptions options)
     {
@@ -54,50 +57,64 @@ public sealed class LocalArtifactCache : IArtifactCache
             return new ArtifactCacheEntry(manifest.ArtifactId, path, info.Length, new DateTimeOffset(info.LastWriteTimeUtc));
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-
-        var tempPath = path + ".tmp";
-        var completed = false;
-
+        var gate = GetWriteGate(path);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
-        {
-            await using var output = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, _options.WriteBufferSize, useAsync: true);
-            var source = await _store.TryOpenArtifactAsync(manifest.ArtifactId, cancellationToken);
-            if (source is null)
-            {
-                throw new InvalidOperationException($"Artifact {manifest.ArtifactId} could not be opened from source store.");
-            }
-
-            await using var _ = source;
-            await source.CopyToAsync(output, cancellationToken);
-            await output.FlushAsync(cancellationToken);
-            completed = true;
-        }
-        finally
-        {
-            if (!completed && File.Exists(tempPath))
-            {
-                File.Delete(tempPath);
-            }
-        }
-
-        try
-        {
-            File.Move(tempPath, path);
-        }
-        catch (IOException)
         {
             if (File.Exists(path))
             {
-                File.Delete(tempPath);
+                var info = new FileInfo(path);
+                return new ArtifactCacheEntry(manifest.ArtifactId, path, info.Length, new DateTimeOffset(info.LastWriteTimeUtc));
             }
-            else
-            {
-                throw;
-            }
-        }
 
-        return new ArtifactCacheEntry(manifest.ArtifactId, path, manifest.ByteLength, DateTimeOffset.UtcNow);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+            var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+            var completed = false;
+            try
+            {
+                await using var output = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, _options.WriteBufferSize, useAsync: true);
+                var source = await _store.TryOpenArtifactAsync(manifest.ArtifactId, cancellationToken).ConfigureAwait(false);
+                if (source is null)
+                {
+                    throw new InvalidOperationException($"Artifact {manifest.ArtifactId} could not be opened from source store.");
+                }
+
+                await using var _ = source;
+                await source.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                completed = true;
+            }
+            finally
+            {
+                if (!completed && File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+
+            try
+            {
+                File.Move(tempPath, path);
+            }
+            catch (IOException)
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(tempPath);
+                }
+                else
+                {
+                    throw;
+                }
+            }
+
+            return new ArtifactCacheEntry(manifest.ArtifactId, path, manifest.ByteLength, DateTimeOffset.UtcNow);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     public ValueTask<ArtifactCacheEntry?> TryGetRangeAsync(
@@ -144,49 +161,66 @@ public sealed class LocalArtifactCache : IArtifactCache
             return new ArtifactCacheEntry(artifactId, path, info.Length, new DateTimeOffset(info.LastWriteTimeUtc));
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-
-        var tempPath = path + ".tmp";
-        var completed = false;
-
+        var gate = GetWriteGate(path);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
-        {
-            await using var output = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, _options.WriteBufferSize, useAsync: true);
-            await source.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
-            await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-            if (output.Length != length)
-            {
-                throw new InvalidOperationException($"Artifact range {artifactId}@{offset}+{length} produced {output.Length} bytes.");
-            }
-
-            completed = true;
-        }
-        finally
-        {
-            if (!completed && File.Exists(tempPath))
-            {
-                File.Delete(tempPath);
-            }
-        }
-
-        try
-        {
-            File.Move(tempPath, path);
-        }
-        catch (IOException)
         {
             if (File.Exists(path))
             {
-                File.Delete(tempPath);
+                var info = new FileInfo(path);
+                return new ArtifactCacheEntry(artifactId, path, info.Length, new DateTimeOffset(info.LastWriteTimeUtc));
             }
-            else
-            {
-                throw;
-            }
-        }
 
-        return new ArtifactCacheEntry(artifactId, path, length, DateTimeOffset.UtcNow);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+            var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+            var completed = false;
+            try
+            {
+                await using var output = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, _options.WriteBufferSize, useAsync: true);
+                await source.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                if (output.Length != length)
+                {
+                    throw new InvalidOperationException($"Artifact range {artifactId}@{offset}+{length} produced {output.Length} bytes.");
+                }
+
+                completed = true;
+            }
+            finally
+            {
+                if (!completed && File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+
+            try
+            {
+                File.Move(tempPath, path);
+            }
+            catch (IOException)
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(tempPath);
+                }
+                else
+                {
+                    throw;
+                }
+            }
+
+            return new ArtifactCacheEntry(artifactId, path, length, DateTimeOffset.UtcNow);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
+
+    private SemaphoreSlim GetWriteGate(string path)
+        => _writeGates.GetOrAdd(path, static _ => new SemaphoreSlim(1, 1));
 
     private string GetArtifactPath(Sha256Hash artifactId)
     {

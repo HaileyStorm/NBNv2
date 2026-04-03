@@ -109,7 +109,13 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        if (!assignment.AwaitingAck || assignment.Attempt != message.Attempt || assignment.Ready || assignment.Failed)
+        var awaitingDispatchAck = assignment.AwaitingAck && assignment.Attempt == message.Attempt;
+        var acceptedButNotReady = !assignment.AwaitingAck
+                                  && assignment.Accepted
+                                  && !assignment.Ready
+                                  && !assignment.Failed
+                                  && assignment.Attempt == message.Attempt;
+        if ((!awaitingDispatchAck && !acceptedButNotReady) || assignment.Ready || assignment.Failed)
         {
             return;
         }
@@ -119,10 +125,34 @@ public sealed partial class HiveMindActor
             ? parsedWorkerId
             : (Guid?)null;
         assignment.AwaitingAck = false;
+        if (acceptedButNotReady)
+        {
+            assignment.Failed = true;
+            HiveMindTelemetry.RecordPlacementAssignmentTimeout(
+                brain.BrainId,
+                brain.PlacementEpoch,
+                target,
+                assignment.Attempt,
+                willRetry: false,
+                assignmentWorkerId);
+            EmitDebug(
+                context,
+                ProtoSeverity.SevWarn,
+                "placement.assignment.accepted_timeout",
+                $"Placement assignment {assignment.Assignment.AssignmentId} for brain {brain.BrainId} timed out after accepted state at attempt={assignment.Attempt} before reaching ready.");
+            FailPlacementExecution(
+                context,
+                brain,
+                ProtoControl.PlacementFailureReason.PlacementFailureAssignmentTimeout,
+                ProtoControl.PlacementReconcileState.PlacementReconcileFailed,
+                "spawn_assignment_timeout",
+                "Spawn failed: an accepted placement assignment did not become ready before the timeout window elapsed.");
+            return;
+        }
+
         if (CanRetryAssignment(assignment))
         {
             var nextAttempt = assignment.Attempt + 1;
-            NotePendingSpawnProgress(brain.BrainId, brain.PlacementEpoch);
             HiveMindTelemetry.RecordPlacementAssignmentTimeout(
                 brain.BrainId,
                 brain.PlacementEpoch,
@@ -1341,10 +1371,9 @@ public sealed partial class HiveMindActor
     private int ComputeSpawnAwaitIdleTimeoutMs()
     {
         var assignmentTimeoutMs = ComputePlacementAssignmentAttemptTimeoutMs();
-        var reconcileTimeoutMs = Math.Max(100, _options.PlacementReconcileTimeoutMs);
         var retryBackoffMs = Math.Max(0, _options.PlacementAssignmentRetryBackoffMs);
-        var timeoutMs = assignmentTimeoutMs + Math.Min(5_000, reconcileTimeoutMs) + retryBackoffMs;
-        return (int)Math.Min(15_000, Math.Max(500, timeoutMs));
+        var timeoutMs = assignmentTimeoutMs + retryBackoffMs;
+        return (int)Math.Min(10_000, Math.Max(500, timeoutMs));
     }
 
     private void NotePendingSpawnProgress(Guid brainId, ulong placementEpoch)

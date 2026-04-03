@@ -70,7 +70,7 @@ public sealed record HiveMindOptions(
     string? IoName,
     int WorkerInventoryRefreshMs = 2000,
     int WorkerInventoryStaleAfterMs = 15000,
-    int PlacementAssignmentTimeoutMs = 10000,
+    int PlacementAssignmentTimeoutMs = 2000,
     int PlacementAssignmentRetryBackoffMs = 250,
     int PlacementAssignmentMaxRetries = 2,
     int PlacementReconcileTimeoutMs = 10000,
@@ -128,10 +128,10 @@ public sealed record HiveMindOptions(
         var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? SettingsMonitorNames.SettingsMonitor;
         var workerInventoryRefreshMs = GetEnvInt("NBN_HIVE_WORKER_INVENTORY_REFRESH_MS") ?? 2000;
         var workerInventoryStaleAfterMs = GetEnvInt("NBN_HIVE_WORKER_INVENTORY_STALE_AFTER_MS") ?? 15000;
-        var placementAssignmentTimeoutMs = GetEnvInt("NBN_HIVE_PLACEMENT_ASSIGNMENT_TIMEOUT_MS") ?? 10000;
+        var placementAssignmentTimeoutMs = GetEnvInt("NBN_HIVE_PLACEMENT_ASSIGNMENT_TIMEOUT_MS") ?? 2000;
         var placementAssignmentRetryBackoffMs = GetEnvInt("NBN_HIVE_PLACEMENT_ASSIGNMENT_RETRY_BACKOFF_MS") ?? 250;
         var placementAssignmentMaxRetries = GetEnvInt("NBN_HIVE_PLACEMENT_ASSIGNMENT_MAX_RETRIES") ?? 2;
-        var placementReconcileTimeoutMs = GetEnvInt("NBN_HIVE_PLACEMENT_RECONCILE_TIMEOUT_MS") ?? 10000;
+        var placementReconcileTimeoutMs = GetEnvInt("NBN_HIVE_PLACEMENT_RECONCILE_TIMEOUT_MS") ?? 3000;
         var ioAddress = GetEnv("NBN_HIVE_IO_ADDRESS");
         var ioName = GetEnv("NBN_HIVE_IO_NAME") ?? GetEnv("NBN_IO_GATEWAY_NAME") ?? "io-gateway";
 
@@ -866,10 +866,10 @@ public sealed record HiveMindOptions(
         Console.WriteLine("  --settings-name <name>               SettingsMonitor actor name (default SettingsMonitor)");
         Console.WriteLine("  --worker-inventory-refresh-ms <ms>   Settings snapshot pull interval (default 2000)");
         Console.WriteLine("  --worker-inventory-stale-after-ms <ms> Worker freshness threshold (default 15000)");
-        Console.WriteLine("  --placement-assignment-timeout-ms <ms> Assignment ack timeout (default 10000)");
+        Console.WriteLine("  --placement-assignment-timeout-ms <ms> Assignment ack timeout (default 2000)");
         Console.WriteLine("  --placement-assignment-retry-backoff-ms <ms> Retry backoff for retryable assignment failures (default 250)");
         Console.WriteLine("  --placement-assignment-max-retries <count> Max assignment retries after initial attempt (default 2)");
-        Console.WriteLine("  --placement-reconcile-timeout-ms <ms> Reconcile report timeout after assignments are ready (default 10000)");
+        Console.WriteLine("  --placement-reconcile-timeout-ms <ms> Reconcile report timeout after assignments are ready (default 3000)");
         Console.WriteLine("  --no-settings-monitor                Disable SettingsMonitor reporting");
         Console.WriteLine("  --io-address <host:port>             IO Gateway remote address (default from NBN_IO_* or 127.0.0.1:12050)");
         Console.WriteLine("  --io-name <name>                     IO Gateway actor name (default io-gateway)");

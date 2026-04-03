@@ -52,6 +52,23 @@ public sealed partial class WorkerNodeActor
 
         if (ShouldDeferPlacementReady(context, brain, assignment))
         {
+            if (!TryAcquireDeferredRegionShardPreparationSlot())
+            {
+                ReplyPlacementFailure(
+                    context,
+                    replyTarget,
+                    FailedAck(
+                        assignment.AssignmentId,
+                        assignment.BrainId,
+                        assignment.PlacementEpoch,
+                        PlacementFailureReason.PlacementFailureWorkerUnavailable,
+                        $"artifact-backed region shard preparation backlog is full on worker {_workerNodeId}; retry once existing shard preparation completes",
+                        retryable: true,
+                        retryAfterMs: checked((ulong)DefaultDeferredRegionShardPreparationRetryAfter.TotalMilliseconds)),
+                    assignment.Target);
+                return;
+            }
+
             BeginDeferredPlacementAssignment(context, brain, assignment, replyTarget);
             return;
         }
@@ -93,42 +110,83 @@ public sealed partial class WorkerNodeActor
         var prepareTask = PrepareRegionShardHostingAsync(context, brain, acceptedAssignment);
         context.ReenterAfter(prepareTask, completed =>
         {
-            if (!_brains.TryGetValue(brain.BrainId, out var currentBrain)
-                || currentBrain.PlacementEpoch != acceptedAssignment.PlacementEpoch
-                || !currentBrain.Assignments.TryGetValue(acceptedAssignment.AssignmentId, out var currentAssignment)
-                || currentAssignment.State != PlacementAssignmentState.PlacementAssignmentAccepted
-                || !AssignmentSemanticallyMatches(currentAssignment.Assignment, acceptedAssignment))
+            try
             {
-                return Task.CompletedTask;
-            }
+                if (!_brains.TryGetValue(brain.BrainId, out var currentBrain)
+                    || currentBrain.PlacementEpoch != acceptedAssignment.PlacementEpoch
+                    || !currentBrain.Assignments.TryGetValue(acceptedAssignment.AssignmentId, out var currentAssignment)
+                    || currentAssignment.State != PlacementAssignmentState.PlacementAssignmentAccepted
+                    || !AssignmentSemanticallyMatches(currentAssignment.Assignment, acceptedAssignment))
+                {
+                    return Task.CompletedTask;
+                }
 
-            if (completed.IsCanceled || completed.IsFaulted)
-            {
-                currentBrain.Assignments.Remove(acceptedAssignment.AssignmentId);
-                _assignments.Remove(acceptedAssignment.AssignmentId);
+                if (completed.IsCanceled || completed.IsFaulted)
+                {
+                    currentBrain.Assignments.Remove(acceptedAssignment.AssignmentId);
+                    _assignments.Remove(acceptedAssignment.AssignmentId);
 
-                var failedAck = BuildPlacementHostingFailedAck(
-                    acceptedAssignment,
-                    completed.Exception?.GetBaseException(),
-                    fallbackDetail: "placement hosting canceled");
-                ReplyPlacementFailure(
+                    var failedAck = BuildPlacementHostingFailedAck(
+                        acceptedAssignment,
+                        completed.Exception?.GetBaseException(),
+                        fallbackDetail: "placement hosting canceled");
+                    ReplyPlacementFailure(
+                        context,
+                        replyTarget,
+                        failedAck,
+                        acceptedAssignment.Target);
+                    return Task.CompletedTask;
+                }
+
+                var hosted = CompletePreparedRegionShardHosting(context, currentBrain, completed.Result);
+                RegisterHostedAssignment(context, currentBrain, hosted);
+                ReplyPlacementReady(
                     context,
                     replyTarget,
-                    failedAck,
-                    acceptedAssignment.Target);
+                    hosted.Assignment!,
+                    "ready",
+                    Stopwatch.GetElapsedTime(hostingStarted).TotalMilliseconds);
                 return Task.CompletedTask;
             }
-
-            var hosted = CompletePreparedRegionShardHosting(context, currentBrain, completed.Result);
-            RegisterHostedAssignment(context, currentBrain, hosted);
-            ReplyPlacementReady(
-                context,
-                replyTarget,
-                hosted.Assignment!,
-                "ready",
-                Stopwatch.GetElapsedTime(hostingStarted).TotalMilliseconds);
-            return Task.CompletedTask;
+            finally
+            {
+                ReleaseDeferredRegionShardPreparationSlot();
+            }
         });
+    }
+
+    private bool TryAcquireDeferredRegionShardPreparationSlot()
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref _activeDeferredRegionShardPreparations);
+            if (current >= _maxConcurrentDeferredRegionShardPreparations)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref _activeDeferredRegionShardPreparations, current + 1, current) == current)
+            {
+                return true;
+            }
+        }
+    }
+
+    private void ReleaseDeferredRegionShardPreparationSlot()
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref _activeDeferredRegionShardPreparations);
+            if (current <= 0)
+            {
+                return;
+            }
+
+            if (Interlocked.CompareExchange(ref _activeDeferredRegionShardPreparations, current - 1, current) == current)
+            {
+                return;
+            }
+        }
     }
 
     private void HandlePlacementUnassignment(IContext context, PlacementUnassignmentRequest request)

@@ -17,9 +17,11 @@ public sealed partial class WorkerNodeActor : IActor
 {
     private static readonly TimeSpan BrainInfoTimeout = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan BrainDefinitionTimeout = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan DefaultDeferredRegionShardPreparationRetryAfter = TimeSpan.FromMilliseconds(250);
     private static readonly bool LogRuntimeMetadataDiagnostics = IsEnvTrue("NBN_RUNTIME_METADATA_DIAGNOSTICS_ENABLED");
     private static readonly int RuntimeMetadataMaxAttempts = 6;
     private static readonly TimeSpan RuntimeMetadataRetryDelay = TimeSpan.FromMilliseconds(150);
+    private static readonly int DefaultMaxConcurrentDeferredRegionShardPreparations = 2;
     private const string DiscoveryTargetLabel = "discovery";
 
     private readonly Guid _workerNodeId;
@@ -37,8 +39,11 @@ public sealed partial class WorkerNodeActor : IActor
     private readonly string? _observabilityDefaultHost;
     private readonly Severity _debugMinSeverityDefault;
     private readonly bool _debugStreamEnabledDefault;
+    private readonly int _maxConcurrentDeferredRegionShardPreparations;
+    private readonly TimeSpan _deferredRegionShardPreparationDelay;
 
     private PID? _hiveMindHintPid;
+    private int _activeDeferredRegionShardPreparations;
 
     /// <summary>
     /// Initializes a worker node actor with the local hosting, artifact, and observability dependencies.
@@ -52,7 +57,9 @@ public sealed partial class WorkerNodeActor : IActor
         Action? capabilityProfileChanged = null,
         Func<ProtoSettings.NodeCapabilities>? capabilitySnapshotProvider = null,
         WorkerResourceAvailability? resourceAvailability = null,
-        string? observabilityDefaultHost = null)
+        string? observabilityDefaultHost = null,
+        int? maxConcurrentDeferredRegionShardPreparations = null,
+        TimeSpan? deferredRegionShardPreparationDelay = null)
     {
         if (workerNodeId == Guid.Empty)
         {
@@ -75,6 +82,10 @@ public sealed partial class WorkerNodeActor : IActor
             : observabilityDefaultHost.Trim();
         _debugStreamEnabledDefault = ResolveDebugStreamEnabled(defaultValue: false);
         _debugMinSeverityDefault = ResolveDebugMinSeverity(Severity.SevDebug);
+        _maxConcurrentDeferredRegionShardPreparations = Math.Max(
+            1,
+            maxConcurrentDeferredRegionShardPreparations ?? DefaultMaxConcurrentDeferredRegionShardPreparations);
+        _deferredRegionShardPreparationDelay = deferredRegionShardPreparationDelay.GetValueOrDefault(TimeSpan.Zero);
     }
 
     private static string ResolveWorkerArtifactCacheRoot(string defaultArtifactRootPath, Guid workerNodeId)

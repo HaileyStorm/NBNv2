@@ -1944,6 +1944,107 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     }
 
     [Fact]
+    public async Task PlacementAssignmentRequest_ArtifactBackedShard_BacklogFull_ReturnsRetryableFailureAck()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-deferred-backlog-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+            var artifactStore = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+
+            var richNbn = NbnTestVectors.CreateRichNbnVector().Bytes;
+            var manifest = await artifactStore.StoreAsync(new MemoryStream(richNbn), "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray()
+                .ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var workerNodeId = Guid.NewGuid();
+            var workerName = $"worker-{Guid.NewGuid():N}";
+            var workerPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactStore: artifactStore,
+                    maxConcurrentDeferredRegionShardPreparations: 1,
+                    deferredRegionShardPreparationDelay: TimeSpan.FromMilliseconds(300))),
+                workerName);
+
+            var firstAccepted = new TaskCompletionSource<PlacementAssignmentAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var firstReady = new TaskCompletionSource<PlacementAssignmentAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var firstRequest = new PlacementAssignmentRequest
+            {
+                Assignment = BuildAssignment(
+                    assignmentId: "assign-backlog-1",
+                    brainId: Guid.NewGuid(),
+                    workerNodeId: workerNodeId,
+                    placementEpoch: 1,
+                    regionId: 1,
+                    shardIndex: 0,
+                    target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                    neuronStart: 0,
+                    neuronCount: 4,
+                    baseDefinition: brainDef,
+                    inputWidth: 3,
+                    outputWidth: 2)
+            };
+
+            var senderPid = harness.System.Root.SpawnNamed(
+                Props.FromProducer(() => new PlacementRequestProbeActor(workerPid, firstRequest, firstAccepted, firstReady)),
+                $"worker-test-probe-backlog-{Guid.NewGuid():N}");
+
+            try
+            {
+                var acceptedAck = await firstAccepted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.True(acceptedAck.Accepted);
+                Assert.Equal(PlacementAssignmentState.PlacementAssignmentAccepted, acceptedAck.State);
+
+                var rejectedAck = await SendPlacementRequestViaNamedSenderAsync(
+                    harness.System,
+                    workerPid,
+                    new PlacementAssignmentRequest
+                    {
+                        Assignment = BuildAssignment(
+                            assignmentId: "assign-backlog-2",
+                            brainId: Guid.NewGuid(),
+                            workerNodeId: workerNodeId,
+                            placementEpoch: 1,
+                            regionId: 1,
+                            shardIndex: 1,
+                            target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                            neuronStart: 4,
+                            neuronCount: 4,
+                            baseDefinition: brainDef,
+                            inputWidth: 3,
+                            outputWidth: 2)
+                    });
+
+                Assert.False(rejectedAck.Accepted);
+                Assert.Equal(PlacementAssignmentState.PlacementAssignmentFailed, rejectedAck.State);
+                Assert.True(rejectedAck.Retryable);
+                Assert.Equal(PlacementFailureReason.PlacementFailureWorkerUnavailable, rejectedAck.FailureReason);
+                Assert.Contains("preparation backlog is full", rejectedAck.Message, StringComparison.OrdinalIgnoreCase);
+
+                var readyAck = await firstReady.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.True(readyAck.Accepted);
+                Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, readyAck.State);
+            }
+            finally
+            {
+                harness.System.Root.Stop(senderPid);
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task PlacementAssignmentRequest_BrainInfoMissingBaseDefinition_UsesExportFallbackForArtifactBackedShard()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-export-fallback-{Guid.NewGuid():N}");

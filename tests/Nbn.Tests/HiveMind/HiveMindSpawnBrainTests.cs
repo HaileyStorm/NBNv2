@@ -475,7 +475,7 @@ public sealed class HiveMindSpawnBrainTests
     }
 
     [Fact]
-    public async Task AwaitSpawnPlacement_DefaultRuntimeWait_TimesOutOnIdleProgress_Without_WorstCaseSerialBudget()
+    public async Task AwaitSpawnPlacement_DefaultRuntimeWait_FailsAcceptedAssignments_ThatNeverReachReady()
     {
         var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
         try
@@ -524,10 +524,150 @@ public sealed class HiveMindSpawnBrainTests
 
             Assert.True(waitAck.AcceptedForPlacement);
             Assert.False(waitAck.PlacementReady);
-            Assert.Equal("spawn_wait_timeout", waitAck.FailureReasonCode);
+            Assert.Equal("spawn_assignment_timeout", waitAck.FailureReasonCode);
+            Assert.Contains("did not become ready", waitAck.FailureMessage, StringComparison.Ordinal);
             Assert.True(
                 started.Elapsed < TimeSpan.FromSeconds(2),
-                $"Expected idle-progress timeout well below the old worst-case wait budget, but waited {started.Elapsed}.");
+                $"Expected accepted-but-stalled placement to fail well below the old worst-case wait budget, but waited {started.Elapsed}.");
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                DeleteDirectoryWithRetries(artifactRoot);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AwaitSpawnPlacement_DefaultRuntimeWait_DoesNotExtend_On_AcceptedButNotReady_Assignments()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var workerProbe = new SpawnPlacementWorkerProbe(
+                workerId,
+                dropAcks: false,
+                autoRespondAssignments: false,
+                acceptBeforeReady: true);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 200,
+                    retryBackoffMs: 10,
+                    maxRetries: 2,
+                    reconcileTimeoutMs: 100))));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef
+                },
+                TimeSpan.FromSeconds(10));
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            Assert.True(spawnAck.AcceptedForPlacement);
+            Assert.False(spawnAck.PlacementReady);
+
+            var started = Stopwatch.StartNew();
+            var waitAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new AwaitSpawnPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    TimeoutMs = 0
+                },
+                TimeSpan.FromSeconds(5));
+            started.Stop();
+
+            Assert.True(waitAck.AcceptedForPlacement);
+            Assert.False(waitAck.PlacementReady);
+            Assert.Equal("spawn_assignment_timeout", waitAck.FailureReasonCode);
+            Assert.Contains("did not become ready", waitAck.FailureMessage, StringComparison.Ordinal);
+            Assert.True(
+                started.Elapsed < TimeSpan.FromMilliseconds(500),
+                $"Expected accepted-but-not-ready placement not to extend the wait budget, but waited {started.Elapsed}.");
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                DeleteDirectoryWithRetries(artifactRoot);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AwaitSpawnPlacement_DefaultRuntimeWait_DoesNotExtend_On_RetryOnlyPlacementChurn()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var workerProbe = new SpawnPlacementWorkerProbe(workerId, dropAcks: true);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 200,
+                    retryBackoffMs: 20,
+                    maxRetries: 3,
+                    reconcileTimeoutMs: 100))));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef
+                },
+                TimeSpan.FromSeconds(10));
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            Assert.True(spawnAck.AcceptedForPlacement);
+            Assert.False(spawnAck.PlacementReady);
+
+            var started = Stopwatch.StartNew();
+            var waitAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new AwaitSpawnPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    TimeoutMs = 0
+                },
+                TimeSpan.FromSeconds(5));
+            started.Stop();
+
+            Assert.True(waitAck.AcceptedForPlacement);
+            Assert.False(waitAck.PlacementReady);
+            Assert.Equal("spawn_wait_timeout", waitAck.FailureReasonCode);
+            Assert.True(
+                started.Elapsed < TimeSpan.FromMilliseconds(600),
+                $"Expected retry-only placement churn not to extend the default wait budget, but waited {started.Elapsed}.");
+
+            var assignmentRequestCount = await root.RequestAsync<int>(
+                workerPid,
+                new GetSpawnPlacementAssignmentRequestCount(),
+                TimeSpan.FromSeconds(5));
+            Assert.True(
+                assignmentRequestCount >= 2,
+                $"Expected at least one retry dispatch before the wait returned, but observed only {assignmentRequestCount} assignment request(s).");
 
             await system.ShutdownAsync();
         }
@@ -662,7 +802,7 @@ public sealed class HiveMindSpawnBrainTests
             var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
             var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
                 CreateOptions(
-                    assignmentTimeoutMs: 250,
+                    assignmentTimeoutMs: 1_000,
                     retryBackoffMs: 0,
                     maxRetries: 0,
                     reconcileTimeoutMs: 500),
@@ -744,7 +884,7 @@ public sealed class HiveMindSpawnBrainTests
             var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
             var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
                 CreateOptions(
-                    assignmentTimeoutMs: 250,
+                    assignmentTimeoutMs: 1_000,
                     retryBackoffMs: 0,
                     maxRetries: 0,
                     reconcileTimeoutMs: 500))));

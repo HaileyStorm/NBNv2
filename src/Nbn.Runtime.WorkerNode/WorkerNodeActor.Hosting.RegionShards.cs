@@ -53,6 +53,11 @@ public sealed partial class WorkerNodeActor
         BrainHostingState brain,
         PlacementAssignment assignment)
     {
+        if (_deferredRegionShardPreparationDelay > TimeSpan.Zero)
+        {
+            await Task.Delay(_deferredRegionShardPreparationDelay).ConfigureAwait(false);
+        }
+
         var regionId = checked((int)assignment.RegionId);
         var shardIndex = checked((int)assignment.ShardIndex);
         if (!SharedShardId32.TryFrom(regionId, shardIndex, out var shardId))

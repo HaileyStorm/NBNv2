@@ -555,7 +555,6 @@ public sealed partial class HiveMindActor
                 ackLatencyMs > 0 ? ackLatencyMs : 0,
                 plannedWorkerId,
                 ackFailureReason);
-            NotePendingSpawnProgress(brain.BrainId, brain.PlacementEpoch);
 
             if (!message.Accepted || message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentFailed)
             {
@@ -673,6 +672,7 @@ public sealed partial class HiveMindActor
                             trackedAssignment.ReadyMs - trackedAssignment.LastDispatchMs,
                             plannedWorkerId);
                     }
+                    NotePendingSpawnProgress(brain.BrainId, brain.PlacementEpoch);
                     UpdatePlacementLifecycle(
                         brain,
                         ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning,
@@ -680,6 +680,7 @@ public sealed partial class HiveMindActor
                     MaybeStartReconcile(context, brain);
                     break;
                 case ProtoControl.PlacementAssignmentState.PlacementAssignmentDraining:
+                    NotePendingSpawnProgress(brain.BrainId, brain.PlacementEpoch);
                     brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileRequiresAction;
                     UpdatePlacementLifecycle(
                         brain,

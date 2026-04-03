@@ -618,7 +618,8 @@ public sealed partial class HiveMindActor
         {
             if (_brains.TryGetValue(brainId, out var inFlightBrain))
             {
-                LogError($"Spawn wait timeout for brain {brainId} epoch={pending.PlacementEpoch}: {DescribeSpawnWaitTimeoutState(inFlightBrain, pending)}");
+                var timeoutDetail = DescribeSpawnWaitTimeoutState(inFlightBrain, pending);
+                LogError($"Spawn wait timeout for brain {brainId} epoch={pending.PlacementEpoch}: {timeoutDetail}");
                 return BuildSpawnFailureAck(
                     brainId,
                     pending.PlacementEpoch,
@@ -626,10 +627,11 @@ public sealed partial class HiveMindActor
                     inFlightBrain.PlacementLifecycleState,
                     inFlightBrain.PlacementReconcileState,
                     reasonCode: "spawn_wait_timeout",
-                    failureMessage: "Spawn wait timed out before placement became ready.");
+                    failureMessage: $"Spawn wait timed out before placement became ready ({timeoutDetail}).");
             }
 
-            LogError($"Spawn wait timeout for brain {brainId} epoch={pending.PlacementEpoch}: brain_not_tracked pendingFailure={pending.FailureReasonCode}");
+            var timeoutDetailWithoutBrain = $"brain_not_tracked pendingFailure={pending.FailureReasonCode}";
+            LogError($"Spawn wait timeout for brain {brainId} epoch={pending.PlacementEpoch}: {timeoutDetailWithoutBrain}");
             return BuildSpawnFailureAck(
                 brainId,
                 pending.PlacementEpoch,
@@ -637,7 +639,7 @@ public sealed partial class HiveMindActor
                 lifecycleState: ProtoControl.PlacementLifecycleState.PlacementLifecycleUnknown,
                 reconcileState: ProtoControl.PlacementReconcileState.PlacementReconcileUnknown,
                 reasonCode: "spawn_wait_timeout",
-                failureMessage: "Spawn wait timed out before placement became ready.");
+                failureMessage: $"Spawn wait timed out before placement became ready ({timeoutDetailWithoutBrain}).");
         }
 
         if (result.Completed)
