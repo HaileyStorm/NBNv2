@@ -602,6 +602,151 @@ public sealed class HiveMindSpawnBrainTests
     }
 
     [Fact]
+    public async Task SpawnBrain_AcceptedAssignments_ContinueDispatching_BeforeDeferredReady()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var workerProbe = new SpawnPlacementWorkerProbe(
+                workerId,
+                dropAcks: false,
+                autoRespondAssignments: false,
+                acceptBeforeReady: true);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 250,
+                    retryBackoffMs: 0,
+                    maxRetries: 0,
+                    reconcileTimeoutMs: 500))));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef
+                },
+                TimeSpan.FromSeconds(10));
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            Assert.True(spawnAck.AcceptedForPlacement);
+            Assert.False(spawnAck.PlacementReady);
+
+            var awaitPlacement = AwaitSpawnPlacementAsync(root, hiveMind, brainId, timeoutMs: 0);
+            await WaitForAsync(
+                () => Task.FromResult(workerProbe.AssignmentRequestCount > 1),
+                timeoutMs: 1_000);
+            Assert.False(awaitPlacement.IsCompleted);
+
+            for (var iteration = 0; iteration < 32 && !awaitPlacement.IsCompleted; iteration++)
+            {
+                var released = await root.RequestAsync<ReleaseNextDeferredSpawnAssignmentAckResult>(
+                    workerPid,
+                    new ReleaseNextDeferredSpawnAssignmentAck());
+                if (!released.Released)
+                {
+                    await Task.Delay(25);
+                    continue;
+                }
+
+                await Task.Delay(25);
+            }
+
+            var readyAck = await awaitPlacement.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(readyAck.AcceptedForPlacement);
+            Assert.True(readyAck.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(readyAck.FailureReasonCode), readyAck.FailureMessage);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                DeleteDirectoryWithRetries(artifactRoot);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SpawnBrain_Processes_WorkerPlacementFailure_AfterAccepted()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var workerProbe = new SpawnPlacementWorkerProbe(
+                workerId,
+                dropAcks: false,
+                autoRespondAssignments: false,
+                acceptBeforeReady: true,
+                failAfterAccepted: true);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 250,
+                    retryBackoffMs: 0,
+                    maxRetries: 0,
+                    reconcileTimeoutMs: 500))));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef
+                },
+                TimeSpan.FromSeconds(10));
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            Assert.True(spawnAck.AcceptedForPlacement);
+            Assert.False(spawnAck.PlacementReady);
+
+            var awaitPlacement = AwaitSpawnPlacementAsync(root, hiveMind, brainId, timeoutMs: 5_000);
+            for (var iteration = 0; iteration < 32 && !awaitPlacement.IsCompleted; iteration++)
+            {
+                var released = await root.RequestAsync<ReleaseNextDeferredSpawnAssignmentAckResult>(
+                    workerPid,
+                    new ReleaseNextDeferredSpawnAssignmentAck());
+                if (!released.Released)
+                {
+                    await Task.Delay(25);
+                    continue;
+                }
+
+                await Task.Delay(25);
+            }
+
+            var failedAck = await awaitPlacement.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(failedAck.AcceptedForPlacement);
+            Assert.False(failedAck.PlacementReady);
+            Assert.Equal("spawn_internal_error", failedAck.FailureReasonCode);
+            Assert.Contains("failed_after_accepted", failedAck.FailureMessage, StringComparison.Ordinal);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                DeleteDirectoryWithRetries(artifactRoot);
+            }
+        }
+    }
+
+    [Fact]
     public async Task SpawnBrain_IncludesExplicitReplyPid_OnPlacementAssignmentRequests()
     {
         var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
@@ -1411,6 +1556,7 @@ public sealed class HiveMindSpawnBrainTests
         private readonly SpawnReconcileBehavior _reconcileBehavior;
         private readonly bool _autoRespondAssignments;
         private readonly bool _acceptBeforeReady;
+        private readonly bool _failAfterAccepted;
         private readonly Dictionary<string, PlacementAssignment> _knownAssignments = new(StringComparer.Ordinal);
         private readonly List<(PID Sender, PlacementAssignmentAck Ack)> _deferredAssignmentAcks = new();
         private readonly List<string> _observedAssignmentIds = new();
@@ -1421,13 +1567,15 @@ public sealed class HiveMindSpawnBrainTests
             bool dropAcks,
             SpawnReconcileBehavior reconcileBehavior = SpawnReconcileBehavior.Matched,
             bool autoRespondAssignments = true,
-            bool acceptBeforeReady = false)
+            bool acceptBeforeReady = false,
+            bool failAfterAccepted = false)
         {
             _workerId = workerId;
             _dropAcks = dropAcks;
             _reconcileBehavior = reconcileBehavior;
             _autoRespondAssignments = autoRespondAssignments;
             _acceptBeforeReady = acceptBeforeReady;
+            _failAfterAccepted = failAfterAccepted;
         }
 
         public int AssignmentRequestCount { get; private set; }
@@ -1503,11 +1651,15 @@ public sealed class HiveMindSpawnBrainTests
                 AssignmentId = assignment.AssignmentId,
                 BrainId = assignment.BrainId,
                 PlacementEpoch = assignment.PlacementEpoch,
-                State = PlacementAssignmentState.PlacementAssignmentReady,
-                Accepted = true,
+                State = _failAfterAccepted
+                    ? PlacementAssignmentState.PlacementAssignmentFailed
+                    : PlacementAssignmentState.PlacementAssignmentReady,
+                Accepted = !_failAfterAccepted,
                 Retryable = false,
-                FailureReason = PlacementFailureReason.PlacementFailureNone,
-                Message = "ready"
+                FailureReason = _failAfterAccepted
+                    ? PlacementFailureReason.PlacementFailureInternalError
+                    : PlacementFailureReason.PlacementFailureNone,
+                Message = _failAfterAccepted ? "failed_after_accepted" : "ready"
             };
 
             if (_autoRespondAssignments)

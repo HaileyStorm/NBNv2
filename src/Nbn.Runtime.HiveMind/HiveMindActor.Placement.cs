@@ -486,7 +486,10 @@ public sealed partial class HiveMindActor
                 return;
             }
 
-            if (trackedAssignment.Ready || trackedAssignment.Failed || !trackedAssignment.AwaitingAck)
+            if (trackedAssignment.Ready
+                || trackedAssignment.Failed
+                || (!trackedAssignment.AwaitingAck
+                    && !CanProcessAcceptedFollowUpPlacementAck(trackedAssignment, message)))
             {
                 EmitDebug(
                     context,
@@ -562,6 +565,10 @@ public sealed partial class HiveMindActor
 
                 if (message.Retryable && CanRetryAssignment(trackedAssignment))
                 {
+                    trackedAssignment.Accepted = false;
+                    trackedAssignment.Ready = false;
+                    trackedAssignment.AcceptedMs = 0;
+                    trackedAssignment.ReadyMs = 0;
                     var backoffMs = message.RetryAfterMs > 0
                         ? (int)Math.Min(int.MaxValue, message.RetryAfterMs)
                         : _options.PlacementAssignmentRetryBackoffMs;
@@ -615,17 +622,29 @@ public sealed partial class HiveMindActor
             switch (message.State)
             {
                 case ProtoControl.PlacementAssignmentState.PlacementAssignmentPending:
+                    UpdatePlacementLifecycle(
+                        brain,
+                        ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning,
+                        ProtoControl.PlacementFailureReason.PlacementFailureNone);
+                    break;
                 case ProtoControl.PlacementAssignmentState.PlacementAssignmentAccepted:
+                    trackedAssignment.AwaitingAck = false;
                     if (trackedAssignment.AcceptedMs == 0)
                     {
                         trackedAssignment.AcceptedMs = ackObservedMs;
                     }
 
+                    trackedAssignment.Accepted = true;
                     UpdatePlacementLifecycle(
                         brain,
                         ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigning,
                         ProtoControl.PlacementFailureReason.PlacementFailureNone);
-                    trackedAssignment.Accepted = true;
+                    ReleaseWorkerPlacementDispatch(
+                        context,
+                        plannedWorkerNodeId,
+                        brain.BrainId,
+                        brain.PlacementEpoch,
+                        trackedAssignment.Assignment.AssignmentId);
                     break;
                 case ProtoControl.PlacementAssignmentState.PlacementAssignmentReady:
                     trackedAssignment.AwaitingAck = false;
@@ -671,6 +690,24 @@ public sealed partial class HiveMindActor
         }
 
         HandlePlacementAssignmentAckLegacy(context, brain, message);
+    }
+
+    private static bool CanProcessAcceptedFollowUpPlacementAck(
+        PlacementAssignmentExecutionState trackedAssignment,
+        ProtoControl.PlacementAssignmentAck message)
+    {
+        if (!trackedAssignment.Accepted
+            || trackedAssignment.Ready
+            || trackedAssignment.Failed
+            || trackedAssignment.AwaitingAck)
+        {
+            return false;
+        }
+
+        return message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentReady
+            || message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentDraining
+            || message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentFailed
+            || !message.Accepted;
     }
 
     private void HandlePlacementAssignmentAckLegacy(IContext context, BrainState brain, ProtoControl.PlacementAssignmentAck message)
