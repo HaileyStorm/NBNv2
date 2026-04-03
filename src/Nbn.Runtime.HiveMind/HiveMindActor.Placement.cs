@@ -126,7 +126,8 @@ public sealed partial class HiveMindActor
             }
 
             var spawnCompletionTimeoutMs = ComputeSpawnCompletionTimeoutMs(brain);
-            var pending = new PendingSpawnState(brain.BrainId, brain.PlacementEpoch, spawnCompletionTimeoutMs);
+            var awaitSpawnIdleTimeoutMs = ComputeSpawnAwaitIdleTimeoutMs();
+            var pending = new PendingSpawnState(brain.BrainId, brain.PlacementEpoch, awaitSpawnIdleTimeoutMs);
             _pendingSpawns[brain.BrainId] = pending;
 
             ScheduleSelf(
@@ -554,6 +555,7 @@ public sealed partial class HiveMindActor
                 ackLatencyMs > 0 ? ackLatencyMs : 0,
                 plannedWorkerId,
                 ackFailureReason);
+            NotePendingSpawnProgress(brain.BrainId, brain.PlacementEpoch);
 
             if (!message.Accepted || message.State == ProtoControl.PlacementAssignmentState.PlacementAssignmentFailed)
             {
@@ -788,6 +790,8 @@ public sealed partial class HiveMindActor
                 $"Ignored reconcile report for brain {brainId}; reason=brain_not_tracked epoch={message.PlacementEpoch}.");
             return;
         }
+
+        NotePendingSpawnProgress(brain.BrainId, brain.PlacementEpoch);
 
         var execution = brain.PlacementExecution;
 

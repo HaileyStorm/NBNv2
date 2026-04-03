@@ -161,6 +161,8 @@ public sealed partial class WorkerNodeActor
             {
                 var detail = ex.GetBaseException().Message;
                 runtime.LastArtifactLoadError = detail;
+                Console.WriteLine(
+                    $"[WorkerNode][ERROR] Artifact-backed shard load failed. brain={brain.BrainId} assignment={assignment.AssignmentId} region={assignment.RegionId} shard={assignment.ShardIndex} detail={detail}");
                 throw new InvalidOperationException(
                     $"Artifact-backed shard load failed for brain {brain.BrainId} region {assignment.RegionId} shard {assignment.ShardIndex}: {detail}",
                     ex);

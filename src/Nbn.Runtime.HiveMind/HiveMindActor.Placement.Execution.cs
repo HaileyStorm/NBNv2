@@ -122,6 +122,7 @@ public sealed partial class HiveMindActor
         if (CanRetryAssignment(assignment))
         {
             var nextAttempt = assignment.Attempt + 1;
+            NotePendingSpawnProgress(brain.BrainId, brain.PlacementEpoch);
             HiveMindTelemetry.RecordPlacementAssignmentTimeout(
                 brain.BrainId,
                 brain.PlacementEpoch,
@@ -1300,16 +1301,30 @@ public sealed partial class HiveMindActor
             return new PendingSpawnAwaitResult(completed, TimedOut: false);
         }
 
-        try
+        while (true)
         {
-            var completed = await pending.Completion.Task
-                .WaitAsync(TimeSpan.FromMilliseconds(timeoutMs))
-                .ConfigureAwait(false);
-            return new PendingSpawnAwaitResult(completed, TimedOut: false);
-        }
-        catch (TimeoutException)
-        {
-            return new PendingSpawnAwaitResult(Completed: false, TimedOut: true);
+            var observedProgressVersion = pending.ProgressVersion;
+            try
+            {
+                var completed = await pending.Completion.Task
+                    .WaitAsync(TimeSpan.FromMilliseconds(timeoutMs))
+                    .ConfigureAwait(false);
+                return new PendingSpawnAwaitResult(completed, TimedOut: false);
+            }
+            catch (TimeoutException)
+            {
+                if (pending.Completion.Task.IsCompleted)
+                {
+                    continue;
+                }
+
+                if (pending.ProgressVersion != observedProgressVersion)
+                {
+                    continue;
+                }
+
+                return new PendingSpawnAwaitResult(Completed: false, TimedOut: true);
+            }
         }
     }
 
@@ -1321,6 +1336,24 @@ public sealed partial class HiveMindActor
         }
 
         return (int)Math.Min(int.MaxValue, Math.Max(50UL, requestedTimeoutMs));
+    }
+
+    private int ComputeSpawnAwaitIdleTimeoutMs()
+    {
+        var assignmentTimeoutMs = Math.Max(100, _options.PlacementAssignmentTimeoutMs);
+        var reconcileTimeoutMs = Math.Max(100, _options.PlacementReconcileTimeoutMs);
+        var retryBackoffMs = Math.Max(0, _options.PlacementAssignmentRetryBackoffMs);
+        var timeoutMs = assignmentTimeoutMs + Math.Min(5_000, reconcileTimeoutMs) + retryBackoffMs;
+        return (int)Math.Min(15_000, Math.Max(500, timeoutMs));
+    }
+
+    private void NotePendingSpawnProgress(Guid brainId, ulong placementEpoch)
+    {
+        if (_pendingSpawns.TryGetValue(brainId, out var pending)
+            && pending.PlacementEpoch == placementEpoch)
+        {
+            pending.NoteProgress();
+        }
     }
 
     private int ComputePerAssignmentPlacementWindowMs()

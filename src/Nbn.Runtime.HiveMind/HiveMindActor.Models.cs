@@ -225,6 +225,7 @@ public sealed partial class HiveMindActor
             BrainId = brainId;
             PlacementEpoch = placementEpoch;
             DefaultWaitTimeoutMs = Math.Max(50, defaultWaitTimeoutMs);
+            _progressVersion = 1;
         }
 
         public Guid BrainId { get; }
@@ -233,6 +234,9 @@ public sealed partial class HiveMindActor
         public string FailureReasonCode { get; private set; } = "spawn_failed";
         public string FailureMessage { get; private set; } = "Spawn failed before placement completed.";
         public TaskCompletionSource<bool> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int ProgressVersion => Volatile.Read(ref _progressVersion);
+
+        private int _progressVersion;
 
         public void SetFailure(string reasonCode, string failureMessage)
         {
@@ -241,6 +245,9 @@ public sealed partial class HiveMindActor
                 ? "Spawn failed before placement completed."
                 : failureMessage.Trim();
         }
+
+        public void NoteProgress()
+            => Interlocked.Increment(ref _progressVersion);
     }
 
     private readonly record struct PendingSpawnAwaitResult(bool Completed, bool TimedOut);

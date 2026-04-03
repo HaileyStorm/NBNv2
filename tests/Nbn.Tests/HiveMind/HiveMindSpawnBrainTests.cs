@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using System.Diagnostics;
 using System.Reflection;
 using Nbn.Proto;
 using Nbn.Proto.Control;
@@ -403,6 +404,73 @@ public sealed class HiveMindSpawnBrainTests
             Assert.True(placementAck.AcceptedForPlacement);
             Assert.True(placementAck.PlacementReady);
             Assert.True(string.IsNullOrWhiteSpace(placementAck.FailureReasonCode), placementAck.FailureMessage);
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                DeleteDirectoryWithRetries(artifactRoot);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AwaitSpawnPlacement_DefaultRuntimeWait_TimesOutOnIdleProgress_Without_WorstCaseSerialBudget()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var workerProbe = new SpawnPlacementWorkerProbe(
+                workerId,
+                dropAcks: false,
+                autoRespondAssignments: false,
+                acceptBeforeReady: true);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 250,
+                    retryBackoffMs: 20,
+                    maxRetries: 2,
+                    reconcileTimeoutMs: 250))));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef
+                },
+                TimeSpan.FromSeconds(10));
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            Assert.True(spawnAck.AcceptedForPlacement);
+            Assert.False(spawnAck.PlacementReady);
+
+            var started = Stopwatch.StartNew();
+            var waitAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new AwaitSpawnPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    TimeoutMs = 0
+                },
+                TimeSpan.FromSeconds(5));
+            started.Stop();
+
+            Assert.True(waitAck.AcceptedForPlacement);
+            Assert.False(waitAck.PlacementReady);
+            Assert.Equal("spawn_wait_timeout", waitAck.FailureReasonCode);
+            Assert.True(
+                started.Elapsed < TimeSpan.FromSeconds(2),
+                $"Expected idle-progress timeout well below the old worst-case wait budget, but waited {started.Elapsed}.");
 
             await system.ShutdownAsync();
         }
