@@ -107,16 +107,14 @@ public sealed partial class WorkerNodeActor
                 currentBrain.Assignments.Remove(acceptedAssignment.AssignmentId);
                 _assignments.Remove(acceptedAssignment.AssignmentId);
 
-                var detail = completed.Exception?.GetBaseException().Message ?? "placement hosting canceled";
+                var failedAck = BuildPlacementHostingFailedAck(
+                    acceptedAssignment,
+                    completed.Exception?.GetBaseException(),
+                    fallbackDetail: "placement hosting canceled");
                 ReplyPlacementFailure(
                     context,
                     replyTarget,
-                    FailedAck(
-                        acceptedAssignment.AssignmentId,
-                        acceptedAssignment.BrainId,
-                        acceptedAssignment.PlacementEpoch,
-                        PlacementFailureReason.PlacementFailureInternalError,
-                        detail),
+                    failedAck,
                     acceptedAssignment.Target);
                 return Task.CompletedTask;
             }
@@ -999,6 +997,34 @@ public sealed partial class WorkerNodeActor
             RetryAfterMs = retryable ? retryAfterMs : 0
         };
 
+    private static PlacementAssignmentAck BuildPlacementHostingFailedAck(
+        PlacementAssignment assignment,
+        Exception? failure,
+        string fallbackDetail)
+    {
+        if (failure is PlacementHostingFailureException placementFailure)
+        {
+            return FailedAck(
+                assignment.AssignmentId,
+                assignment.BrainId,
+                assignment.PlacementEpoch,
+                placementFailure.FailureReason,
+                placementFailure.Message,
+                placementFailure.Retryable,
+                placementFailure.RetryAfterMs);
+        }
+
+        var detail = string.IsNullOrWhiteSpace(failure?.Message)
+            ? fallbackDetail
+            : failure!.Message;
+        return FailedAck(
+            assignment.AssignmentId,
+            assignment.BrainId,
+            assignment.PlacementEpoch,
+            PlacementFailureReason.PlacementFailureInternalError,
+            detail);
+    }
+
     private static PlacementUnassignmentAck FailedUnassignmentAck(
         string assignmentId,
         Uuid? brainId,
@@ -1122,6 +1148,28 @@ public sealed partial class WorkerNodeActor
         PlacementFailureReason FailureReason,
         string Message,
         PlacementAssignmentTarget Target);
+
+    private sealed class PlacementHostingFailureException : Exception
+    {
+        public PlacementHostingFailureException(
+            PlacementFailureReason failureReason,
+            string message,
+            bool retryable = false,
+            ulong retryAfterMs = 0,
+            Exception? innerException = null)
+            : base(message, innerException)
+        {
+            FailureReason = failureReason;
+            Retryable = retryable;
+            RetryAfterMs = retryable ? retryAfterMs : 0;
+        }
+
+        public PlacementFailureReason FailureReason { get; }
+
+        public bool Retryable { get; }
+
+        public ulong RetryAfterMs { get; }
+    }
 
     private static PID? ResolvePeerLatencyProbePid(PlacementPeerTarget peer)
     {

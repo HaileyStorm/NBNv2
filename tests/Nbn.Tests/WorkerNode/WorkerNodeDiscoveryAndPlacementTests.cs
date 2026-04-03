@@ -1603,6 +1603,208 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     }
 
     [Fact]
+    public async Task PlacementAssignmentRequest_TransientArtifactBackedShardLoadFailure_RetriesAndReturnsReadyAck()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-artifact-load-retry-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+
+            var workerNodeId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var workerName = $"worker-{Guid.NewGuid():N}";
+            var workerPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactStore: new FailFirstTransientArtifactStore(
+                        new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot)),
+                        failuresRemaining: 1,
+                        message: "simulated transient artifact store load failure"))),
+                workerName);
+            var ioPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(CreateIoOptions())),
+                ioName);
+
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var known = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+            {
+                [ServiceEndpointSettings.IoGatewayKey] = new ServiceEndpointRegistration(
+                    ServiceEndpointSettings.IoGatewayKey,
+                    new ServiceEndpoint(string.Empty, ioName),
+                    nowMs)
+            };
+            harness.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var minimalNbn = NbnTestVectors.CreateMinimalNbn();
+            var manifest = await store.StoreAsync(new MemoryStream(minimalNbn), "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var brainId = Guid.NewGuid();
+            harness.Root.Send(ioPid, new Nbn.Proto.Io.RegisterBrain
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 4,
+                OutputWidth = 4,
+                BaseDefinition = brainDef
+            });
+
+            await WaitForAsync(
+                async () =>
+                {
+                    var info = await harness.Root.RequestAsync<Nbn.Proto.Io.BrainInfo>(
+                        ioPid,
+                        new Nbn.Proto.Io.BrainInfoRequest
+                        {
+                            BrainId = brainId.ToProtoUuid()
+                        });
+
+                    return info.BaseDefinition is not null
+                           && info.BaseDefinition.TryToSha256Hex(out var infoSha)
+                           && string.Equals(infoSha, brainDef.ToSha256Hex(), StringComparison.OrdinalIgnoreCase);
+                },
+                timeoutMs: 2_000);
+
+            var ack = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = BuildAssignment(
+                        assignmentId: "assign-artifact-load-retry",
+                        brainId: brainId,
+                        workerNodeId: workerNodeId,
+                        placementEpoch: 1,
+                        regionId: 0,
+                        shardIndex: 0,
+                        target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                        neuronStart: 0,
+                        neuronCount: 2)
+                });
+
+            Assert.True(ack.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, ack.State);
+            Assert.Equal(PlacementFailureReason.PlacementFailureNone, ack.FailureReason);
+
+            var snapshot = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                workerPid,
+                new WorkerNodeActor.GetWorkerNodeSnapshot());
+            Assert.Equal(1, snapshot.TrackedAssignmentCount);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PlacementAssignmentRequest_PersistentTransientArtifactBackedShardLoadFailure_ReturnsRetryableWorkerUnavailableAck()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-artifact-load-unavailable-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+
+            var workerNodeId = Guid.NewGuid();
+            var ioName = $"io-{Guid.NewGuid():N}";
+            var workerName = $"worker-{Guid.NewGuid():N}";
+            var workerPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new WorkerNodeActor(
+                    workerNodeId,
+                    "worker.local",
+                    artifactStore: new AlwaysTransientArtifactStore("simulated transient artifact store load failure"))),
+                workerName);
+            var ioPid = harness.Root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(CreateIoOptions())),
+                ioName);
+
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var known = new Dictionary<string, ServiceEndpointRegistration>(StringComparer.Ordinal)
+            {
+                [ServiceEndpointSettings.IoGatewayKey] = new ServiceEndpointRegistration(
+                    ServiceEndpointSettings.IoGatewayKey,
+                    new ServiceEndpoint(string.Empty, ioName),
+                    nowMs)
+            };
+            harness.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var minimalNbn = NbnTestVectors.CreateMinimalNbn();
+            var manifest = await store.StoreAsync(new MemoryStream(minimalNbn), "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+
+            var brainId = Guid.NewGuid();
+            harness.Root.Send(ioPid, new Nbn.Proto.Io.RegisterBrain
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 4,
+                OutputWidth = 4,
+                BaseDefinition = brainDef
+            });
+
+            await WaitForAsync(
+                async () =>
+                {
+                    var info = await harness.Root.RequestAsync<Nbn.Proto.Io.BrainInfo>(
+                        ioPid,
+                        new Nbn.Proto.Io.BrainInfoRequest
+                        {
+                            BrainId = brainId.ToProtoUuid()
+                        });
+
+                    return info.BaseDefinition is not null
+                           && info.BaseDefinition.TryToSha256Hex(out var infoSha)
+                           && string.Equals(infoSha, brainDef.ToSha256Hex(), StringComparison.OrdinalIgnoreCase);
+                },
+                timeoutMs: 2_000);
+
+            var ack = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = BuildAssignment(
+                        assignmentId: "assign-artifact-load-unavailable",
+                        brainId: brainId,
+                        workerNodeId: workerNodeId,
+                        placementEpoch: 1,
+                        regionId: 0,
+                        shardIndex: 0,
+                        target: PlacementAssignmentTarget.PlacementTargetRegionShard,
+                        neuronStart: 0,
+                        neuronCount: 2)
+                });
+
+            Assert.False(ack.Accepted);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentFailed, ack.State);
+            Assert.True(ack.Retryable);
+            Assert.Equal(PlacementFailureReason.PlacementFailureWorkerUnavailable, ack.FailureReason);
+            Assert.True(ack.RetryAfterMs > 0);
+            Assert.Contains("temporarily unavailable", ack.Message, StringComparison.OrdinalIgnoreCase);
+
+            var snapshot = await harness.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+                workerPid,
+                new WorkerNodeActor.GetWorkerNodeSnapshot());
+            Assert.Equal(0, snapshot.TrackedAssignmentCount);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task PlacementAssignmentRequest_RuntimeMetadataHint_Allows_ArtifactBackedShard_WithoutIoBootstrap()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-metadata-hint-{Guid.NewGuid():N}");
@@ -2729,6 +2931,96 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
 
         public Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
             => throw new InvalidOperationException(_message);
+    }
+
+    private sealed class FailFirstTransientArtifactStore : IArtifactStore
+    {
+        private readonly IArtifactStore _inner;
+        private readonly string _message;
+        private int _failuresRemaining;
+
+        public FailFirstTransientArtifactStore(IArtifactStore inner, int failuresRemaining, string message)
+        {
+            _inner = inner;
+            _failuresRemaining = Math.Max(0, failuresRemaining);
+            _message = string.IsNullOrWhiteSpace(message) ? "artifact store failure" : message;
+        }
+
+        public Task<ArtifactManifest> StoreAsync(
+            Stream content,
+            string mediaType,
+            ArtifactStoreWriteOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => _inner.StoreAsync(content, mediaType, options, cancellationToken);
+
+        public Task<ArtifactManifest?> TryGetManifestAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+        {
+            ThrowIfNeeded();
+            return _inner.TryGetManifestAsync(artifactId, cancellationToken);
+        }
+
+        public Task<bool> ContainsAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+            => _inner.ContainsAsync(artifactId, cancellationToken);
+
+        public Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+        {
+            ThrowIfNeeded();
+            return _inner.TryOpenArtifactAsync(artifactId, cancellationToken);
+        }
+
+        public Task<Stream?> TryOpenArtifactRangeAsync(
+            Sha256Hash artifactId,
+            long offset,
+            long length,
+            CancellationToken cancellationToken = default)
+        {
+            ThrowIfNeeded();
+            return _inner.TryOpenArtifactRangeAsync(artifactId, offset, length, cancellationToken);
+        }
+
+        private void ThrowIfNeeded()
+        {
+            if (_failuresRemaining <= 0)
+            {
+                return;
+            }
+
+            _failuresRemaining--;
+            throw new HttpRequestException(_message);
+        }
+    }
+
+    private sealed class AlwaysTransientArtifactStore : IArtifactStore
+    {
+        private readonly string _message;
+
+        public AlwaysTransientArtifactStore(string message)
+        {
+            _message = string.IsNullOrWhiteSpace(message) ? "artifact store failure" : message;
+        }
+
+        public Task<ArtifactManifest> StoreAsync(
+            Stream content,
+            string mediaType,
+            ArtifactStoreWriteOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new HttpRequestException(_message);
+
+        public Task<ArtifactManifest?> TryGetManifestAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+            => throw new HttpRequestException(_message);
+
+        public Task<bool> ContainsAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+            => throw new HttpRequestException(_message);
+
+        public Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
+            => throw new HttpRequestException(_message);
+
+        public Task<Stream?> TryOpenArtifactRangeAsync(
+            Sha256Hash artifactId,
+            long offset,
+            long length,
+            CancellationToken cancellationToken = default)
+            => throw new HttpRequestException(_message);
     }
 
     private sealed class ExportBrainDefinitionProbeActor : IActor

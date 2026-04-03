@@ -175,7 +175,7 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
-    public async Task SpawnBrainViaIO_EndToEnd_AfterWorkerArtifactLoadFailure_Allows_A_Later_SuccessfulSpawn()
+    public async Task SpawnBrainViaIO_EndToEnd_Retries_TransientWorkerArtifactLoadFailure_And_Succeeds_On_The_Same_Spawn()
     {
         var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
         try
@@ -203,40 +203,25 @@ public class IoGatewayArtifactReferenceTests
             PrimeWorkerDiscoveryEndpoints(root, worker, hiveMind.Id, gateway.Id);
             PrimeWorkers(root, hiveMind, worker, workerNodeId);
 
-            async Task<SpawnBrainViaIOAck> SpawnAsync()
-                => await root.RequestAsync<SpawnBrainViaIOAck>(
-                    gateway,
-                    new SpawnBrainViaIO
+            var response = await root.RequestAsync<SpawnBrainViaIOAck>(
+                gateway,
+                new SpawnBrainViaIO
+                {
+                    Request = new ProtoControl.SpawnBrain
                     {
-                        Request = new ProtoControl.SpawnBrain
-                        {
-                            BrainDef = brainDef
-                        }
-                    },
-                    TimeSpan.FromSeconds(70));
+                        BrainDef = brainDef
+                    }
+                },
+                TimeSpan.FromSeconds(70));
+            Assert.NotNull(response.Ack);
+            Assert.True(response.Ack.BrainId.TryToGuid(out var brainId));
+            Assert.NotEqual(Guid.Empty, brainId);
 
-            var failedResponse = await SpawnAsync();
-            Assert.NotNull(failedResponse.Ack);
-            Assert.True(failedResponse.Ack.BrainId.TryToGuid(out var failedBrainId));
-            Assert.NotEqual(Guid.Empty, failedBrainId);
-
-            var failedWait = await AwaitSpawnPlacementViaIoAsync(root, gateway, failedBrainId);
-            Assert.NotNull(failedWait.Ack);
-            Assert.True(failedWait.Ack.AcceptedForPlacement);
-            Assert.False(failedWait.Ack.PlacementReady);
-            Assert.False(string.IsNullOrWhiteSpace(failedWait.Ack.FailureReasonCode));
-
-            var successfulResponse = await SpawnAsync();
-            Assert.NotNull(successfulResponse.Ack);
-            Assert.True(successfulResponse.Ack.BrainId.TryToGuid(out var successfulBrainId));
-            Assert.NotEqual(Guid.Empty, successfulBrainId);
-            Assert.NotEqual(failedBrainId, successfulBrainId);
-
-            var successfulWait = await AwaitSpawnPlacementViaIoAsync(root, gateway, successfulBrainId);
-            Assert.NotNull(successfulWait.Ack);
-            Assert.True(successfulWait.Ack.AcceptedForPlacement);
-            Assert.True(successfulWait.Ack.PlacementReady);
-            Assert.True(string.IsNullOrWhiteSpace(successfulWait.Ack.FailureReasonCode), successfulWait.Ack.FailureMessage);
+            var wait = await AwaitSpawnPlacementViaIoAsync(root, gateway, brainId);
+            Assert.NotNull(wait.Ack);
+            Assert.True(wait.Ack.AcceptedForPlacement);
+            Assert.True(wait.Ack.PlacementReady);
+            Assert.True(string.IsNullOrWhiteSpace(wait.Ack.FailureReasonCode), wait.Ack.FailureMessage);
 
             await WaitForAsync(
                 async () =>
@@ -245,7 +230,7 @@ public class IoGatewayArtifactReferenceTests
                         hiveMind,
                         new ProtoControl.GetPlacementLifecycle
                         {
-                            BrainId = successfulBrainId.ToProtoUuid()
+                            BrainId = brainId.ToProtoUuid()
                         });
 
                     return lifecycle.LifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned
@@ -2990,20 +2975,39 @@ public class IoGatewayArtifactReferenceTests
             => _inner.StoreAsync(content, mediaType, options, cancellationToken);
 
         public Task<ArtifactManifest?> TryGetManifestAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
-            => _inner.TryGetManifestAsync(artifactId, cancellationToken);
+        {
+            ThrowIfNeeded();
+            return _inner.TryGetManifestAsync(artifactId, cancellationToken);
+        }
 
         public Task<bool> ContainsAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
             => _inner.ContainsAsync(artifactId, cancellationToken);
 
         public Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
         {
-            if (_failuresRemaining > 0)
+            ThrowIfNeeded();
+            return _inner.TryOpenArtifactAsync(artifactId, cancellationToken);
+        }
+
+        public Task<Stream?> TryOpenArtifactRangeAsync(
+            Sha256Hash artifactId,
+            long offset,
+            long length,
+            CancellationToken cancellationToken = default)
+        {
+            ThrowIfNeeded();
+            return _inner.TryOpenArtifactRangeAsync(artifactId, offset, length, cancellationToken);
+        }
+
+        private void ThrowIfNeeded()
+        {
+            if (_failuresRemaining <= 0)
             {
-                _failuresRemaining--;
-                throw new InvalidOperationException(_message);
+                return;
             }
 
-            return _inner.TryOpenArtifactAsync(artifactId, cancellationToken);
+            _failuresRemaining--;
+            throw new HttpRequestException(_message);
         }
     }
 

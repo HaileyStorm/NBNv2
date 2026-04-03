@@ -63,7 +63,9 @@ public sealed partial class WorkerNodeActor : IActor
         _workerAddress = workerAddress ?? string.Empty;
         _defaultArtifactRootPath = ResolveArtifactRoot(artifactRootPath);
         _artifactStore = artifactStore ?? new LocalArtifactStore(new ArtifactStoreOptions(_defaultArtifactRootPath));
-        _artifactStoreResolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(_defaultArtifactRootPath));
+        _artifactStoreResolver = new ArtifactStoreResolver(new ArtifactStoreResolverOptions(
+            _defaultArtifactRootPath,
+            ResolveWorkerArtifactCacheRoot(_defaultArtifactRootPath, workerNodeId)));
         _enabledRoles = WorkerServiceRoles.Sanitize(enabledRoles);
         _capabilityProfileChanged = capabilityProfileChanged;
         _capabilitySnapshotProvider = capabilitySnapshotProvider;
@@ -73,6 +75,20 @@ public sealed partial class WorkerNodeActor : IActor
             : observabilityDefaultHost.Trim();
         _debugStreamEnabledDefault = ResolveDebugStreamEnabled(defaultValue: false);
         _debugMinSeverityDefault = ResolveDebugMinSeverity(Severity.SevDebug);
+    }
+
+    private static string ResolveWorkerArtifactCacheRoot(string defaultArtifactRootPath, Guid workerNodeId)
+    {
+        var configuredCacheRoot = Environment.GetEnvironmentVariable("NBN_ARTIFACT_CACHE_ROOT");
+        if (!string.IsNullOrWhiteSpace(configuredCacheRoot))
+        {
+            return configuredCacheRoot.Trim();
+        }
+
+        return Path.Combine(
+            ArtifactStoreResolverOptions.ResolveCacheRootPath(defaultArtifactRootPath),
+            "workers",
+            workerNodeId.ToString("N"));
     }
 
     /// <summary>

@@ -12,12 +12,27 @@ namespace Nbn.Runtime.WorkerNode;
 
 public sealed partial class WorkerNodeActor
 {
+    private static readonly int ArtifactLoadMaxAttempts = 3;
+    private static readonly TimeSpan ArtifactLoadRetryDelay = TimeSpan.FromMilliseconds(100);
+    private static readonly ulong ArtifactLoadRetryAfterMs = 250;
+
     private async Task<HostingResult> HostRegionShardAsync(IContext context, BrainHostingState brain, PlacementAssignment assignment)
     {
         try
         {
             var prepared = await PrepareRegionShardHostingAsync(context, brain, assignment).ConfigureAwait(false);
             return CompletePreparedRegionShardHosting(context, brain, prepared);
+        }
+        catch (PlacementHostingFailureException ex)
+        {
+            return HostingResult.Failed(FailedAck(
+                assignment.AssignmentId,
+                assignment.BrainId,
+                assignment.PlacementEpoch,
+                ex.FailureReason,
+                ex.Message,
+                ex.Retryable,
+                ex.RetryAfterMs));
         }
         catch (Exception ex)
         {
@@ -126,15 +141,21 @@ public sealed partial class WorkerNodeActor
             }
             try
             {
-                return await RegionShardArtifactLoader.CreatePropsAsync(
-                    artifactStore,
-                    nbnRef,
-                    nbsRef,
-                    checked((int)assignment.RegionId),
-                    neuronStart,
-                    neuronCount,
-                    config,
-                    brain.BrainId).ConfigureAwait(false);
+                return await CreateRegionShardPropsWithRetriesAsync(
+                        artifactStore,
+                        nbnRef,
+                        nbsRef,
+                        assignment,
+                        neuronStart,
+                        neuronCount,
+                        config,
+                        brain,
+                        brain.BrainId)
+                    .ConfigureAwait(false);
+            }
+            catch (PlacementHostingFailureException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -154,6 +175,84 @@ public sealed partial class WorkerNodeActor
 
         var state = BuildSyntheticRegionState(brain, assignment, neuronStart, neuronCount);
         return Props.FromProducer(() => new RegionShardActor(state, config));
+    }
+
+    private static async Task<Props> CreateRegionShardPropsWithRetriesAsync(
+        IArtifactStore artifactStore,
+        ArtifactRef nbnRef,
+        ArtifactRef? nbsRef,
+        PlacementAssignment assignment,
+        int neuronStart,
+        int neuronCount,
+        RegionShardActorConfig config,
+        BrainHostingState brain,
+        Guid expectedBrainId)
+    {
+        Exception? lastFailure = null;
+        for (var attempt = 1; attempt <= ArtifactLoadMaxAttempts; attempt++)
+        {
+            try
+            {
+                return await RegionShardArtifactLoader.CreatePropsAsync(
+                        artifactStore,
+                        nbnRef,
+                        nbsRef,
+                        checked((int)assignment.RegionId),
+                        neuronStart,
+                        neuronCount,
+                        config,
+                        expectedBrainId)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsRetryableArtifactLoadFailure(ex, nbnRef, nbsRef))
+            {
+                lastFailure = ex;
+                var detail = ex.GetBaseException().Message;
+                brain.RuntimeInfo!.LastArtifactLoadError = detail;
+                Console.WriteLine(
+                    $"[WorkerNode][WARN] Transient artifact-backed shard load failure. brain={brain.BrainId} assignment={assignment.AssignmentId} region={assignment.RegionId} shard={assignment.ShardIndex} attempt={attempt}/{ArtifactLoadMaxAttempts} detail={detail}");
+                if (attempt < ArtifactLoadMaxAttempts)
+                {
+                    await Task.Delay(ArtifactLoadRetryDelay).ConfigureAwait(false);
+                    continue;
+                }
+
+                throw new PlacementHostingFailureException(
+                    PlacementFailureReason.PlacementFailureWorkerUnavailable,
+                    $"Artifact-backed shard load temporarily unavailable for brain {brain.BrainId} region {assignment.RegionId} shard {assignment.ShardIndex}: {detail}",
+                    retryable: true,
+                    retryAfterMs: ArtifactLoadRetryAfterMs,
+                    ex);
+            }
+        }
+
+        throw lastFailure ?? new InvalidOperationException("artifact-backed shard load failed without a captured exception");
+    }
+
+    private static bool IsRetryableArtifactLoadFailure(Exception ex, ArtifactRef nbnRef, ArtifactRef? nbsRef)
+    {
+        var root = ex.GetBaseException();
+        var remoteBacked = ArtifactStoreResolver.IsNonFileStoreUri(nbnRef.StoreUri)
+            || (nbsRef is not null && ArtifactStoreResolver.IsNonFileStoreUri(nbsRef.StoreUri));
+        if (root is HttpRequestException or TimeoutException or TaskCanceledException)
+        {
+            return true;
+        }
+
+        if (root is IOException)
+        {
+            return remoteBacked;
+        }
+
+        var message = root.Message;
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        return remoteBacked
+               && (message.Contains("Artifact store request to '", StringComparison.OrdinalIgnoreCase)
+                   || message.Contains("could not be opened from source store", StringComparison.OrdinalIgnoreCase));
     }
 
     private RegionShardComputeBackendPreference ResolveComputeBackendPreference(PlacementAssignment assignment)
