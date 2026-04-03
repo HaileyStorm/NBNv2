@@ -30,7 +30,7 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private const long WorkerRemoveAfterMs = 120000;
     private const long SpawnVisibilityGraceMs = 30000;
     private const long WorkerBrainBackendProbeCacheMs = 15000;
-    private const float LocalDefaultTickHz = 8f;
+    private const float LocalDefaultTickHz = 40f;
     private const float LocalDefaultMinTickHz = 2f;
     private const int LocalDefaultWorkerStorageLimitPercent = 95;
     private static readonly bool EnableRuntimeDiagnostics = IsEnvTrue("NBN_WORKBENCH_RUNTIME_DIAGNOSTICS_ENABLED");
