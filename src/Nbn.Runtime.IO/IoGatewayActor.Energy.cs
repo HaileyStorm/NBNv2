@@ -240,6 +240,57 @@ public sealed partial class IoGatewayActor
         RespondCommandAck(context, message.BrainId, "set_homeostasis", success: true, ackMessage, entry);
     }
 
+    private async Task HandleSynchronizeBrainRuntimeConfigAsync(IContext context, SynchronizeBrainRuntimeConfig message)
+    {
+        if (!TryGetBrainId(message.BrainId, out var brainId))
+        {
+            RespondCommandAck(context, message.BrainId, "sync_brain_runtime_config", success: false, "invalid_brain_id");
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var entry))
+        {
+            RespondCommandAck(context, message.BrainId, "sync_brain_runtime_config", success: false, "brain_not_found");
+            return;
+        }
+
+        if (_hiveMindPid is null)
+        {
+            RespondCommandAck(context, message.BrainId, "sync_brain_runtime_config", success: false, "hivemind_unavailable", entry);
+            return;
+        }
+
+        try
+        {
+            var ack = await context.RequestAsync<IoCommandAck>(
+                    _hiveMindPid,
+                    new ProtoControl.SynchronizeBrainRuntimeConfig
+                    {
+                        BrainId = message.BrainId.Clone()
+                    },
+                    DefaultRequestTimeout)
+                .ConfigureAwait(false);
+            if (ack is null)
+            {
+                RespondCommandAck(context, message.BrainId, "sync_brain_runtime_config", success: false, "empty_response", entry);
+                return;
+            }
+
+            context.Respond(ack);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SynchronizeBrainRuntimeConfig failed: {ex.Message}");
+            RespondCommandAck(
+                context,
+                message.BrainId,
+                "sync_brain_runtime_config",
+                success: false,
+                $"request_failed:{ex.GetBaseException().Message}",
+                entry);
+        }
+    }
+
     private void ApplyTickCost(IContext context, ApplyTickCost message)
     {
         if (!_brains.TryGetValue(message.BrainId, out var entry))

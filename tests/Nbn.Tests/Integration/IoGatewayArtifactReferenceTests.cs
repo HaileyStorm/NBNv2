@@ -886,6 +886,45 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task SynchronizeBrainRuntimeConfig_Forwards_To_HiveMind_And_Passes_IoCommandAck()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var forwarded = new TaskCompletionSource<ProtoControl.SynchronizeBrainRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveRuntimeConfigSyncProbe(forwarded)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1
+        });
+
+        var response = await root.RequestAsync<IoCommandAck>(
+            gateway,
+            new SynchronizeBrainRuntimeConfig
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+
+        Assert.True(response.Success);
+        Assert.Equal("sync_brain_runtime_config", response.Command);
+        Assert.Equal("applied_shards=3", response.Message);
+        Assert.NotNull(response.BrainId);
+        Assert.True(response.BrainId.TryToGuid(out var acknowledgedBrainId));
+        Assert.Equal(brainId, acknowledgedBrainId);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var request = await forwarded.Task.WaitAsync(cts.Token);
+        Assert.True(request.BrainId.TryToGuid(out var forwardedBrainId));
+        Assert.Equal(brainId, forwardedBrainId);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SetOutputVectorSource_Returns_Actionable_Failure_When_HiveMind_Is_Unavailable()
     {
         var system = new ActorSystem();
@@ -3545,6 +3584,38 @@ public class IoGatewayArtifactReferenceTests
                         Message = _accepted ? "applied" : "rejected",
                         OutputVectorSource = message.OutputVectorSource,
                         BrainId = message.BrainId?.Clone()
+                    });
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class HiveRuntimeConfigSyncProbe : IActor
+    {
+        private readonly TaskCompletionSource<ProtoControl.SynchronizeBrainRuntimeConfig> _request;
+
+        public HiveRuntimeConfigSyncProbe(TaskCompletionSource<ProtoControl.SynchronizeBrainRuntimeConfig> request)
+        {
+            _request = request;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoControl.GetBrainRouting:
+                    context.Respond(new ProtoControl.BrainRoutingInfo());
+                    break;
+                case ProtoControl.SynchronizeBrainRuntimeConfig message:
+                    _request.TrySetResult(message);
+                    context.Respond(new IoCommandAck
+                    {
+                        BrainId = message.BrainId?.Clone(),
+                        Command = "sync_brain_runtime_config",
+                        Success = true,
+                        Message = "applied_shards=3"
                     });
                     break;
             }

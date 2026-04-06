@@ -30,6 +30,9 @@ public sealed partial class HiveMindActor
             case RequestBrainRuntimeReset message:
                 HandleRequestBrainRuntimeReset(context, message);
                 return true;
+            case ProtoControl.SynchronizeBrainRuntimeConfig message:
+                HandleSynchronizeBrainRuntimeConfig(context, message);
+                return true;
             case GetBrainRouting message:
                 context.Respond(BuildRoutingInfo(message.BrainId));
                 return true;
@@ -547,47 +550,87 @@ public sealed partial class HiveMindActor
 
     private void UpdateShardRuntimeConfig(IContext context, BrainState brain)
     {
-        var effectiveCostEnergyEnabled = ResolveEffectiveCostEnergyEnabled(brain);
-        var effectivePlasticityEnabled = ResolveEffectivePlasticityEnabled(brain);
-        var effectivePlasticityDelta = ResolvePlasticityDelta(brain.PlasticityRate, brain.PlasticityDelta);
         foreach (var entry in brain.Shards)
         {
-            SendShardRuntimeConfigUpdate(
-                context,
-                brain.BrainId,
-                entry.Key,
-                entry.Value,
-                effectiveCostEnergyEnabled,
-                effectiveCostEnergyEnabled,
-                effectivePlasticityEnabled,
-                brain.PlasticityRate,
-                brain.PlasticityProbabilisticUpdates,
-                effectivePlasticityDelta,
-                brain.PlasticityRebaseThreshold,
-                brain.PlasticityRebaseThresholdPct,
-                brain.PlasticityEnergyCostModulationEnabled,
-                brain.PlasticityEnergyCostReferenceTickCost,
-                brain.PlasticityEnergyCostResponseStrength,
-                brain.PlasticityEnergyCostMinScale,
-                brain.PlasticityEnergyCostMaxScale,
-                brain.HomeostasisEnabled,
-                brain.HomeostasisTargetMode,
-                brain.HomeostasisUpdateMode,
-                brain.HomeostasisBaseProbability,
-                brain.HomeostasisMinStepCodes,
-                brain.HomeostasisEnergyCouplingEnabled,
-                brain.HomeostasisEnergyTargetScale,
-                brain.HomeostasisEnergyProbabilityScale,
-                _remoteCostEnabled,
-                _remoteCostPerBatch,
-                _remoteCostPerContribution,
-                _costTierAMultiplier,
-                _costTierBMultiplier,
-                _costTierCMultiplier,
-                brain.OutputVectorSource,
-                _debugStreamEnabled,
-                _debugMinSeverity);
+            SendShardRuntimeConfigUpdate(context, entry.Key, entry.Value, CreateShardRuntimeConfigUpdate(brain, entry.Key));
         }
+    }
+
+    private void HandleSynchronizeBrainRuntimeConfig(IContext context, ProtoControl.SynchronizeBrainRuntimeConfig message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            context.Respond(CreateRuntimeConfigSyncAck(Guid.Empty, success: false, "invalid_brain_id"));
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            context.Respond(CreateRuntimeConfigSyncAck(brainId, success: false, "brain_not_registered"));
+            return;
+        }
+
+        if (!brain.Paused)
+        {
+            context.Respond(CreateRuntimeConfigSyncAck(brainId, success: false, "brain_not_paused"));
+            return;
+        }
+
+        context.ReenterAfter(SynchronizeBrainRuntimeConfigAsync(context, brain), completed =>
+        {
+            if (completed.IsCompletedSuccessfully)
+            {
+                context.Respond(completed.Result);
+                return;
+            }
+
+            var failure = completed.Exception?.GetBaseException().Message ?? "runtime_config_sync_failed";
+            context.Respond(CreateRuntimeConfigSyncAck(brain.BrainId, success: false, $"runtime_config_sync_failed:{failure}"));
+        });
+    }
+
+    private async Task<ProtoIo.IoCommandAck> SynchronizeBrainRuntimeConfigAsync(IContext context, BrainState brain)
+    {
+        if (brain.Shards.Count == 0)
+        {
+            return CreateRuntimeConfigSyncAck(brain.BrainId, success: false, "no_region_shards");
+        }
+
+        var syncTasks = brain.Shards
+            .Select(async entry =>
+            {
+                var update = CreateShardRuntimeConfigUpdate(brain, entry.Key);
+                var ack = await context.RequestAsync<ProtoControl.UpdateShardRuntimeConfigAck>(
+                        entry.Value,
+                        update,
+                        RuntimeConfigSyncTimeout)
+                    .ConfigureAwait(false);
+                return (ShardId: entry.Key, Ack: ack);
+            })
+            .ToArray();
+
+        var results = await Task.WhenAll(syncTasks).ConfigureAwait(false);
+        foreach (var result in results)
+        {
+            if (result.Ack is null)
+            {
+                return CreateRuntimeConfigSyncAck(
+                    brain.BrainId,
+                    success: false,
+                    $"runtime_config_sync_empty_response:region={result.ShardId.RegionId}:shard={result.ShardId.ShardIndex}");
+            }
+
+            if (!result.Ack.Success)
+            {
+                var failure = string.IsNullOrWhiteSpace(result.Ack.Message) ? "rejected" : result.Ack.Message;
+                return CreateRuntimeConfigSyncAck(
+                    brain.BrainId,
+                    success: false,
+                    $"runtime_config_sync_failed:region={result.ShardId.RegionId}:shard={result.ShardId.ShardIndex}:{failure}");
+            }
+        }
+
+        return CreateRuntimeConfigSyncAck(brain.BrainId, success: true, $"applied_shards={results.Length}");
     }
 
     private void RegisterBrainWithIo(IContext context, BrainState brain, bool force = false)
@@ -795,84 +838,71 @@ public sealed partial class HiveMindActor
 
     private static void SendShardRuntimeConfigUpdate(
         IContext context,
-        Guid brainId,
         ShardId32 shardId,
         PID shardPid,
-        bool costEnabled,
-        bool energyEnabled,
-        bool plasticityEnabled,
-        float plasticityRate,
-        bool plasticityProbabilisticUpdates,
-        float plasticityDelta,
-        uint plasticityRebaseThreshold,
-        float plasticityRebaseThresholdPct,
-        bool plasticityEnergyCostModulationEnabled,
-        long plasticityEnergyCostReferenceTickCost,
-        float plasticityEnergyCostResponseStrength,
-        float plasticityEnergyCostMinScale,
-        float plasticityEnergyCostMaxScale,
-        bool homeostasisEnabled,
-        ProtoControl.HomeostasisTargetMode homeostasisTargetMode,
-        ProtoControl.HomeostasisUpdateMode homeostasisUpdateMode,
-        float homeostasisBaseProbability,
-        uint homeostasisMinStepCodes,
-        bool homeostasisEnergyCouplingEnabled,
-        float homeostasisEnergyTargetScale,
-        float homeostasisEnergyProbabilityScale,
-        bool remoteCostEnabled,
-        long remoteCostPerBatch,
-        long remoteCostPerContribution,
-        float costTierAMultiplier,
-        float costTierBMultiplier,
-        float costTierCMultiplier,
-        ProtoControl.OutputVectorSource outputVectorSource,
-        bool debugEnabled,
-        ProtoSeverity debugMinSeverity)
+        ProtoControl.UpdateShardRuntimeConfig update)
     {
         try
         {
-            context.Send(shardPid, new ProtoControl.UpdateShardRuntimeConfig
-            {
-                BrainId = brainId.ToProtoUuid(),
-                RegionId = (uint)shardId.RegionId,
-                ShardIndex = (uint)shardId.ShardIndex,
-                CostEnabled = costEnabled,
-                EnergyEnabled = energyEnabled,
-                PlasticityEnabled = plasticityEnabled,
-                PlasticityRate = plasticityRate,
-                ProbabilisticUpdates = plasticityProbabilisticUpdates,
-                PlasticityDelta = plasticityDelta,
-                PlasticityRebaseThreshold = plasticityRebaseThreshold,
-                PlasticityRebaseThresholdPct = plasticityRebaseThresholdPct,
-                PlasticityEnergyCostModulationEnabled = plasticityEnergyCostModulationEnabled,
-                PlasticityEnergyCostReferenceTickCost = plasticityEnergyCostReferenceTickCost,
-                PlasticityEnergyCostResponseStrength = plasticityEnergyCostResponseStrength,
-                PlasticityEnergyCostMinScale = plasticityEnergyCostMinScale,
-                PlasticityEnergyCostMaxScale = plasticityEnergyCostMaxScale,
-                HomeostasisEnabled = homeostasisEnabled,
-                HomeostasisTargetMode = homeostasisTargetMode,
-                HomeostasisUpdateMode = homeostasisUpdateMode,
-                HomeostasisBaseProbability = homeostasisBaseProbability,
-                HomeostasisMinStepCodes = homeostasisMinStepCodes,
-                HomeostasisEnergyCouplingEnabled = homeostasisEnergyCouplingEnabled,
-                HomeostasisEnergyTargetScale = homeostasisEnergyTargetScale,
-                HomeostasisEnergyProbabilityScale = homeostasisEnergyProbabilityScale,
-                RemoteCostEnabled = remoteCostEnabled,
-                RemoteCostPerBatch = remoteCostPerBatch,
-                RemoteCostPerContribution = remoteCostPerContribution,
-                CostTierAMultiplier = costTierAMultiplier,
-                CostTierBMultiplier = costTierBMultiplier,
-                CostTierCMultiplier = costTierCMultiplier,
-                OutputVectorSource = outputVectorSource,
-                DebugEnabled = debugEnabled,
-                DebugMinSeverity = debugMinSeverity
-            });
+            context.Send(shardPid, update);
         }
         catch (Exception ex)
         {
             LogError($"Failed to update shard runtime config for shard {shardId}: {ex.Message}");
         }
     }
+
+    private ProtoControl.UpdateShardRuntimeConfig CreateShardRuntimeConfigUpdate(BrainState brain, ShardId32 shardId)
+    {
+        var effectiveCostEnergyEnabled = ResolveEffectiveCostEnergyEnabled(brain);
+        var effectivePlasticityEnabled = ResolveEffectivePlasticityEnabled(brain);
+        var effectivePlasticityDelta = ResolvePlasticityDelta(brain.PlasticityRate, brain.PlasticityDelta);
+        return new ProtoControl.UpdateShardRuntimeConfig
+        {
+            BrainId = brain.BrainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            CostEnabled = effectiveCostEnergyEnabled,
+            EnergyEnabled = effectiveCostEnergyEnabled,
+            PlasticityEnabled = effectivePlasticityEnabled,
+            PlasticityRate = brain.PlasticityRate,
+            ProbabilisticUpdates = brain.PlasticityProbabilisticUpdates,
+            PlasticityDelta = effectivePlasticityDelta,
+            PlasticityRebaseThreshold = brain.PlasticityRebaseThreshold,
+            PlasticityRebaseThresholdPct = brain.PlasticityRebaseThresholdPct,
+            PlasticityEnergyCostModulationEnabled = brain.PlasticityEnergyCostModulationEnabled,
+            PlasticityEnergyCostReferenceTickCost = brain.PlasticityEnergyCostReferenceTickCost,
+            PlasticityEnergyCostResponseStrength = brain.PlasticityEnergyCostResponseStrength,
+            PlasticityEnergyCostMinScale = brain.PlasticityEnergyCostMinScale,
+            PlasticityEnergyCostMaxScale = brain.PlasticityEnergyCostMaxScale,
+            HomeostasisEnabled = brain.HomeostasisEnabled,
+            HomeostasisTargetMode = brain.HomeostasisTargetMode,
+            HomeostasisUpdateMode = brain.HomeostasisUpdateMode,
+            HomeostasisBaseProbability = brain.HomeostasisBaseProbability,
+            HomeostasisMinStepCodes = brain.HomeostasisMinStepCodes,
+            HomeostasisEnergyCouplingEnabled = brain.HomeostasisEnergyCouplingEnabled,
+            HomeostasisEnergyTargetScale = brain.HomeostasisEnergyTargetScale,
+            HomeostasisEnergyProbabilityScale = brain.HomeostasisEnergyProbabilityScale,
+            RemoteCostEnabled = _remoteCostEnabled,
+            RemoteCostPerBatch = _remoteCostPerBatch,
+            RemoteCostPerContribution = _remoteCostPerContribution,
+            CostTierAMultiplier = _costTierAMultiplier,
+            CostTierBMultiplier = _costTierBMultiplier,
+            CostTierCMultiplier = _costTierCMultiplier,
+            OutputVectorSource = brain.OutputVectorSource,
+            DebugEnabled = _debugStreamEnabled,
+            DebugMinSeverity = _debugMinSeverity
+        };
+    }
+
+    private static ProtoIo.IoCommandAck CreateRuntimeConfigSyncAck(Guid brainId, bool success, string message)
+        => new()
+        {
+            BrainId = brainId == Guid.Empty ? null : brainId.ToProtoUuid(),
+            Command = "sync_brain_runtime_config",
+            Success = success,
+            Message = message ?? string.Empty
+        };
 
 
 }

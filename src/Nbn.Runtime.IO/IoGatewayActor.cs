@@ -107,6 +107,9 @@ public sealed partial class IoGatewayActor : IActor
                 case SetOutputVectorSource message:
                     await HandleSetOutputVectorSourceAsync(context, message);
                     break;
+                case SynchronizeBrainRuntimeConfig message:
+                    await HandleSynchronizeBrainRuntimeConfigAsync(context, message);
+                    break;
                 case BrainInfoRequest message:
                     await HandleBrainInfoAsync(context, message);
                     break;

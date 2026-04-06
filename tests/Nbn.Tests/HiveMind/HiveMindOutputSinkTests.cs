@@ -884,7 +884,7 @@ public class HiveMindOutputSinkTests
 
         var firstUpdate = new TaskCompletionSource<UpdateShardVisualization>(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondUpdate = new TaskCompletionSource<UpdateShardVisualization>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var shardId = ShardId32.From(13, 0);
+        var shardId = ShardId32.From(NbnConstants.OutputRegionId, 0);
         var shardPid = root.Spawn(Props.FromProducer(() => new VisualizationProbe(shardId, firstUpdate, secondUpdate)));
 
         await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
@@ -1458,6 +1458,113 @@ public class HiveMindOutputSinkTests
         Assert.Equal(1.3f, newShardUpdate.HomeostasisEnergyProbabilityScale);
         Assert.True(newShardUpdate.DebugEnabled);
         Assert.Equal(Nbn.Proto.Severity.SevDebug, newShardUpdate.DebugMinSeverity);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SynchronizeBrainRuntimeConfig_WaitsForShardAcks()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        const string ioGatewayName = "io-gateway";
+        var trustedIoPid = new PID(string.Empty, ioGatewayName);
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions(), ioPid: trustedIoPid)));
+        var gateway = root.SpawnNamed(
+            Props.FromProducer(() => new IoGatewayActor(CreateIoOptions(ioGatewayName), hiveMindPid: hiveMind)),
+            ioGatewayName);
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var inputShardId = ShardId32.From(NbnConstants.InputRegionId, 0);
+        var inputUpdate = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inputShardPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(
+            inputShardId,
+            inputUpdate,
+            _ => true)));
+
+        await root.RequestAsync<SendMessageAck>(inputShardPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)inputShardId.RegionId,
+            ShardIndex = (uint)inputShardId.ShardIndex,
+            ShardPid = PidLabel(inputShardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        var shardId = ShardId32.From(NbnConstants.OutputRegionId, 0);
+        var initialUpdate = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var syncedUpdate = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(
+            shardId,
+            initialUpdate,
+            _ => true,
+            syncedUpdate,
+            _ => true,
+            responseDelay: TimeSpan.FromMilliseconds(200))));
+
+        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await inputUpdate.Task.WaitAsync(cts.Token);
+        await initialUpdate.Task.WaitAsync(cts.Token);
+        while (true)
+        {
+            var info = await root.RequestAsync<ProtoIo.BrainInfo>(
+                gateway,
+                new ProtoIo.BrainInfoRequest
+                {
+                    BrainId = brainId.ToProtoUuid()
+                },
+                cancellationToken: cts.Token);
+            if (info.InputWidth > 0 && info.OutputWidth > 0)
+            {
+                break;
+            }
+
+            await Task.Delay(25, cts.Token);
+        }
+
+        var pauseAck = await root.RequestAsync<ProtoIo.IoCommandAck>(
+            gateway,
+            new PauseBrain
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Reason = "sync_runtime_config_test"
+            },
+            cancellationToken: cts.Token);
+        Assert.True(pauseAck.Success);
+
+        var stopwatch = Stopwatch.StartNew();
+        var ack = await root.RequestAsync<ProtoIo.IoCommandAck>(
+            gateway,
+            new ProtoIo.SynchronizeBrainRuntimeConfig
+            {
+                BrainId = brainId.ToProtoUuid()
+            },
+            cancellationToken: cts.Token);
+        stopwatch.Stop();
+
+        Assert.True(ack.Success, $"Expected sync success but got command={ack.Command} message={ack.Message}");
+        Assert.Equal("sync_brain_runtime_config", ack.Command);
+        Assert.Equal("applied_shards=2", ack.Message);
+        Assert.True(stopwatch.Elapsed >= TimeSpan.FromMilliseconds(150), $"Expected sync to wait for shard ack, elapsed={stopwatch.Elapsed}.");
+        await syncedUpdate.Task.WaitAsync(cts.Token);
 
         await system.ShutdownAsync();
     }
@@ -2539,38 +2646,41 @@ public class HiveMindOutputSinkTests
         private readonly Func<UpdateShardRuntimeConfig, bool> _firstPredicate;
         private readonly TaskCompletionSource<UpdateShardRuntimeConfig>? _second;
         private readonly Func<UpdateShardRuntimeConfig, bool>? _secondPredicate;
+        private readonly TimeSpan _responseDelay;
 
         public RuntimeConfigProbe(
             ShardId32 shardId,
             TaskCompletionSource<UpdateShardRuntimeConfig> first,
             Func<UpdateShardRuntimeConfig, bool> firstPredicate,
             TaskCompletionSource<UpdateShardRuntimeConfig>? second = null,
-            Func<UpdateShardRuntimeConfig, bool>? secondPredicate = null)
+            Func<UpdateShardRuntimeConfig, bool>? secondPredicate = null,
+            TimeSpan? responseDelay = null)
         {
             _shardId = shardId;
             _first = first;
             _firstPredicate = firstPredicate;
             _second = second;
             _secondPredicate = secondPredicate;
+            _responseDelay = responseDelay ?? TimeSpan.Zero;
         }
 
-        public Task ReceiveAsync(IContext context)
+        public async Task ReceiveAsync(IContext context)
         {
             if (context.Message is SendMessage send)
             {
                 context.Request(send.Target, send.Message);
                 context.Respond(new SendMessageAck());
-                return Task.CompletedTask;
+                return;
             }
 
             if (context.Message is not UpdateShardRuntimeConfig update)
             {
-                return Task.CompletedTask;
+                return;
             }
 
             if (update.RegionId != (uint)_shardId.RegionId || update.ShardIndex != (uint)_shardId.ShardIndex)
             {
-                return Task.CompletedTask;
+                return;
             }
 
             if (!_first.Task.IsCompleted && _firstPredicate(update))
@@ -2583,7 +2693,22 @@ public class HiveMindOutputSinkTests
                 _second.TrySetResult(update);
             }
 
-            return Task.CompletedTask;
+            if (_responseDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(_responseDelay);
+            }
+
+            if (context.Sender is not null)
+            {
+                context.Respond(new UpdateShardRuntimeConfigAck
+                {
+                    BrainId = update.BrainId?.Clone(),
+                    RegionId = update.RegionId,
+                    ShardIndex = update.ShardIndex,
+                    Success = true,
+                    Message = "applied"
+                });
+            }
         }
     }
 

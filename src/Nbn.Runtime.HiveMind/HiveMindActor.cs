@@ -74,6 +74,7 @@ public sealed partial class HiveMindActor : IActor
         BindingFlags.Instance | BindingFlags.Public);
     private static readonly MethodInfo? ProcessRegistryLookupMethod = ResolveProcessRegistryLookupMethod();
     private static readonly TimeSpan SnapshotShardRequestTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan RuntimeConfigSyncTimeout = TimeSpan.FromSeconds(5);
     private static readonly QuantizationMap SnapshotBufferQuantization = QuantizationSchemas.DefaultBuffer;
     private static readonly TimeSpan PlacementPeerLatencyRefreshInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan PlacementPeerLatencyProbeTimeout = TimeSpan.FromMilliseconds(250);

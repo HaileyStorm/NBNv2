@@ -147,7 +147,7 @@ public sealed partial class RegionShardActor : IActor
                 HandleUpdateVisualization(message);
                 break;
             case UpdateShardRuntimeConfig message:
-                HandleUpdateRuntimeConfig(message);
+                HandleUpdateRuntimeConfig(context, message);
                 break;
             case CaptureShardSnapshot message:
                 HandleCaptureShardSnapshot(context, message);

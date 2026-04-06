@@ -41,10 +41,11 @@ public sealed partial class RegionShardActor
         LogVisualizationConfigUpdate();
     }
 
-    private void HandleUpdateRuntimeConfig(UpdateShardRuntimeConfig message)
+    private void HandleUpdateRuntimeConfig(IContext context, UpdateShardRuntimeConfig message)
     {
         if (!MatchesShardMessage(message.BrainId, message.RegionId, message.ShardIndex))
         {
+            RespondRuntimeConfigAck(context, message, success: false, "shard_mismatch");
             return;
         }
 
@@ -52,6 +53,7 @@ public sealed partial class RegionShardActor
         ApplyPlasticityConfig(message);
         ApplyHomeostasisConfig(message);
         ApplyObservabilityConfig(message);
+        RespondRuntimeConfigAck(context, message, success: true, "applied");
     }
 
     private void SetOutputSink(PID? outputSink, string? rawPid)
@@ -209,5 +211,26 @@ public sealed partial class RegionShardActor
         }
 
         return string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+    }
+
+    private static void RespondRuntimeConfigAck(
+        IContext context,
+        UpdateShardRuntimeConfig message,
+        bool success,
+        string status)
+    {
+        if (context.Sender is null)
+        {
+            return;
+        }
+
+        context.Respond(new UpdateShardRuntimeConfigAck
+        {
+            BrainId = message.BrainId?.Clone(),
+            RegionId = message.RegionId,
+            ShardIndex = message.ShardIndex,
+            Success = success,
+            Message = status ?? string.Empty
+        });
     }
 }

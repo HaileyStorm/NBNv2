@@ -260,44 +260,7 @@ public sealed partial class HiveMindActor
             brain.VisualizationEnabled,
             brain.VisualizationFocusRegionId,
             _vizStreamMinIntervalMs);
-        var effectiveCostEnergyEnabled = ResolveEffectiveCostEnergyEnabled(brain);
-        var effectivePlasticityEnabled = ResolveEffectivePlasticityEnabled(brain);
-        var effectivePlasticityDelta = ResolvePlasticityDelta(brain.PlasticityRate, brain.PlasticityDelta);
-        SendShardRuntimeConfigUpdate(
-            context,
-            brainId,
-            shardId,
-            normalized,
-            effectiveCostEnergyEnabled,
-            effectiveCostEnergyEnabled,
-            effectivePlasticityEnabled,
-            brain.PlasticityRate,
-            brain.PlasticityProbabilisticUpdates,
-            effectivePlasticityDelta,
-            brain.PlasticityRebaseThreshold,
-            brain.PlasticityRebaseThresholdPct,
-            brain.PlasticityEnergyCostModulationEnabled,
-            brain.PlasticityEnergyCostReferenceTickCost,
-            brain.PlasticityEnergyCostResponseStrength,
-            brain.PlasticityEnergyCostMinScale,
-            brain.PlasticityEnergyCostMaxScale,
-            brain.HomeostasisEnabled,
-            brain.HomeostasisTargetMode,
-            brain.HomeostasisUpdateMode,
-            brain.HomeostasisBaseProbability,
-            brain.HomeostasisMinStepCodes,
-            brain.HomeostasisEnergyCouplingEnabled,
-            brain.HomeostasisEnergyTargetScale,
-            brain.HomeostasisEnergyProbabilityScale,
-            _remoteCostEnabled,
-            _remoteCostPerBatch,
-            _remoteCostPerContribution,
-            _costTierAMultiplier,
-            _costTierBMultiplier,
-            _costTierCMultiplier,
-            brain.OutputVectorSource,
-            _debugStreamEnabled,
-            _debugMinSeverity);
+        SendShardRuntimeConfigUpdate(context, shardId, normalized, CreateShardRuntimeConfigUpdate(brain, shardId));
         UpdateRoutingTable(context, brain);
         if (brain.PlacementEpoch > 0
             && (brain.PlacementExecution is null || brain.PlacementExecution.Completed))

@@ -180,6 +180,10 @@ message SetOutputVectorSource {
   nbn.Uuid brain_id = 2;
 }
 
+message SynchronizeBrainRuntimeConfig {
+  nbn.Uuid brain_id = 1;
+}
+
 message SetOutputVectorSourceAck {
   bool success = 1;
   string failure_reason_code = 2;

@@ -176,6 +176,9 @@ public class ProtoCompatibilityTests
         AssertField(homeostasis, "homeostasis_energy_target_scale", 8, FieldType.Float);
         AssertField(homeostasis, "homeostasis_energy_probability_scale", 9, FieldType.Float);
 
+        var syncRuntimeConfig = descriptor.MessageTypes.Single(message => message.Name == "SynchronizeBrainRuntimeConfig");
+        AssertField(syncRuntimeConfig, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+
         var inputCoordinatorMode = descriptor.EnumTypes.Single(@enum => @enum.Name == "InputCoordinatorMode");
         AssertEnumValue(inputCoordinatorMode, "INPUT_COORDINATOR_MODE_DIRTY_ON_CHANGE", 0);
         AssertEnumValue(inputCoordinatorMode, "INPUT_COORDINATOR_MODE_REPLAY_LATEST_VECTOR", 1);
@@ -237,6 +240,13 @@ public class ProtoCompatibilityTests
         AssertField(shardRuntime, "plasticity_energy_cost_min_scale", 31, FieldType.Float);
         AssertField(shardRuntime, "plasticity_energy_cost_max_scale", 32, FieldType.Float);
         AssertField(shardRuntime, "output_vector_source", 33, FieldType.Enum, "nbn.control.OutputVectorSource");
+
+        var shardRuntimeAck = descriptor.MessageTypes.Single(message => message.Name == "UpdateShardRuntimeConfigAck");
+        AssertField(shardRuntimeAck, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(shardRuntimeAck, "region_id", 2, FieldType.UInt32);
+        AssertField(shardRuntimeAck, "shard_index", 3, FieldType.UInt32);
+        AssertField(shardRuntimeAck, "success", 4, FieldType.Bool);
+        AssertField(shardRuntimeAck, "message", 5, FieldType.String);
 
         var brainIoInfo = descriptor.MessageTypes.Single(message => message.Name == "BrainIoInfo");
         AssertField(brainIoInfo, "brain_id", 1, FieldType.Message, "nbn.Uuid");
@@ -574,6 +584,9 @@ public class ProtoCompatibilityTests
         var setOutputVectorSource = descriptor.MessageTypes.Single(message => message.Name == "SetOutputVectorSource");
         AssertField(setOutputVectorSource, "output_vector_source", 1, FieldType.Enum, "nbn.control.OutputVectorSource");
         AssertField(setOutputVectorSource, "brain_id", 2, FieldType.Message, "nbn.Uuid");
+
+        var syncRuntimeConfig = descriptor.MessageTypes.Single(message => message.Name == "SynchronizeBrainRuntimeConfig");
+        AssertField(syncRuntimeConfig, "brain_id", 1, FieldType.Message, "nbn.Uuid");
 
         var unregisterBrain = descriptor.MessageTypes.Single(message => message.Name == "UnregisterBrain");
         AssertField(unregisterBrain, "brain_id", 1, FieldType.Message, "nbn.Uuid");
