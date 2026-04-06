@@ -676,7 +676,11 @@ public sealed class IoGatewayDistributedCoordinatorTests
 
         var resetAck = await root.RequestAsync<IoCommandAck>(
             gateway,
-            new Nbn.Shared.HiveMind.ApplyBrainRuntimeResetAtBarrier(brainId, ResetBuffer: true, ResetAccumulator: true));
+            new Nbn.Shared.HiveMind.ApplyBrainRuntimeResetAtBarrier(
+                brainId,
+                ResetBuffer: true,
+                ResetAccumulator: true,
+                MinimumAcceptedTickId: 1));
         Assert.True(resetAck.Success);
 
         root.Send(gateway, new RegisterBrain
@@ -1249,7 +1253,11 @@ public sealed class IoGatewayDistributedCoordinatorTests
 
             var ack = await context.RequestAsync<IoCommandAck>(
                     context.Sender,
-                    new Nbn.Shared.HiveMind.ApplyBrainRuntimeResetAtBarrier(message.BrainId, message.ResetBuffer, message.ResetAccumulator),
+                    new Nbn.Shared.HiveMind.ApplyBrainRuntimeResetAtBarrier(
+                        message.BrainId,
+                        message.ResetBuffer,
+                        message.ResetAccumulator,
+                        MinimumAcceptedTickId: 1),
                     TimeSpan.FromSeconds(2))
                 .ConfigureAwait(false);
 
@@ -1523,7 +1531,8 @@ public sealed class IoGatewayDistributedCoordinatorTests
                                         new Nbn.Shared.HiveMind.ApplyBrainRuntimeResetAtBarrier(
                                             item.Request.BrainId,
                                             item.Request.ResetBuffer,
-                                            item.Request.ResetAccumulator),
+                                            item.Request.ResetAccumulator,
+                                            MinimumAcceptedTickId: 1),
                                         TimeSpan.FromSeconds(2))
                                     .ConfigureAwait(false);
 

@@ -290,7 +290,72 @@ public sealed class OutputCoordinatorActorTests
         }
     }
 
+    [Fact]
+    public async Task OutputReset_ClearsPendingTicks_AndRejectsLateOutputs_BeforeMinimumAcceptedTick()
+    {
+        using var metrics = new MeterCollector(IoTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var brainId = Guid.NewGuid();
+        var root = system.Root;
+
+        try
+        {
+            var coordinator = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, outputWidth: 2)));
+            var vectors = Channel.CreateUnbounded<OutputVectorEvent>();
+            var singles = Channel.CreateUnbounded<OutputEvent>();
+            root.Spawn(Props.FromProducer(() => new VectorSubscriberProbe(brainId, coordinator, vectors.Writer)));
+            root.Spawn(Props.FromProducer(() => new SingleSubscriberProbe(brainId, coordinator, singles.Writer)));
+
+            await Task.Delay(100);
+
+            root.Send(coordinator, new EmitOutputVectorSegment(0, new[] { 1f }, 9));
+            var resetAck = await root.RequestAsync<IoCommandAck>(
+                coordinator,
+                new ApplyOutputCoordinatorRuntimeReset(brainId, MinimumAcceptedTickId: 10));
+            Assert.True(resetAck.Success);
+
+            root.Send(coordinator, new EmitOutput(OutputIndex: 0, Value: 2f, TickId: 9));
+            root.Send(coordinator, new EmitOutputVectorSegment(1, new[] { 3f }, 9));
+            await AssertNoVectorAsync(vectors.Reader, TimeSpan.FromMilliseconds(150));
+            await AssertNoSingleAsync(singles.Reader, TimeSpan.FromMilliseconds(150));
+
+            root.Send(coordinator, new EmitOutput(OutputIndex: 1, Value: 7f, TickId: 10));
+            root.Send(coordinator, new EmitOutputVectorSegment(0, new[] { 5f, 6f }, 10));
+
+            var single = await ReadSingleAsync(singles.Reader, TimeSpan.FromSeconds(2));
+            var vector = await ReadVectorAsync(vectors.Reader, TimeSpan.FromSeconds(2));
+            Assert.Equal((ulong)10, single.TickId);
+            Assert.Equal((ulong)10, vector.TickId);
+            Assert.Equal(new[] { 5f, 6f }, vector.Values);
+
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.io.output.single.rejected",
+                    ("brain_id", brainId.ToString("D")),
+                    ("reason", "tick_superseded_by_reset"),
+                    ("output_width", "2")));
+            Assert.Equal(
+                1,
+                metrics.SumLong(
+                    "nbn.io.output.vector.rejected",
+                    ("brain_id", brainId.ToString("D")),
+                    ("reason", "tick_superseded_by_reset"),
+                    ("output_width", "2")));
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
     private static async Task<OutputVectorEvent> ReadVectorAsync(ChannelReader<OutputVectorEvent> reader, TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource(timeout);
+        return await reader.ReadAsync(cts.Token);
+    }
+
+    private static async Task<OutputEvent> ReadSingleAsync(ChannelReader<OutputEvent> reader, TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
         return await reader.ReadAsync(cts.Token);
@@ -303,6 +368,19 @@ public sealed class OutputCoordinatorActorTests
         {
             _ = await reader.ReadAsync(cts.Token);
             Assert.Fail("Expected no OutputVectorEvent.");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static async Task AssertNoSingleAsync(ChannelReader<OutputEvent> reader, TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource(timeout);
+        try
+        {
+            _ = await reader.ReadAsync(cts.Token);
+            Assert.Fail("Expected no OutputEvent.");
         }
         catch (OperationCanceledException)
         {
@@ -349,6 +427,38 @@ public sealed class OutputCoordinatorActorTests
                     context.Request(_outputCoordinator, new UnsubscribeOutputsVector { BrainId = _brainId.ToProtoUuid() });
                     break;
                 case OutputVectorEvent output
+                    when output.BrainId is not null
+                         && output.BrainId.TryToGuid(out var brain)
+                         && brain == _brainId:
+                    _writer.TryWrite(output);
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class SingleSubscriberProbe : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly PID _outputCoordinator;
+        private readonly ChannelWriter<OutputEvent> _writer;
+
+        public SingleSubscriberProbe(Guid brainId, PID outputCoordinator, ChannelWriter<OutputEvent> writer)
+        {
+            _brainId = brainId;
+            _outputCoordinator = outputCoordinator;
+            _writer = writer;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Started:
+                    context.Request(_outputCoordinator, new SubscribeOutputs { BrainId = _brainId.ToProtoUuid() });
+                    break;
+                case OutputEvent output
                     when output.BrainId is not null
                          && output.BrainId.TryToGuid(out var brain)
                          && brain == _brainId:

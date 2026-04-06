@@ -56,7 +56,11 @@ public sealed record RequestBrainRuntimeReset(Guid BrainId, bool ResetBuffer, bo
 /// <summary>
 /// Applies a barrier-coordinated whole-brain runtime-state reset through the IO gateway runtime surface.
 /// </summary>
-public sealed record ApplyBrainRuntimeResetAtBarrier(Guid BrainId, bool ResetBuffer, bool ResetAccumulator);
+public sealed record ApplyBrainRuntimeResetAtBarrier(
+    Guid BrainId,
+    bool ResetBuffer,
+    bool ResetAccumulator,
+    ulong MinimumAcceptedTickId);
 
 /// <summary>
 /// Requests the current HiveMind status snapshot.

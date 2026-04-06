@@ -203,17 +203,32 @@ public sealed partial class HiveMindActor
             return;
         }
 
+        var minimumAcceptedTickId = ResolveRuntimeResetMinimumAcceptedTickId(brain);
         var ioPid = ResolveSendTargetPid(context, _ioPid);
         context.ReenterAfter(
             context.RequestAsync<ProtoIo.IoCommandAck>(
                 ioPid,
-                new ApplyBrainRuntimeResetAtBarrier(brain.BrainId, pending.ResetBuffer, pending.ResetAccumulator),
+                new ApplyBrainRuntimeResetAtBarrier(
+                    brain.BrainId,
+                    pending.ResetBuffer,
+                    pending.ResetAccumulator,
+                    minimumAcceptedTickId),
                 RuntimeResetBarrierTimeout),
             task =>
             {
                 CompletePendingRuntimeReset(context, brain.BrainId, task);
                 return Task.CompletedTask;
             });
+    }
+
+    private ulong ResolveRuntimeResetMinimumAcceptedTickId(BrainState brain)
+    {
+        if (_tick is null || _phase == TickPhase.Idle || !CanDispatchTickToBrain(brain))
+        {
+            return _lastCompletedTickId + 1;
+        }
+
+        return Math.Max(_lastCompletedTickId, _tick.TickId) + 1;
     }
 
     private void CompletePendingRuntimeReset(IContext context, Guid brainId, Task<ProtoIo.IoCommandAck> task)

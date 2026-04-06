@@ -138,26 +138,32 @@ public sealed partial class IoGatewayActor
             ResetBuffer = message.ResetBuffer,
             ResetAccumulator = message.ResetAccumulator
         };
-        await ApplyRuntimeStateResetAsync(context, message.BrainId, resetMessage).ConfigureAwait(false);
+        await ApplyRuntimeStateResetAsync(
+                context,
+                message.BrainId,
+                resetMessage,
+                message.MinimumAcceptedTickId)
+            .ConfigureAwait(false);
     }
 
-    private async Task ApplyRuntimeStateResetAsync(IContext context, Guid brainId, ResetBrainRuntimeState message)
+    private async Task ApplyRuntimeStateResetAsync(
+        IContext context,
+        Guid brainId,
+        ResetBrainRuntimeState message,
+        ulong minimumAcceptedTickId = 0)
     {
-        var resetInputCoordinatorState = message.ResetAccumulator;
-        BrainIoEntry? entry = null;
-        if (resetInputCoordinatorState)
+        if (!TryGetBrainEntry(message, out var entry))
         {
-            if (!TryGetBrainEntry(message, out entry))
-            {
-                entry = await EnsureBrainEntryAsync(context, brainId).ConfigureAwait(false);
-            }
-
-            if (entry is null)
-            {
-                RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "brain_input_unavailable");
-                return;
-            }
+            entry = await EnsureBrainEntryAsync(context, brainId).ConfigureAwait(false);
         }
+
+        if (entry is null)
+        {
+            RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "brain_io_unavailable");
+            return;
+        }
+
+        var resetInputCoordinatorState = message.ResetAccumulator;
 
         var routerPid = await ResolveRouterPidAsync(context, brainId, allowCached: false).ConfigureAwait(false);
         if (routerPid is null)
@@ -183,8 +189,8 @@ public sealed partial class IoGatewayActor
 
             if (resetInputCoordinatorState)
             {
-                var shouldRequestTickDrainBefore = entry!.InputState.ShouldRequestTickDrain;
-                var inputAck = await DispatchCoordinatorMessageAsync(context, entry!.InputPid, message).ConfigureAwait(false);
+                var shouldRequestTickDrainBefore = entry.InputState.ShouldRequestTickDrain;
+                var inputAck = await DispatchCoordinatorMessageAsync(context, entry.InputPid, message).ConfigureAwait(false);
                 if (inputAck is null)
                 {
                     RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "brain_input_empty_response");
@@ -207,6 +213,28 @@ public sealed partial class IoGatewayActor
                 {
                     RegisterIoGatewayPid(context, brainId, routerPid, force: true);
                 }
+            }
+
+            var outputAck = await DispatchCoordinatorMessageAsync(
+                    context,
+                    entry.OutputPid,
+                    new ApplyOutputCoordinatorRuntimeReset(brainId, minimumAcceptedTickId))
+                .ConfigureAwait(false);
+            if (outputAck is null)
+            {
+                RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "brain_output_empty_response");
+                return;
+            }
+
+            if (!outputAck.Success)
+            {
+                RespondCommandAck(
+                    context,
+                    message.BrainId,
+                    "reset_brain_runtime_state",
+                    success: false,
+                    $"brain_output_reset_failed:{outputAck.Message}");
+                return;
             }
 
             context.Respond(routerAck);

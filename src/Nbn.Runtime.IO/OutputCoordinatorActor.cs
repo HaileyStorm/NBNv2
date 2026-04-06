@@ -16,6 +16,12 @@ public sealed record EmitOutput(uint OutputIndex, float Value, ulong TickId);
 public sealed record UpdateOutputWidth(uint OutputWidth);
 
 /// <summary>
+/// Clears pending output state after a barrier-coordinated runtime reset and rejects late
+/// output messages from ticks older than the supplied floor.
+/// </summary>
+public sealed record ApplyOutputCoordinatorRuntimeReset(Guid BrainId, ulong MinimumAcceptedTickId);
+
+/// <summary>
 /// Aggregates per-brain output events and publishes them to external subscribers.
 /// </summary>
 public sealed class OutputCoordinatorActor : IActor
@@ -29,6 +35,7 @@ public sealed class OutputCoordinatorActor : IActor
     private readonly Dictionary<string, PID> _vectorSubscribers = new(StringComparer.Ordinal);
     private readonly Dictionary<ulong, PendingVectorTick> _pendingVectors = new();
     private ulong _latestCompletedVectorTick;
+    private ulong _minimumAcceptedTickId = 1;
 
     /// <summary>
     /// Initializes a per-brain output coordinator with the supplied width.
@@ -83,6 +90,9 @@ public sealed class OutputCoordinatorActor : IActor
                 ApplyOutputWidthUpdate(message);
                 Respond(context, "update_output_width", success: true);
                 break;
+            case ApplyOutputCoordinatorRuntimeReset message:
+                HandleRuntimeReset(context, message);
+                break;
             case EmitOutputVectorSegment message:
                 EmitVectorSegment(context, message);
                 break;
@@ -135,6 +145,12 @@ public sealed class OutputCoordinatorActor : IActor
 
     private void EmitSingle(IContext context, EmitOutput message)
     {
+        if (message.TickId < _minimumAcceptedTickId)
+        {
+            RecordSingleReject("tick_superseded_by_reset");
+            return;
+        }
+
         if (message.OutputIndex >= (uint)_outputWidth)
         {
             RecordSingleReject("output_index_out_of_range");
@@ -194,6 +210,12 @@ public sealed class OutputCoordinatorActor : IActor
 
     private void EmitVectorSegment(IContext context, EmitOutputVectorSegment message)
     {
+        if (message.TickId < _minimumAcceptedTickId)
+        {
+            RecordVectorReject("tick_superseded_by_reset");
+            return;
+        }
+
         if (message.TickId <= _latestCompletedVectorTick)
         {
             RecordVectorReject("tick_already_completed");
@@ -323,6 +345,21 @@ public sealed class OutputCoordinatorActor : IActor
             _pendingVectors.Remove(tickId);
             RecordVectorReject("pending_tick_superseded");
         }
+    }
+
+    private void HandleRuntimeReset(IContext context, ApplyOutputCoordinatorRuntimeReset message)
+    {
+        if (message.BrainId != _brainId)
+        {
+            Respond(context, "reset_brain_runtime_state", success: false);
+            return;
+        }
+
+        var minimumAcceptedTickId = message.MinimumAcceptedTickId == 0 ? 1UL : message.MinimumAcceptedTickId;
+        _pendingVectors.Clear();
+        _minimumAcceptedTickId = Math.Max(_minimumAcceptedTickId, minimumAcceptedTickId);
+        _latestCompletedVectorTick = Math.Max(_latestCompletedVectorTick, _minimumAcceptedTickId - 1);
+        Respond(context, "reset_brain_runtime_state", success: true);
     }
 
     private void RecordSingleReject(string reason)
