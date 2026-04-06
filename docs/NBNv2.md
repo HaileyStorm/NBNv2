@@ -887,6 +887,7 @@ Direct runtime state writes are also available for tooling and deterministic eva
 * `RuntimeNeuronPulse` injects one contribution into a specific neuron.
 * `RuntimeNeuronStateWrite` sets one neuron's current buffer and/or accumulator state.
 * `ResetBrainRuntimeState` clears transient neuron buffer and/or accumulator state across the entire Brain without changing the `.nbn` definition or runtime feature toggles such as cost/energy, plasticity, or homeostasis. HiveMind queues the reset and executes it at the per-brain deliver-to-compute barrier so reset cannot interleave with in-flight delivery for that Brain. The reset also clears pending output publication state for that Brain and rejects any late single/vector outputs from ticks older than the post-reset tick floor.
+* `SynchronizeBrainRuntimeConfig` forces the current per-brain runtime config snapshot to be re-applied to every registered shard and returns only after all shard actors acknowledge the update. It is intentionally scoped to paused Brains and should be used as a pre-resume barrier after config writes when deterministic evaluation requires plasticity/homeostasis/output-mode settings to be active on every shard before compute resumes.
 
 ### 13.4 Output mapping
 

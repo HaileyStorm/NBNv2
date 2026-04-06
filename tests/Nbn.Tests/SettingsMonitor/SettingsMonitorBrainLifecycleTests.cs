@@ -81,6 +81,34 @@ public sealed class SettingsMonitorBrainLifecycleTests
     }
 
     [Fact]
+    public async Task MarkBrainUnregisteredAsync_StoresDeadState_And_ControllerOffline_Atomically()
+    {
+        using var db = new TempDatabaseScope("settings-monitor.db");
+        var store = new SettingsMonitorStore(db.DatabasePath);
+        await store.InitializeAsync();
+
+        var brainId = Guid.NewGuid();
+        var nodeId = Guid.NewGuid();
+
+        await store.UpsertBrainAsync(brainId, "Active", spawnedMs: 100, lastTickId: 12, updatedMs: 100);
+        await store.UpsertNodeAsync(new NodeRegistration(nodeId, "worker-a", "127.0.0.1:12041", "worker-node"), timeMs: 100);
+        await store.UpsertBrainControllerAsync(
+            new BrainControllerRegistration(brainId, nodeId, "worker-node/brain-root"),
+            timeMs: 150);
+
+        await store.MarkBrainUnregisteredAsync(brainId, timeMs: 300);
+
+        var brain = await store.GetBrainAsync(brainId);
+        var controller = await store.GetBrainControllerAsync(brainId);
+
+        Assert.NotNull(brain);
+        Assert.Equal("Dead", brain!.State);
+        Assert.NotNull(controller);
+        Assert.False(controller!.IsAlive);
+        Assert.Equal(300, controller.LastSeenMs);
+    }
+
+    [Fact]
     public async Task PruneStaleDeadBrainsAsync_RemovesOnlyDeadRowsOlderThanCutoff()
     {
         using var db = new TempDatabaseScope("settings-monitor.db");

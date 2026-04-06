@@ -83,6 +83,14 @@ WHERE brain_id = @brain_id
   AND last_seen_ms <= @last_seen_ms;
 """;
 
+    private const string MarkBrainUnregisteredStateSql = """
+UPDATE brains
+SET updated_ms = @updated_ms,
+    state = 'Dead'
+WHERE brain_id = @brain_id
+  AND (state <> 'Dead' OR updated_ms <= @updated_ms);
+""";
+
     private const string GetBrainSql = """
 SELECT
     brain_id AS BrainId,
@@ -361,6 +369,45 @@ WHERE state <> 'Dead'
                     last_seen_ms = nowMs
                 },
                 cancellationToken: cancellationToken));
+    }
+
+    /// <summary>
+    /// Atomically marks a brain as dead and its controller row offline using one observed timestamp.
+    /// </summary>
+    /// <param name="brainId">Brain identifier whose persisted state should be finalized.</param>
+    /// <param name="timeMs">Optional unregistration time in milliseconds.</param>
+    /// <param name="cancellationToken">Cancels the database write.</param>
+    public async Task MarkBrainUnregisteredAsync(
+        Guid brainId,
+        long? timeMs = null,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfEmptyGuid(brainId, nameof(brainId), "BrainId");
+
+        var nowMs = timeMs ?? NowMs();
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                MarkBrainUnregisteredStateSql,
+                new
+                {
+                    brain_id = ToDatabaseId(brainId),
+                    updated_ms = nowMs
+                },
+                transaction,
+                cancellationToken: cancellationToken));
+        await connection.ExecuteAsync(
+            new CommandDefinition(
+                MarkBrainControllerOfflineSql,
+                new
+                {
+                    brain_id = ToDatabaseId(brainId),
+                    last_seen_ms = nowMs
+                },
+                transaction,
+                cancellationToken: cancellationToken));
+        await transaction.CommitAsync(cancellationToken);
     }
 
     /// <summary>

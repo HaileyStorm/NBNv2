@@ -10,8 +10,8 @@ public sealed partial class SettingsMonitorActor : IActor
 {
     private static readonly TimeSpan DefaultExternalSettingsPollInterval = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan DefaultStaleDeadBrainPruneInterval = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan DefaultStaleDeadBrainRetention = TimeSpan.FromHours(6);
-    private static readonly TimeSpan DefaultStaleNonLiveBrainRetention = TimeSpan.FromHours(24);
+    private static readonly TimeSpan DefaultStaleDeadBrainRetention = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan DefaultStaleNonLiveBrainRetention = TimeSpan.FromHours(1);
 
     private readonly SettingsMonitorStore _store;
     private readonly TimeSpan _externalSettingsPollInterval;

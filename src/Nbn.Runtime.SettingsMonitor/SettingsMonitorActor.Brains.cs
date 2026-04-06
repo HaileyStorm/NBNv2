@@ -187,10 +187,9 @@ public sealed partial class SettingsMonitorActor
         }
 
         var timeMs = message.TimeMs > 0 ? (long)message.TimeMs : NowMs();
-        var updateTask = _store.UpdateBrainStateAsync(brainId, "Dead", updatedMs: timeMs);
-        var controllerTask = _store.MarkBrainControllerOfflineAsync(brainId, timeMs);
+        var task = _store.MarkBrainUnregisteredAsync(brainId, timeMs);
 
-        context.ReenterAfter(Task.WhenAll(updateTask, controllerTask), completed =>
+        context.ReenterAfter(task, completed =>
         {
             if (completed.IsFaulted)
             {
