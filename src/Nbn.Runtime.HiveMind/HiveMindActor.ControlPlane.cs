@@ -47,10 +47,10 @@ public sealed partial class HiveMindActor
                 HandleSetBrainHomeostasis(context, message);
                 return true;
             case PauseBrainRequest message:
-                PauseBrain(context, message.BrainId, message.Reason);
+                HandlePauseBrainRequest(context, message);
                 return true;
             case ResumeBrainRequest message:
-                ResumeBrain(context, message.BrainId);
+                HandleResumeBrainRequest(context, message);
                 return true;
             case ProtoControl.PauseBrain message:
                 HandlePauseBrainControl(context, message);

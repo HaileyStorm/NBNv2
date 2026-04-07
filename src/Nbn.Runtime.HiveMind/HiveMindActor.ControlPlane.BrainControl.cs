@@ -1,5 +1,7 @@
 using Nbn.Shared;
+using Nbn.Shared.HiveMind;
 using Proto;
+using ProtoIo = Nbn.Proto.Io;
 using ProtoSeverity = Nbn.Proto.Severity;
 using ProtoControl = Nbn.Proto.Control;
 
@@ -255,6 +257,7 @@ public sealed partial class HiveMindActor
     {
         if (!TryGetGuid(message.BrainId, out var brainId))
         {
+            RespondPauseResumeAck(context, message.BrainId, "pause_brain", success: false, "invalid_brain_id");
             return;
         }
 
@@ -262,16 +265,19 @@ public sealed partial class HiveMindActor
         {
             EmitControlPlaneMutationIgnored(context, "control.pause_brain", brainId, reason);
             HiveMindTelemetry.RecordPauseBrainRejected(brainId, reason);
+            RespondPauseResumeAck(context, message.BrainId, "pause_brain", success: false, reason);
             return;
         }
 
         PauseBrain(context, brainId, message.Reason);
+        RespondPauseResumeAck(context, message.BrainId, "pause_brain", success: true, "applied");
     }
 
     private void HandleResumeBrainControl(IContext context, ProtoControl.ResumeBrain message)
     {
         if (!TryGetGuid(message.BrainId, out var brainId))
         {
+            RespondPauseResumeAck(context, message.BrainId, "resume_brain", success: false, "invalid_brain_id");
             return;
         }
 
@@ -279,10 +285,57 @@ public sealed partial class HiveMindActor
         {
             EmitControlPlaneMutationIgnored(context, "control.resume_brain", brainId, reason);
             HiveMindTelemetry.RecordResumeBrainRejected(brainId, reason);
+            RespondPauseResumeAck(context, message.BrainId, "resume_brain", success: false, reason);
             return;
         }
 
         ResumeBrain(context, brainId);
+        RespondPauseResumeAck(context, message.BrainId, "resume_brain", success: true, "applied");
+    }
+
+    private void HandlePauseBrainRequest(IContext context, PauseBrainRequest message)
+    {
+        if (!_brains.ContainsKey(message.BrainId))
+        {
+            RespondPauseResumeAck(context, message.BrainId.ToProtoUuid(), "pause_brain", success: false, "brain_not_registered");
+            return;
+        }
+
+        PauseBrain(context, message.BrainId, message.Reason);
+        RespondPauseResumeAck(context, message.BrainId.ToProtoUuid(), "pause_brain", success: true, "applied");
+    }
+
+    private void HandleResumeBrainRequest(IContext context, ResumeBrainRequest message)
+    {
+        if (!_brains.ContainsKey(message.BrainId))
+        {
+            RespondPauseResumeAck(context, message.BrainId.ToProtoUuid(), "resume_brain", success: false, "brain_not_registered");
+            return;
+        }
+
+        ResumeBrain(context, message.BrainId);
+        RespondPauseResumeAck(context, message.BrainId.ToProtoUuid(), "resume_brain", success: true, "applied");
+    }
+
+    private static void RespondPauseResumeAck(
+        IContext context,
+        Nbn.Proto.Uuid? brainId,
+        string command,
+        bool success,
+        string message)
+    {
+        if (context.Sender is null)
+        {
+            return;
+        }
+
+        context.Respond(new ProtoIo.IoCommandAck
+        {
+            BrainId = brainId?.Clone(),
+            Command = command,
+            Success = success,
+            Message = message ?? string.Empty
+        });
     }
 
     private void HandleKillBrainControl(IContext context, ProtoControl.KillBrain message)

@@ -99,10 +99,10 @@ public sealed partial class IoGatewayActor : IActor
                     HandleKillBrain(context, message);
                     break;
                 case ProtoControl.PauseBrain message:
-                    HandlePauseBrain(context, message);
+                    await HandlePauseBrain(context, message);
                     break;
                 case ProtoControl.ResumeBrain message:
-                    HandleResumeBrain(context, message);
+                    await HandleResumeBrain(context, message);
                     break;
                 case SetOutputVectorSource message:
                     await HandleSetOutputVectorSourceAsync(context, message);

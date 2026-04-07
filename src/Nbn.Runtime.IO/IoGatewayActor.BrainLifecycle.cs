@@ -2,6 +2,8 @@ using System.Diagnostics;
 using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Shared;
+using PauseBrainRequest = Nbn.Shared.HiveMind.PauseBrainRequest;
+using ResumeBrainRequest = Nbn.Shared.HiveMind.ResumeBrainRequest;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
 
@@ -362,7 +364,7 @@ public sealed partial class IoGatewayActor
         }
     }
 
-    private void HandlePauseBrain(IContext context, ProtoControl.PauseBrain message)
+    private async Task HandlePauseBrain(IContext context, ProtoControl.PauseBrain message)
     {
         if (_hiveMindPid is null)
         {
@@ -370,7 +372,7 @@ public sealed partial class IoGatewayActor
             return;
         }
 
-        if (!TryGetBrainId(message.BrainId, out _))
+        if (!TryGetBrainId(message.BrainId, out var brainId))
         {
             RespondCommandAck(context, message.BrainId, "pause_brain", success: false, "pause_invalid_request");
             return;
@@ -378,8 +380,18 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            context.Request(_hiveMindPid, message);
-            RespondCommandAck(context, message.BrainId, "pause_brain", success: true, "queued");
+            var ack = await context.RequestAsync<IoCommandAck>(
+                    _hiveMindPid,
+                    new PauseBrainRequest(brainId, message.Reason),
+                    DefaultRequestTimeout)
+                .ConfigureAwait(false);
+            if (ack is null)
+            {
+                RespondCommandAck(context, message.BrainId, "pause_brain", success: false, "pause_empty_response");
+                return;
+            }
+
+            context.Respond(ack);
         }
         catch (Exception ex)
         {
@@ -393,7 +405,7 @@ public sealed partial class IoGatewayActor
         }
     }
 
-    private void HandleResumeBrain(IContext context, ProtoControl.ResumeBrain message)
+    private async Task HandleResumeBrain(IContext context, ProtoControl.ResumeBrain message)
     {
         if (_hiveMindPid is null)
         {
@@ -401,7 +413,7 @@ public sealed partial class IoGatewayActor
             return;
         }
 
-        if (!TryGetBrainId(message.BrainId, out _))
+        if (!TryGetBrainId(message.BrainId, out var brainId))
         {
             RespondCommandAck(context, message.BrainId, "resume_brain", success: false, "resume_invalid_request");
             return;
@@ -409,8 +421,18 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            context.Request(_hiveMindPid, message);
-            RespondCommandAck(context, message.BrainId, "resume_brain", success: true, "queued");
+            var ack = await context.RequestAsync<IoCommandAck>(
+                    _hiveMindPid,
+                    new ResumeBrainRequest(brainId),
+                    DefaultRequestTimeout)
+                .ConfigureAwait(false);
+            if (ack is null)
+            {
+                RespondCommandAck(context, message.BrainId, "resume_brain", success: false, "resume_empty_response");
+                return;
+            }
+
+            context.Respond(ack);
         }
         catch (Exception ex)
         {

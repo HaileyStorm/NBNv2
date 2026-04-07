@@ -6,6 +6,8 @@ using Nbn.Runtime.HiveMind;
 using Nbn.Runtime.IO;
 using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
+using PauseBrainRequest = Nbn.Shared.HiveMind.PauseBrainRequest;
+using ResumeBrainRequest = Nbn.Shared.HiveMind.ResumeBrainRequest;
 using Nbn.Tests.Format;
 using Nbn.Tests.TestSupport;
 using Proto;
@@ -801,7 +803,7 @@ public class IoGatewayArtifactReferenceTests
 
         Assert.True(response.Success);
         Assert.Equal("pause_brain", response.Command);
-        Assert.Equal("queued", response.Message);
+        Assert.Equal("applied", response.Message);
         Assert.NotNull(response.BrainId);
         Assert.True(response.BrainId.TryToGuid(out var acknowledgedBrainId));
         Assert.Equal(brainId, acknowledgedBrainId);
@@ -836,7 +838,7 @@ public class IoGatewayArtifactReferenceTests
 
         Assert.True(response.Success);
         Assert.Equal("resume_brain", response.Command);
-        Assert.Equal("queued", response.Message);
+        Assert.Equal("applied", response.Message);
         Assert.NotNull(response.BrainId);
         Assert.True(response.BrainId.TryToGuid(out var acknowledgedBrainId));
         Assert.Equal(brainId, acknowledgedBrainId);
@@ -3544,11 +3546,52 @@ public class IoGatewayArtifactReferenceTests
                 case ProtoControl.GetBrainRouting:
                     context.Respond(new ProtoControl.BrainRoutingInfo());
                     break;
+                case PauseBrainRequest pause:
+                    _pause.TrySetResult(new ProtoControl.PauseBrain
+                    {
+                        BrainId = pause.BrainId.ToProtoUuid(),
+                        Reason = pause.Reason ?? string.Empty
+                    });
+                    context.Respond(new IoCommandAck
+                    {
+                        BrainId = pause.BrainId.ToProtoUuid(),
+                        Command = "pause_brain",
+                        Success = true,
+                        Message = "applied"
+                    });
+                    break;
                 case ProtoControl.PauseBrain pause:
                     _pause.TrySetResult(pause);
+                    context.Respond(new IoCommandAck
+                    {
+                        BrainId = pause.BrainId?.Clone(),
+                        Command = "pause_brain",
+                        Success = true,
+                        Message = "applied"
+                    });
+                    break;
+                case ResumeBrainRequest resume:
+                    _resume.TrySetResult(new ProtoControl.ResumeBrain
+                    {
+                        BrainId = resume.BrainId.ToProtoUuid()
+                    });
+                    context.Respond(new IoCommandAck
+                    {
+                        BrainId = resume.BrainId.ToProtoUuid(),
+                        Command = "resume_brain",
+                        Success = true,
+                        Message = "applied"
+                    });
                     break;
                 case ProtoControl.ResumeBrain resume:
                     _resume.TrySetResult(resume);
+                    context.Respond(new IoCommandAck
+                    {
+                        BrainId = resume.BrainId?.Clone(),
+                        Command = "resume_brain",
+                        Success = true,
+                        Message = "applied"
+                    });
                     break;
             }
 

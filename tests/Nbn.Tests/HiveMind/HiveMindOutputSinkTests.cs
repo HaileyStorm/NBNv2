@@ -801,7 +801,7 @@ public class HiveMindOutputSinkTests
             Reason = "io_pause"
         });
         Assert.True(pauseAck.Success);
-        Assert.Equal("queued", pauseAck.Message);
+        Assert.Equal("applied", pauseAck.Message);
 
         var pausedAfter = await WaitForDebugCountAsync(
             root,
@@ -816,7 +816,7 @@ public class HiveMindOutputSinkTests
             BrainId = brainId.ToProtoUuid()
         });
         Assert.True(resumeAck.Success);
-        Assert.Equal("queued", resumeAck.Message);
+        Assert.Equal("applied", resumeAck.Message);
 
         var resumedAfter = await WaitForDebugCountAsync(
             root,
