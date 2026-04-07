@@ -343,9 +343,24 @@ message PlacementWorkerInventoryEntry {
   fixed64 process_ram_used_bytes = 25;
 }
 
+message PlacementWorkerExclusionCount {
+  string reason_code = 1;
+  uint32 count = 2;
+}
+
+message PlacementWorkerExclusionDiagnostic {
+  nbn.Uuid worker_node_id = 1;
+  string worker_address = 2;
+  string worker_root_actor_name = 3;
+  repeated string reason_codes = 4;
+}
+
 message PlacementWorkerInventory {
   repeated PlacementWorkerInventoryEntry workers = 1;
   fixed64 snapshot_ms = 2;
+  uint32 total_workers_seen = 3;
+  repeated PlacementWorkerExclusionCount exclusion_counts = 4;
+  repeated PlacementWorkerExclusionDiagnostic excluded_workers = 5;
 }
 
 message PlacementPeerTarget {

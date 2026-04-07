@@ -350,9 +350,22 @@ public class ProtoCompatibilityTests
         AssertField(workerInventoryEntry, "process_cpu_load_percent", 24, FieldType.Float);
         AssertField(workerInventoryEntry, "process_ram_used_bytes", 25, FieldType.Fixed64);
 
+        var workerExclusionCount = descriptor.MessageTypes.Single(message => message.Name == "PlacementWorkerExclusionCount");
+        AssertField(workerExclusionCount, "reason_code", 1, FieldType.String);
+        AssertField(workerExclusionCount, "count", 2, FieldType.UInt32);
+
+        var workerExclusionDiagnostic = descriptor.MessageTypes.Single(message => message.Name == "PlacementWorkerExclusionDiagnostic");
+        AssertField(workerExclusionDiagnostic, "worker_node_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(workerExclusionDiagnostic, "worker_address", 2, FieldType.String);
+        AssertField(workerExclusionDiagnostic, "worker_root_actor_name", 3, FieldType.String);
+        AssertRepeatedField(workerExclusionDiagnostic, "reason_codes", 4, FieldType.String);
+
         var workerInventory = descriptor.MessageTypes.Single(message => message.Name == "PlacementWorkerInventory");
         AssertRepeatedField(workerInventory, "workers", 1, FieldType.Message, "nbn.control.PlacementWorkerInventoryEntry");
         AssertField(workerInventory, "snapshot_ms", 2, FieldType.Fixed64);
+        AssertField(workerInventory, "total_workers_seen", 3, FieldType.UInt32);
+        AssertRepeatedField(workerInventory, "exclusion_counts", 4, FieldType.Message, "nbn.control.PlacementWorkerExclusionCount");
+        AssertRepeatedField(workerInventory, "excluded_workers", 5, FieldType.Message, "nbn.control.PlacementWorkerExclusionDiagnostic");
 
         var peerTarget = descriptor.MessageTypes.Single(message => message.Name == "PlacementPeerTarget");
         AssertField(peerTarget, "worker_node_id", 1, FieldType.Message, "nbn.Uuid");

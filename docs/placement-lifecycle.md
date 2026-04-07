@@ -32,6 +32,7 @@ This document defines the initial control-plane lifecycle introduced for worker-
 ## Contract groups introduced
 
 - Worker inventory: `PlacementWorkerInventoryRequest`, `PlacementWorkerInventoryEntry`, `PlacementWorkerInventory`
+  - `PlacementWorkerInventory` reports the eligible worker set plus exclusion diagnostics for workers filtered out by freshness, readiness, role, pressure, or effective-capacity checks.
 - Assignment orchestration: `PlacementAssignment`, `PlacementAssignmentRequest`, `PlacementAssignmentAck`
 - Reconciliation: `PlacementReconcileRequest`, `PlacementObservedAssignment`, `PlacementReconcileReport`
 - Lifecycle query: `GetPlacementLifecycle`, `PlacementLifecycleInfo`

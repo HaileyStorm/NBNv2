@@ -101,7 +101,13 @@ public sealed class HiveMindWorkerInventoryTests
             new PlacementWorkerInventoryRequest());
 
         Assert.Equal((ulong)nowMs, inventory.SnapshotMs);
+        Assert.Equal((uint)4, inventory.TotalWorkersSeen);
         Assert.Single(inventory.Workers);
+        Assert.Equal(3, inventory.ExcludedWorkers.Count);
+        Assert.Contains(inventory.ExclusionCounts, static entry => entry.ReasonCode == "not_ready" && entry.Count == 1);
+        Assert.Contains(inventory.ExclusionCounts, static entry => entry.ReasonCode == "not_alive" && entry.Count == 1);
+        Assert.Contains(inventory.ExclusionCounts, static entry => entry.ReasonCode == "stale_last_seen" && entry.Count == 1);
+        Assert.Contains(inventory.ExclusionCounts, static entry => entry.ReasonCode == "stale_capabilities" && entry.Count == 1);
 
         var worker = inventory.Workers[0];
         Assert.Equal(freshWorkerId.ToProtoUuid().Value, worker.WorkerNodeId.Value);
@@ -189,7 +195,12 @@ public sealed class HiveMindWorkerInventoryTests
             hiveMind,
             new PlacementWorkerInventoryRequest());
 
+        Assert.Equal((uint)4, inventory.TotalWorkersSeen);
         Assert.Single(inventory.Workers);
+        Assert.Equal(3, inventory.ExcludedWorkers.Count);
+        Assert.Contains(inventory.ExclusionCounts, static entry => entry.ReasonCode == "missing_worker_root_actor" && entry.Count == 1);
+        Assert.Contains(inventory.ExclusionCounts, static entry => entry.ReasonCode == "no_effective_storage" && entry.Count == 1);
+        Assert.Contains(inventory.ExclusionCounts, static entry => entry.ReasonCode == "no_effective_compute_capacity" && entry.Count == 1);
         Assert.Equal(eligibleWorkerId.ToProtoUuid().Value, inventory.Workers[0].WorkerNodeId.Value);
         Assert.Equal("worker-ready:12040", inventory.Workers[0].WorkerAddress);
 
@@ -291,7 +302,10 @@ public sealed class HiveMindWorkerInventoryTests
             hiveMind,
             new PlacementWorkerInventoryRequest());
 
+        Assert.Equal((uint)2, inventory.TotalWorkersSeen);
         Assert.Single(inventory.Workers);
+        Assert.Single(inventory.ExcludedWorkers);
+        Assert.Contains(inventory.ExclusionCounts, static entry => entry.ReasonCode == "not_worker_candidate" && entry.Count == 1);
         Assert.Equal(workerId.ToProtoUuid().Value, inventory.Workers[0].WorkerNodeId.Value);
 
         await system.ShutdownAsync();

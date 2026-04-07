@@ -13,50 +13,162 @@ public sealed partial class HiveMindActor
         var snapshotMs = _workerCatalogSnapshotMs > 0 ? _workerCatalogSnapshotMs : nowMs;
         var inventory = new ProtoControl.PlacementWorkerInventory
         {
-            SnapshotMs = (ulong)snapshotMs
+            SnapshotMs = (ulong)snapshotMs,
+            TotalWorkersSeen = (uint)Math.Max(0, _workerCatalog.Count)
         };
 
+        var exclusionCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+
         foreach (var entry in _workerCatalog.Values
-                     .Where(worker =>
-                         worker.IsAlive
-                         && worker.IsReady
-                         && worker.IsFresh
-                         && IsPlacementWorkerCandidate(worker.LogicalName, worker.WorkerRootActorName))
-                     .Where(IsPlacementInventoryEligibleWorker)
                      .OrderBy(static worker => worker.WorkerAddress, StringComparer.Ordinal)
                      .ThenBy(static worker => worker.NodeId))
         {
-            inventory.Workers.Add(new ProtoControl.PlacementWorkerInventoryEntry
+            var reasons = GetPlacementInventoryExclusionReasons(entry, snapshotMs);
+            if (reasons.Count == 0)
+            {
+                inventory.Workers.Add(CreatePlacementWorkerInventoryEntry(entry));
+                continue;
+            }
+
+            var excluded = new ProtoControl.PlacementWorkerExclusionDiagnostic
             {
                 WorkerNodeId = entry.NodeId.ToProtoUuid(),
                 WorkerAddress = entry.WorkerAddress,
-                WorkerRootActorName = entry.WorkerRootActorName,
-                IsAlive = entry.IsAlive,
-                LastSeenMs = ToProtoMs(entry.LastSeenMs),
-                CpuCores = entry.CpuCores,
-                RamFreeBytes = ToProtoBytes(entry.RamFreeBytes),
-                HasGpu = entry.HasGpu,
-                VramFreeBytes = ToProtoBytes(entry.VramFreeBytes),
-                CpuScore = entry.CpuScore,
-                GpuScore = entry.GpuScore,
-                CapabilityEpoch = ToProtoMs(entry.CapabilitySnapshotMs),
-                StorageFreeBytes = ToProtoBytes(entry.StorageFreeBytes),
-                AveragePeerLatencyMs = entry.AveragePeerLatencyMs,
-                PeerLatencySampleCount = (uint)Math.Max(0, entry.PeerLatencySampleCount),
-                RamTotalBytes = ToProtoBytes(entry.RamTotalBytes),
-                StorageTotalBytes = ToProtoBytes(entry.StorageTotalBytes),
-                VramTotalBytes = ToProtoBytes(entry.VramTotalBytes),
-                CpuLimitPercent = entry.CpuLimitPercent,
-                RamLimitPercent = entry.RamLimitPercent,
-                StorageLimitPercent = entry.StorageLimitPercent,
-                GpuComputeLimitPercent = entry.GpuComputeLimitPercent,
-                GpuVramLimitPercent = entry.GpuVramLimitPercent,
-                ProcessCpuLoadPercent = entry.ProcessCpuLoadPercent,
-                ProcessRamUsedBytes = ToProtoBytes(entry.ProcessRamUsedBytes)
+                WorkerRootActorName = entry.WorkerRootActorName
+            };
+            excluded.ReasonCodes.Add(reasons);
+            inventory.ExcludedWorkers.Add(excluded);
+
+            foreach (var reason in reasons)
+            {
+                exclusionCounts.TryGetValue(reason, out var count);
+                exclusionCounts[reason] = count + 1;
+            }
+        }
+
+        foreach (var entry in exclusionCounts.OrderBy(static item => item.Key, StringComparer.Ordinal))
+        {
+            inventory.ExclusionCounts.Add(new ProtoControl.PlacementWorkerExclusionCount
+            {
+                ReasonCode = entry.Key,
+                Count = (uint)Math.Max(0, entry.Value)
             });
         }
 
         return inventory;
+    }
+
+    private ProtoControl.PlacementWorkerInventoryEntry CreatePlacementWorkerInventoryEntry(WorkerCatalogEntry entry)
+    {
+        return new ProtoControl.PlacementWorkerInventoryEntry
+        {
+            WorkerNodeId = entry.NodeId.ToProtoUuid(),
+            WorkerAddress = entry.WorkerAddress,
+            WorkerRootActorName = entry.WorkerRootActorName,
+            IsAlive = entry.IsAlive,
+            LastSeenMs = ToProtoMs(entry.LastSeenMs),
+            CpuCores = entry.CpuCores,
+            RamFreeBytes = ToProtoBytes(entry.RamFreeBytes),
+            HasGpu = entry.HasGpu,
+            VramFreeBytes = ToProtoBytes(entry.VramFreeBytes),
+            CpuScore = entry.CpuScore,
+            GpuScore = entry.GpuScore,
+            CapabilityEpoch = ToProtoMs(entry.CapabilitySnapshotMs),
+            StorageFreeBytes = ToProtoBytes(entry.StorageFreeBytes),
+            AveragePeerLatencyMs = entry.AveragePeerLatencyMs,
+            PeerLatencySampleCount = (uint)Math.Max(0, entry.PeerLatencySampleCount),
+            RamTotalBytes = ToProtoBytes(entry.RamTotalBytes),
+            StorageTotalBytes = ToProtoBytes(entry.StorageTotalBytes),
+            VramTotalBytes = ToProtoBytes(entry.VramTotalBytes),
+            CpuLimitPercent = entry.CpuLimitPercent,
+            RamLimitPercent = entry.RamLimitPercent,
+            StorageLimitPercent = entry.StorageLimitPercent,
+            GpuComputeLimitPercent = entry.GpuComputeLimitPercent,
+            GpuVramLimitPercent = entry.GpuVramLimitPercent,
+            ProcessCpuLoadPercent = entry.ProcessCpuLoadPercent,
+            ProcessRamUsedBytes = ToProtoBytes(entry.ProcessRamUsedBytes)
+        };
+    }
+
+    private IReadOnlyList<string> GetPlacementInventoryExclusionReasons(WorkerCatalogEntry worker, long referenceMs)
+    {
+        var reasons = new List<string>();
+        if (!worker.IsAlive)
+        {
+            reasons.Add("not_alive");
+        }
+
+        if (!worker.IsReady)
+        {
+            reasons.Add("not_ready");
+        }
+
+        var staleAfterMs = Math.Max(1, _options.WorkerInventoryStaleAfterMs);
+        if (!IsFreshTimestamp(worker.LastSeenMs, referenceMs, staleAfterMs))
+        {
+            reasons.Add("stale_last_seen");
+        }
+
+        if (!IsFreshTimestamp(worker.CapabilitySnapshotMs, referenceMs, staleAfterMs))
+        {
+            reasons.Add("stale_capabilities");
+        }
+
+        if (!IsPlacementWorkerCandidate(worker.LogicalName, worker.WorkerRootActorName))
+        {
+            reasons.Add("not_worker_candidate");
+        }
+
+        if (string.IsNullOrWhiteSpace(worker.WorkerRootActorName))
+        {
+            reasons.Add("missing_worker_root_actor");
+        }
+
+        if (IsWorkerPressureViolation(worker))
+        {
+            reasons.Add("pressure_violation");
+        }
+
+        var effectiveRamFreeBytes = WorkerCapabilityMath.EffectiveRamFreeBytes(
+            ToUnsignedBytes(worker.RamFreeBytes),
+            ToUnsignedBytes(worker.RamTotalBytes),
+            ToUnsignedBytes(worker.ProcessRamUsedBytes),
+            worker.RamLimitPercent);
+        if (effectiveRamFreeBytes == 0)
+        {
+            reasons.Add("no_effective_ram");
+        }
+
+        var effectiveStorageFreeBytes = WorkerCapabilityMath.EffectiveStorageFreeBytes(
+            ToUnsignedBytes(worker.StorageFreeBytes),
+            ToUnsignedBytes(worker.StorageTotalBytes),
+            worker.StorageLimitPercent);
+        if (effectiveStorageFreeBytes == 0)
+        {
+            reasons.Add("no_effective_storage");
+        }
+
+        var effectiveCpuScore = WorkerCapabilityMath.EffectiveCpuScore(worker.CpuScore, worker.CpuLimitPercent);
+        if (effectiveCpuScore <= 0f)
+        {
+            var hasUsableGpu = false;
+            if (worker.HasGpu)
+            {
+                var effectiveGpuScore = WorkerCapabilityMath.EffectiveGpuScore(worker.GpuScore, worker.GpuComputeLimitPercent);
+                var effectiveVramFreeBytes = WorkerCapabilityMath.EffectiveVramFreeBytes(
+                    ToUnsignedBytes(worker.VramFreeBytes),
+                    ToUnsignedBytes(worker.VramTotalBytes),
+                    worker.GpuVramLimitPercent);
+                hasUsableGpu = effectiveGpuScore > 0f && effectiveVramFreeBytes > 0;
+            }
+
+            if (!hasUsableGpu)
+            {
+                reasons.Add("no_effective_compute_capacity");
+            }
+        }
+
+        return reasons;
     }
 
     private bool IsPlacementInventoryEligibleWorker(WorkerCatalogEntry worker)
