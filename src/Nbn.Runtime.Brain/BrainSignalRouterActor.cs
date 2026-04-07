@@ -2,6 +2,7 @@ using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Proto.Signal;
 using Nbn.Shared;
+using Nbn.Shared.HiveMind;
 using Proto;
 
 namespace Nbn.Runtime.Brain;
@@ -22,6 +23,7 @@ public sealed partial class BrainSignalRouterActor : IActor
     private readonly Dictionary<ulong, TickOutbox> _pendingOutboxes = new();
     private readonly Dictionary<ulong, PendingDeliver> _pendingDeliveries = new();
     private readonly Dictionary<ulong, PendingInputDrain> _pendingInputDrains = new();
+    private ulong _minimumAcceptedTickId = 1;
 
     private PID? _ioGatewayPid;
     private bool _inputCoordinatorModeKnown;
@@ -76,6 +78,9 @@ public sealed partial class BrainSignalRouterActor : IActor
             case ResetBrainRuntimeState resetBrainRuntimeState:
                 await HandleResetBrainRuntimeStateAsync(context, resetBrainRuntimeState);
                 break;
+            case ApplyBrainRuntimeResetAtBarrier resetAtBarrier:
+                await HandleBarrierRuntimeStateResetAsync(context, resetAtBarrier);
+                break;
             case InputDrain inputDrain:
                 HandleInputDrain(context, inputDrain);
                 break;
@@ -99,6 +104,11 @@ public sealed partial class BrainSignalRouterActor : IActor
 
     private void HandleTickCompute(IContext context, TickCompute tickCompute)
     {
+        if (tickCompute.TickId < _minimumAcceptedTickId)
+        {
+            return;
+        }
+
         if (_routingTable.Count == 0)
         {
             return;
@@ -118,6 +128,11 @@ public sealed partial class BrainSignalRouterActor : IActor
         }
 
         var tickId = outboxBatch.TickId;
+        if (tickId < _minimumAcceptedTickId)
+        {
+            return;
+        }
+
         if (!_pendingOutboxes.TryGetValue(tickId, out var outbox))
         {
             outbox = new TickOutbox();

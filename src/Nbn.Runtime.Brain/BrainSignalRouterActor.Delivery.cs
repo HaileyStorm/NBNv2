@@ -16,6 +16,11 @@ public sealed partial class BrainSignalRouterActor
             return;
         }
 
+        if (ack.TickId < _minimumAcceptedTickId)
+        {
+            return;
+        }
+
         if (!_pendingDeliveries.TryGetValue(ack.TickId, out var pending))
         {
             BrainTelemetry.RecordLateAck();

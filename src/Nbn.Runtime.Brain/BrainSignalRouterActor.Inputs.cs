@@ -3,6 +3,7 @@ using Nbn.Proto.Control;
 using Nbn.Proto.Io;
 using Nbn.Proto.Signal;
 using Nbn.Shared;
+using Nbn.Shared.HiveMind;
 using Proto;
 
 namespace Nbn.Runtime.Brain;
@@ -11,6 +12,11 @@ public sealed partial class BrainSignalRouterActor
 {
     private void HandleTickDeliver(IContext context, TickDeliver tickDeliver)
     {
+        if (tickDeliver.TickId < _minimumAcceptedTickId)
+        {
+            return;
+        }
+
         ExpirePendingInputDrains(tickDeliver.TickId);
         ExpirePendingDeliveries(tickDeliver.TickId);
 
@@ -81,6 +87,43 @@ public sealed partial class BrainSignalRouterActor
         }
     }
 
+    private async Task HandleBarrierRuntimeStateResetAsync(
+        IContext context,
+        ApplyBrainRuntimeResetAtBarrier message)
+    {
+        if (message.BrainId != _brainId)
+        {
+            context.Respond(new IoCommandAck
+            {
+                BrainId = message.BrainId.ToProtoUuid(),
+                Command = "reset_brain_runtime_state",
+                Success = false,
+                Message = "brain_id_mismatch"
+            });
+            return;
+        }
+
+        _minimumAcceptedTickId = Math.Max(_minimumAcceptedTickId, message.MinimumAcceptedTickId == 0 ? 1UL : message.MinimumAcceptedTickId);
+        _pendingOutboxes.Clear();
+        _pendingDeliveries.Clear();
+        _pendingInputDrains.Clear();
+        if (message.ResetAccumulator)
+        {
+            _inputDrainPending = false;
+        }
+
+        await HandleResetBrainRuntimeStateCoreAsync(
+                context,
+                new ResetBrainRuntimeState
+                {
+                    BrainId = _brainIdProto,
+                    ResetBuffer = message.ResetBuffer,
+                    ResetAccumulator = message.ResetAccumulator
+                },
+                allowPendingTickState: true)
+            .ConfigureAwait(false);
+    }
+
     private void HandleRuntimeNeuronPulse(IContext context, RuntimeNeuronPulse message)
     {
         if (!IsForBrain(message.BrainId))
@@ -122,6 +165,12 @@ public sealed partial class BrainSignalRouterActor
     }
 
     private async Task HandleResetBrainRuntimeStateAsync(IContext context, ResetBrainRuntimeState message)
+        => await HandleResetBrainRuntimeStateCoreAsync(context, message, allowPendingTickState: false).ConfigureAwait(false);
+
+    private async Task HandleResetBrainRuntimeStateCoreAsync(
+        IContext context,
+        ResetBrainRuntimeState message,
+        bool allowPendingTickState)
     {
         if (!IsForBrain(message.BrainId))
         {
@@ -149,7 +198,8 @@ public sealed partial class BrainSignalRouterActor
             return;
         }
 
-        if (_pendingOutboxes.Count > 0 || _pendingDeliveries.Count > 0 || _pendingInputDrains.Count > 0)
+        if (!allowPendingTickState
+            && (_pendingOutboxes.Count > 0 || _pendingDeliveries.Count > 0 || _pendingInputDrains.Count > 0))
         {
             context.Respond(new IoCommandAck
             {
@@ -222,6 +272,11 @@ public sealed partial class BrainSignalRouterActor
     private void HandleInputDrain(IContext context, InputDrain message)
     {
         if (!IsForBrain(message.BrainId))
+        {
+            return;
+        }
+
+        if (message.TickId < _minimumAcceptedTickId)
         {
             return;
         }

@@ -174,7 +174,14 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            var routerAck = await context.RequestAsync<IoCommandAck>(routerPid, message, DefaultRequestTimeout).ConfigureAwait(false);
+            object routerReset = minimumAcceptedTickId > 0
+                ? new ApplyBrainRuntimeResetAtBarrier(
+                    brainId,
+                    message.ResetBuffer,
+                    message.ResetAccumulator,
+                    minimumAcceptedTickId)
+                : message;
+            var routerAck = await context.RequestAsync<IoCommandAck>(routerPid, routerReset, DefaultRequestTimeout).ConfigureAwait(false);
             if (routerAck is null)
             {
                 RespondCommandAck(context, message.BrainId, "reset_brain_runtime_state", success: false, "brain_router_empty_response");

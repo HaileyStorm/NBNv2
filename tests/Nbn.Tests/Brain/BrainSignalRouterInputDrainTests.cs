@@ -3,6 +3,7 @@ using Nbn.Proto.Io;
 using Nbn.Proto.Signal;
 using Nbn.Runtime.Brain;
 using Nbn.Shared;
+using Nbn.Shared.HiveMind;
 using Nbn.Shared.Addressing;
 using Proto;
 using Xunit;
@@ -273,6 +274,90 @@ public class BrainSignalRouterInputDrainTests
         Assert.Equal("tick_phase_in_progress", resetAck.Message);
 
         await AssertTaskStillPending(tick1Task, TimeSpan.FromMilliseconds(150));
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task BarrierRuntimeReset_ClearsSupersededPendingTickState_And_IgnoresLateOldTickTraffic()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var ioPid = root.Spawn(Props.FromProducer(() => new SilentIoDrainActor(brainId)));
+        var inputShardId = ShardId32.From(NbnConstants.InputRegionId, 0);
+        var runtimeShardId = ShardId32.From(7, 0);
+        var inputPulseTcs = new TaskCompletionSource<RuntimeNeuronPulse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inputStateTcs = new TaskCompletionSource<RuntimeNeuronStateWrite>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inputResetTcs = new TaskCompletionSource<ResetBrainRuntimeState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inputShardPid = root.Spawn(Props.FromProducer(() => new RuntimeShardProbeActor(brainId, inputPulseTcs, inputStateTcs, inputResetTcs)));
+        var pulseTcs = new TaskCompletionSource<RuntimeNeuronPulse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stateTcs = new TaskCompletionSource<RuntimeNeuronStateWrite>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resetTcs = new TaskCompletionSource<ResetBrainRuntimeState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtimeShardPid = root.Spawn(Props.FromProducer(() => new RuntimeShardProbeActor(brainId, pulseTcs, stateTcs, resetTcs)));
+
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(inputShardId.Value, inputShardPid),
+            new ShardRoute(runtimeShardId.Value, runtimeShardPid)
+        })));
+
+        root.Send(router, new RegisterIoGateway
+        {
+            BrainId = brainId.ToProtoUuid(),
+            IoGatewayPid = PidLabel(ioPid),
+            InputCoordinatorMode = InputCoordinatorMode.DirtyOnChange,
+            InputTickDrainArmed = false
+        });
+        root.Send(router, new InputWrite
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputIndex = 0,
+            Value = 1f
+        });
+
+        var tickTask = root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 5 });
+        await AssertTaskStillPending(tickTask, TimeSpan.FromMilliseconds(150));
+
+        var barrierResetAck = await root.RequestAsync<IoCommandAck>(
+            router,
+            new ApplyBrainRuntimeResetAtBarrier(
+                brainId,
+                ResetBuffer: true,
+                ResetAccumulator: true,
+                MinimumAcceptedTickId: 6));
+
+        Assert.True(barrierResetAck.Success, barrierResetAck.Message);
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var inputShardReset = await inputResetTcs.Task.WaitAsync(timeoutCts.Token);
+        var shardReset = await resetTcs.Task.WaitAsync(timeoutCts.Token);
+        Assert.True(inputShardReset.ResetBuffer);
+        Assert.True(inputShardReset.ResetAccumulator);
+        Assert.True(shardReset.ResetBuffer);
+        Assert.True(shardReset.ResetAccumulator);
+
+        root.Send(router, new OutboxBatch
+        {
+            BrainId = brainId.ToProtoUuid(),
+            TickId = 5
+        });
+        root.Send(router, new InputDrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            TickId = 5
+        });
+
+        var plainResetAck = await root.RequestAsync<IoCommandAck>(
+            router,
+            new ResetBrainRuntimeState
+            {
+                BrainId = brainId.ToProtoUuid(),
+                ResetBuffer = true,
+                ResetAccumulator = true
+            });
+
+        Assert.True(plainResetAck.Success, plainResetAck.Message);
         await system.ShutdownAsync();
     }
 

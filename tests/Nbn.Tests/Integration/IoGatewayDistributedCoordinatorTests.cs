@@ -1322,6 +1322,17 @@ public sealed class IoGatewayDistributedCoordinatorTests
                         Message = "router_reset_applied"
                     });
                     break;
+                case Nbn.Shared.HiveMind.ApplyBrainRuntimeResetAtBarrier resetAtBarrier
+                    when resetAtBarrier.BrainId == _brainId:
+                    _resetCount++;
+                    context.Respond(new IoCommandAck
+                    {
+                        BrainId = _brainId.ToProtoUuid(),
+                        Command = "reset_brain_runtime_state",
+                        Success = true,
+                        Message = "router_reset_applied"
+                    });
+                    break;
                 case RegisterIoGateway register when register.BrainId.TryToGuid(out var registeredBrainId) && registeredBrainId == _brainId:
                     _registerIoGatewayCount++;
                     _hasIoGatewayRegistration = true;
