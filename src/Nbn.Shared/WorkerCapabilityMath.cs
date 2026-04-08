@@ -12,6 +12,21 @@ public static class WorkerCapabilityMath
     public static float EffectiveCpuScore(float cpuScore, uint limitPercent)
         => ScaleFloat(cpuScore, ClampPercent(limitPercent));
 
+    public static float EffectiveCpuPlacementScore(float cpuScore, uint cpuCores, uint limitPercent)
+    {
+        var effectiveScore = EffectiveCpuScore(cpuScore, limitPercent);
+        if (effectiveScore > 0f)
+        {
+            return effectiveScore;
+        }
+
+        var effectiveCores = EffectiveCpuCores(cpuCores, limitPercent);
+        return effectiveCores > 0 ? effectiveCores / 1000f : 0f;
+    }
+
+    public static bool HasEffectiveCpuPlacementCapacity(float cpuScore, uint cpuCores, uint limitPercent)
+        => EffectiveCpuPlacementScore(cpuScore, cpuCores, limitPercent) > 0f;
+
     public static float EffectiveGpuScore(float gpuScore, uint limitPercent)
         => ScaleFloat(gpuScore, ClampPercent(limitPercent));
 

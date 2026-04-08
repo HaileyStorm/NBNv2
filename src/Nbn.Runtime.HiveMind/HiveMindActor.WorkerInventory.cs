@@ -253,6 +253,10 @@ public sealed partial class HiveMindActor
         var ramTotalBytes = ToUnsignedBytes(worker.RamTotalBytes);
         var storageTotalBytes = ToUnsignedBytes(worker.StorageTotalBytes);
         var vramTotalBytes = ToUnsignedBytes(worker.VramTotalBytes);
+        var hasCpuFallback = WorkerCapabilityMath.HasEffectiveCpuPlacementCapacity(
+            worker.CpuScore,
+            worker.CpuCores,
+            worker.CpuLimitPercent);
         return WorkerCapabilityMath.IsCpuOverLimit(
                    worker.ProcessCpuLoadPercent,
                    worker.CpuLimitPercent,
@@ -268,6 +272,7 @@ public sealed partial class HiveMindActor
                    worker.StorageLimitPercent,
                    _workerPressureLimitTolerancePercent)
                || (worker.HasGpu
+                   && !hasCpuFallback
                    && WorkerCapabilityMath.IsVramOverLimit(
                        ToUnsignedBytes(worker.VramFreeBytes),
                        vramTotalBytes,

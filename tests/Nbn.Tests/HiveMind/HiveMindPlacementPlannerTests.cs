@@ -780,7 +780,7 @@ public sealed class HiveMindPlacementPlannerTests
     }
 
     [Fact]
-    public void PlacementPlanner_Rejects_Pressured_And_VramLimited_GpuWorkers()
+    public void PlacementPlanner_Rejects_CpuPressured_Workers_But_Keeps_VramLimited_Workers_Eligible_When_CpuFallback_Exists()
     {
         var goodWorker = Guid.Parse("50000000-0000-0000-0000-000000000001");
         var pressuredWorker = Guid.Parse("50000000-0000-0000-0000-000000000002");
@@ -844,10 +844,60 @@ public sealed class HiveMindPlacementPlannerTests
 
         Assert.True(built, failureMessage);
         Assert.Equal(PlacementFailureReason.PlacementFailureNone, failureReason);
-        Assert.Equal([goodWorker], plan.EligibleWorkers.Select(static worker => worker.NodeId).ToArray());
+        Assert.Equal([goodWorker, vramLimitedWorker], plan.EligibleWorkers.Select(static worker => worker.NodeId).ToArray());
+    }
+
+    [Fact]
+    public void PlacementPlanner_Falls_Back_To_Cpu_When_GpuPreferred_Shards_Cannot_Use_Current_Vram()
+    {
+        var workerId = Guid.Parse("50000000-0000-0000-0000-000000000010");
+        var workers = new[]
+        {
+            CreateWorkerCandidate(
+                workerId,
+                "worker-cpu-fallback:12040",
+                cpuScore: 45f,
+                gpuScore: 90f,
+                vramFreeBytes: 12L * 1024 * 1024 * 1024,
+                vramTotalBytes: 16L * 1024 * 1024 * 1024,
+                gpuComputeLimitPercent: 100,
+                gpuVramLimitPercent: 0)
+        };
+
+        var plannerInputs = new PlacementPlanner.PlannerInputs(
+            BrainId: Guid.NewGuid(),
+            PlacementEpoch: 6,
+            RequestId: "gpu-prefers-cpu-fallback",
+            RequestedMs: 100,
+            PlannedMs: 101,
+            WorkerSnapshotMs: 99,
+            ShardStride: 1024,
+            RequestedShardPlan: new ShardPlan
+            {
+                Mode = (ShardPlanMode)1,
+                ShardCount = 1
+            },
+            Regions: new[]
+            {
+                new PlacementPlanner.RegionSpan(0, 4),
+                new PlacementPlanner.RegionSpan(1, 70_000),
+                new PlacementPlanner.RegionSpan(31, 2)
+            },
+            CurrentWorkerNodeIds: Array.Empty<Guid>());
+
+        var built = PlacementPlanner.TryBuildPlan(
+            plannerInputs,
+            workers,
+            out var plan,
+            out var failureReason,
+            out var failureMessage);
+
+        Assert.True(built, failureMessage);
+        Assert.Equal(PlacementFailureReason.PlacementFailureNone, failureReason);
+        Assert.Equal([workerId], plan.EligibleWorkers.Select(static worker => worker.NodeId).ToArray());
         Assert.All(
             plan.Assignments.Where(static assignment => assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard),
-            assignment => Assert.Equal(goodWorker, AssignmentWorkerId(assignment)));
+            assignment => Assert.Equal(workerId, AssignmentWorkerId(assignment)));
     }
 
     [Fact]

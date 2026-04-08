@@ -208,6 +208,51 @@ public sealed class HiveMindWorkerInventoryTests
     }
 
     [Fact]
+    public async Task PlacementWorkerInventory_Keeps_VramLimited_Workers_When_CpuFallback_Is_Still_Usable()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(workerInventoryRefreshMs: 1000, workerInventoryStaleAfterMs: 15_000))));
+
+        var workerId = Guid.NewGuid();
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    workerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "worker-vram-limited:12040",
+                    rootActorName: "worker-node",
+                    logicalName: "nbn.worker",
+                    cpuScore: 35f,
+                    hasGpu: true,
+                    gpuScore: 90f,
+                    vramFreeBytes: 6L * 1024 * 1024 * 1024,
+                    vramTotalBytes: 8L * 1024 * 1024 * 1024,
+                    gpuVramLimitPercent: 0)
+            }
+        });
+
+        var inventory = await root.RequestAsync<PlacementWorkerInventory>(
+            hiveMind,
+            new PlacementWorkerInventoryRequest());
+
+        Assert.Single(inventory.Workers);
+        Assert.Empty(inventory.ExcludedWorkers);
+        Assert.DoesNotContain(inventory.ExclusionCounts, static entry => entry.ReasonCode == "pressure_violation");
+        Assert.Equal(workerId.ToProtoUuid().Value, inventory.Workers[0].WorkerNodeId.Value);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task HiveMind_Pulls_SettingsMonitor_WorkerInventory_Periodically()
     {
         var system = new ActorSystem();

@@ -426,8 +426,8 @@ public static class PlacementPlanner
             return workers
                 .OrderBy(worker => HostedBrainPressureScore(worker, preferGpu))
                 .ThenBy(static worker => worker.ProcessCpuLoadPercent)
-                .ThenByDescending(worker => preferGpu && HasEffectiveGpu(worker) ? 1 : 0)
-                .ThenByDescending(worker => preferGpu ? EffectiveGpuScore(worker) : EffectiveCpuPlacementScore(worker))
+                .ThenByDescending(worker => preferGpu && HasUsableGpuForPlacement(worker) ? 1 : 0)
+                .ThenByDescending(worker => ResolvePreferredPlacementScore(worker, preferGpu))
                 .ThenByDescending(static worker => EffectiveCpuCores(worker))
                 .ThenByDescending(static worker => EffectiveRamFreeBytes(worker))
                 .ThenByDescending(static worker => EffectiveStorageFreeBytes(worker))
@@ -445,8 +445,8 @@ public static class PlacementPlanner
             .ThenBy(worker => currentWorkers.Contains(worker.NodeId) ? 0 : 1)
             .ThenBy(static worker => worker.HostedBrainCount)
             .ThenBy(static worker => worker.ProcessCpuLoadPercent)
-            .ThenByDescending(worker => preferGpu && HasEffectiveGpu(worker) ? 1 : 0)
-            .ThenByDescending(worker => preferGpu ? EffectiveGpuScore(worker) : EffectiveCpuPlacementScore(worker))
+            .ThenByDescending(worker => preferGpu && HasUsableGpuForPlacement(worker) ? 1 : 0)
+            .ThenByDescending(worker => ResolvePreferredPlacementScore(worker, preferGpu))
             .ThenByDescending(static worker => EffectiveCpuCores(worker))
             .ThenByDescending(static worker => EffectiveRamFreeBytes(worker))
             .ThenByDescending(static worker => EffectiveStorageFreeBytes(worker))
@@ -500,8 +500,8 @@ public static class PlacementPlanner
             .ThenBy(worker => currentWorkers.Contains(worker.NodeId) ? 0 : 1)
             .ThenBy(static worker => worker.HostedBrainCount)
             .ThenBy(static worker => worker.ProcessCpuLoadPercent)
-            .ThenByDescending(worker => preferGpu && HasEffectiveGpu(worker) ? 1 : 0)
-            .ThenByDescending(worker => preferGpu ? EffectiveGpuScore(worker) : EffectiveCpuPlacementScore(worker))
+            .ThenByDescending(worker => preferGpu && HasUsableGpuForPlacement(worker) ? 1 : 0)
+            .ThenByDescending(worker => ResolvePreferredPlacementScore(worker, preferGpu))
             .ThenByDescending(static worker => EffectiveCpuCores(worker))
             .ThenByDescending(static worker => EffectiveRamFreeBytes(worker))
             .ThenByDescending(static worker => EffectiveStorageFreeBytes(worker))
@@ -530,6 +530,7 @@ public static class PlacementPlanner
                worker.StorageLimitPercent,
                worker.PressureLimitTolerancePercent)
            && (!worker.HasGpu
+               || HasEffectiveCpuPlacementCapacity(worker)
                || !WorkerCapabilityMath.IsVramOverLimit(
                    ToUnsignedBytes(worker.VramFreeBytes),
                    ToUnsignedBytes(worker.VramTotalBytes),
@@ -548,15 +549,19 @@ public static class PlacementPlanner
             return EffectiveCpuPlacementScore(worker) > 0f;
         }
 
-        return HasEffectiveGpu(worker)
-               && EffectiveGpuScore(worker) > 0f
-               && EffectiveVramFreeBytes(worker) > 0;
+        return HasUsableGpuForPlacement(worker)
+               || HasEffectiveCpuPlacementCapacity(worker);
     }
 
     private static bool HasEffectiveGpu(WorkerCandidate worker)
         => worker.HasGpu
            && worker.GpuComputeLimitPercent > 0
            && worker.GpuVramLimitPercent > 0;
+
+    private static bool HasUsableGpuForPlacement(WorkerCandidate worker)
+        => HasEffectiveGpu(worker)
+           && EffectiveGpuScore(worker) > 0f
+           && EffectiveVramFreeBytes(worker) > 0;
 
     private static bool ShouldPreferGpuForShard(
         ShardPlanSpan shard,
@@ -565,7 +570,7 @@ public static class PlacementPlanner
         RegionShardComputeBackendPreference computeBackendPreference,
         int regionShardGpuNeuronThreshold)
         => RegionShardComputeBackendPreferenceResolver.IsGpuExecutionEnabled(computeBackendPreference)
-           && HasEffectiveGpu(worker)
+           && HasUsableGpuForPlacement(worker)
            && shard.NeuronCount >= ResolveRegionShardGpuNeuronThreshold(stride, worker, regionShardGpuNeuronThreshold);
 
     private static int ResolveRegionShardGpuNeuronThreshold(
@@ -581,19 +586,18 @@ public static class PlacementPlanner
         => WorkerCapabilityMath.EffectiveCpuScore(worker.CpuScore, worker.CpuLimitPercent);
 
     private static float EffectiveCpuPlacementScore(WorkerCandidate worker)
-    {
-        var effectiveScore = EffectiveCpuScore(worker);
-        if (effectiveScore > 0f)
-        {
-            return effectiveScore;
-        }
+        => WorkerCapabilityMath.EffectiveCpuPlacementScore(worker.CpuScore, worker.CpuCores, worker.CpuLimitPercent);
 
-        var effectiveCores = EffectiveCpuCores(worker);
-        return effectiveCores > 0 ? effectiveCores / 1000f : 0f;
-    }
+    private static bool HasEffectiveCpuPlacementCapacity(WorkerCandidate worker)
+        => WorkerCapabilityMath.HasEffectiveCpuPlacementCapacity(worker.CpuScore, worker.CpuCores, worker.CpuLimitPercent);
 
     private static float EffectiveGpuScore(WorkerCandidate worker)
         => WorkerCapabilityMath.EffectiveGpuScore(worker.GpuScore, worker.GpuComputeLimitPercent);
+
+    private static float ResolvePreferredPlacementScore(WorkerCandidate worker, bool preferGpu)
+        => preferGpu && HasUsableGpuForPlacement(worker)
+            ? EffectiveGpuScore(worker)
+            : EffectiveCpuPlacementScore(worker);
 
     private static double HostedBrainPressureScore(WorkerCandidate worker, bool preferGpu)
     {
@@ -602,7 +606,7 @@ public static class PlacementPlanner
             return 0d;
         }
 
-        var capacity = preferGpu && HasEffectiveGpu(worker)
+        var capacity = preferGpu && HasUsableGpuForPlacement(worker)
             ? Math.Max(0f, EffectiveGpuScore(worker))
             : Math.Max(0f, EffectiveCpuPlacementScore(worker));
         if (capacity <= 0f)
