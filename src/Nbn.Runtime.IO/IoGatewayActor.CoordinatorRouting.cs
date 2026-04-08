@@ -13,6 +13,7 @@ public sealed partial class IoGatewayActor
     {
         if (!TryGetBrainId(message, out var brainId))
         {
+            RespondInputCommandAck(context, message, null, success: false, "brain_id_invalid");
             return;
         }
 
@@ -21,17 +22,41 @@ public sealed partial class IoGatewayActor
         {
             entry = await EnsureBrainEntryAsync(context, brainId).ConfigureAwait(false);
         }
+        if (entry is null)
+        {
+            RespondInputCommandAck(context, message, brainId.ToProtoUuid(), success: false, "brain_io_unavailable");
+            return;
+        }
 
         var shouldRequestTickDrainBeforeForward = false;
-        if (entry is not null)
+        var inputAck = default(IoCommandAck);
+        try
         {
             shouldRequestTickDrainBeforeForward = entry.InputState.ShouldRequestTickDrain;
             TrackInputState(entry, message);
-            await DispatchCoordinatorMessageAsync(context, entry.InputPid, message).ConfigureAwait(false);
+            inputAck = await DispatchCoordinatorMessageAsync(context, entry.InputPid, message).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            RespondInputCommandAck(context, message, brainId.ToProtoUuid(), success: false, $"brain_input_request_failed:{ex.GetBaseException().Message}");
+            return;
+        }
+
+        if (inputAck is null)
+        {
+            RespondInputCommandAck(context, message, brainId.ToProtoUuid(), success: false, "brain_input_empty_response");
+            return;
+        }
+
+        if (!inputAck.Success)
+        {
+            context.Respond(inputAck);
+            return;
         }
 
         if (_hiveMindPid is null)
         {
+            RespondInputCommandAck(context, message, brainId.ToProtoUuid(), success: false, "hivemind_unavailable");
             return;
         }
 
@@ -61,10 +86,15 @@ public sealed partial class IoGatewayActor
 
         if (routerPid is null)
         {
+            RespondInputCommandAck(context, message, brainId.ToProtoUuid(), success: false, "brain_router_unavailable");
             return;
         }
 
         context.Send(routerPid, message);
+        if (context.Sender is not null)
+        {
+            context.Respond(inputAck);
+        }
     }
 
     private async Task ForwardRuntimeNeuronAsync(IContext context, object message)
@@ -1074,6 +1104,18 @@ public sealed partial class IoGatewayActor
         var command = TryGetOutputSubscriptionCommand(message, out var subscription)
             ? subscription.Command
             : "output_command";
+
+        RespondCommandAck(context, brainId, command, success, ackMessage);
+    }
+
+    private static void RespondInputCommandAck(IContext context, object message, Uuid? brainId, bool success, string ackMessage)
+    {
+        var command = message switch
+        {
+            InputWrite => "input_write",
+            InputVector => "input_vector",
+            _ => "input_command"
+        };
 
         RespondCommandAck(context, brainId, command, success, ackMessage);
     }

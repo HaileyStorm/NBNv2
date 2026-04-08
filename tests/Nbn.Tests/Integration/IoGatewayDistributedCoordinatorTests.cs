@@ -509,6 +509,67 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
+    public async Task InputVector_RequestToGateway_ReturnsAck_And_ForwardsToCoordinator()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPid = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(
+            brainId,
+            3,
+            ProtoControl.InputCoordinatorMode.ReplayLatestVector)));
+        var outputPid = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+        var routerPid = root.Spawn(Props.FromProducer(() => new InputRouterProbeActor(brainId)));
+        var hivePid = root.Spawn(Props.FromProducer(() => new BrainIoInfoHiveProbeActor(
+            brainId,
+            inputPid,
+            outputPid,
+            routerPid,
+            inputWidth: 3,
+            outputWidth: 1,
+            inputMode: ProtoControl.InputCoordinatorMode.ReplayLatestVector)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hivePid)));
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 3,
+            OutputWidth = 1,
+            InputCoordinatorMode = ProtoControl.InputCoordinatorMode.ReplayLatestVector,
+            InputCoordinatorPid = PidLabel(inputPid),
+            OutputCoordinatorPid = PidLabel(outputPid),
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = false
+        });
+
+        var ack = await root.RequestAsync<IoCommandAck>(
+            gateway,
+            new InputVector
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Values = { 0.25f, 0.5f, 0.75f }
+            },
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(ack.Success, ack.Message);
+        Assert.Equal("input_vector", ack.Command);
+
+        var drain = await root.RequestAsync<InputDrain>(
+            gateway,
+            new DrainInputs
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TickId = 42
+            },
+            TimeSpan.FromSeconds(5));
+
+        Assert.Equal([0.25f, 0.5f, 0.75f], drain.Contribs.Select(static contrib => contrib.Value).ToArray());
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RegisterBrain_DoesNotReplay_RejectedNonFiniteInputVector_Across_CoordinatorMoves()
     {
         var system = new ActorSystem();
