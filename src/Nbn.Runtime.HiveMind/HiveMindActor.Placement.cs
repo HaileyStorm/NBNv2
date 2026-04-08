@@ -90,6 +90,7 @@ public sealed partial class HiveMindActor
                 {
                     BrainId = brainId.ToProtoUuid(),
                     BaseDef = message.BrainDef.Clone(),
+                    LastSnapshot = HasArtifactRef(message.LastSnapshot) ? message.LastSnapshot.Clone() : null,
                     InputWidth = message.InputWidth,
                     OutputWidth = message.OutputWidth,
                     RequestId = $"spawn:{brainId:N}",

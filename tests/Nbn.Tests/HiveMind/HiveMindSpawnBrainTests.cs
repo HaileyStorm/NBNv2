@@ -189,6 +189,59 @@ public sealed class HiveMindSpawnBrainTests
     }
 
     [Fact]
+    public async Task SpawnBrain_Preserves_LastSnapshot_Metadata_When_Provided()
+    {
+        var (artifactRoot, brainDef, lastSnapshot) = await StoreBrainDefinitionWithSnapshotAsync();
+        try
+        {
+            var system = new ActorSystem();
+            var root = system.Root;
+
+            var workerId = Guid.NewGuid();
+            var workerProbe = new SpawnPlacementWorkerProbe(workerId, dropAcks: false);
+            var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+            var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 250,
+                    retryBackoffMs: 0,
+                    maxRetries: 0,
+                    reconcileTimeoutMs: 500))));
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var spawnAck = await root.RequestAsync<SpawnBrainAck>(
+                hiveMind,
+                new SpawnBrain
+                {
+                    BrainDef = brainDef,
+                    LastSnapshot = lastSnapshot.Clone()
+                },
+                TimeSpan.FromSeconds(10));
+
+            Assert.True(spawnAck.BrainId.TryToGuid(out var brainId));
+            Assert.NotEqual(Guid.Empty, brainId);
+            var readyAck = await AwaitSpawnPlacementAsync(root, hiveMind, brainId, timeoutMs: 5_000);
+            Assert.True(readyAck.AcceptedForPlacement);
+
+            var observedAssignments = await root.RequestAsync<ObservedSpawnAssignmentsResult>(
+                workerPid,
+                new GetObservedSpawnAssignments(),
+                TimeSpan.FromSeconds(5));
+            Assert.NotEmpty(observedAssignments.Assignments);
+            Assert.All(observedAssignments.Assignments, assignment => Assert.Equal(lastSnapshot.ToSha256Hex(), assignment.LastSnapshot.ToSha256Hex()));
+
+            await system.ShutdownAsync();
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                DeleteDirectoryWithRetries(artifactRoot);
+            }
+        }
+    }
+
+    [Fact]
     public async Task SpawnBrain_DirectHiveMindRequest_Registers_RemoteCoordinator_Metadata_With_Io()
     {
         var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
@@ -1538,6 +1591,16 @@ public sealed class HiveMindSpawnBrainTests
         return (artifactRoot, brainDef);
     }
 
+    private static async Task<(string ArtifactRoot, ArtifactRef BrainDef, ArtifactRef LastSnapshot)> StoreBrainDefinitionWithSnapshotAsync()
+    {
+        var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
+        var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+        var minimalNbs = NbnTestVectors.CreateMinimalNbs(NbnTestVectors.CreateMinimalNbn());
+        var snapshotManifest = await store.StoreAsync(new MemoryStream(minimalNbs), "application/x-nbs");
+        var lastSnapshot = snapshotManifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)snapshotManifest.ByteLength, "application/x-nbs", artifactRoot);
+        return (artifactRoot, brainDef, lastSnapshot);
+    }
+
     private static IoOptions CreateIoOptions()
         => new(
             BindHost: "127.0.0.1",
@@ -1808,9 +1871,13 @@ public sealed class HiveMindSpawnBrainTests
 
     private sealed record GetObservedSpawnAssignmentIds;
 
+    private sealed record GetObservedSpawnAssignments;
+
     private sealed record GetSpawnPlacementAssignmentRequestCount;
 
     private sealed record ObservedSpawnAssignmentIdsResult(IReadOnlyList<string> AssignmentIds);
+
+    private sealed record ObservedSpawnAssignmentsResult(IReadOnlyList<PlacementAssignment> Assignments);
 
     private sealed record GetObservedSpawnReplyPids;
 
@@ -1866,6 +1933,9 @@ public sealed class HiveMindSpawnBrainTests
                     break;
                 case GetObservedSpawnAssignmentIds:
                     context.Respond(new ObservedSpawnAssignmentIdsResult(_observedAssignmentIds.ToArray()));
+                    break;
+                case GetObservedSpawnAssignments:
+                    context.Respond(new ObservedSpawnAssignmentsResult(_knownAssignments.Values.Select(static assignment => assignment.Clone()).ToArray()));
                     break;
                 case GetSpawnPlacementAssignmentRequestCount:
                     context.Respond(AssignmentRequestCount);

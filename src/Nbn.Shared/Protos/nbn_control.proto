@@ -11,6 +11,7 @@ message SpawnBrain {
   uint32 input_width = 3;
   uint32 output_width = 4;
   bool start_paused = 5;
+  nbn.ArtifactRef last_snapshot = 6; // .nbs (optional; may be empty sha)
 }
 
 message SpawnBrainAck {
