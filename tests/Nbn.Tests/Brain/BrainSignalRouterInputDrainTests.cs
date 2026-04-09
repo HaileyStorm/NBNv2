@@ -180,6 +180,107 @@ public class BrainSignalRouterInputDrainTests
     }
 
     [Fact]
+    public async Task RequestStyle_InputWrite_DoesNot_Poison_Registered_IoGateway_For_Later_DrainInputs()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var ioPid = root.Spawn(Props.FromProducer(() => new CountingIoDrainActor(brainId, includeContribution: false)));
+        var inputShardId = ShardId32.From(NbnConstants.InputRegionId, 0);
+        var inputShardPid = root.Spawn(Props.FromProducer(() => new AckingInputShardActor(brainId, inputShardId)));
+
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(inputShardId.Value, inputShardPid)
+        })));
+
+        root.Send(router, new RegisterIoGateway
+        {
+            BrainId = brainId.ToProtoUuid(),
+            IoGatewayPid = PidLabel(ioPid),
+            InputCoordinatorMode = InputCoordinatorMode.DirtyOnChange,
+            InputTickDrainArmed = false
+        });
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var writeAck = await root.RequestAsync<IoCommandAck>(
+                router,
+                new InputWrite
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    InputIndex = 0,
+                    Value = 0.5f
+                })
+            .WaitAsync(timeoutCts.Token);
+
+        Assert.True(writeAck.Success, writeAck.Message);
+
+        var tickDone = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 })
+            .WaitAsync(timeoutCts.Token);
+
+        Assert.Equal((ulong)1, tickDone.TickId);
+        Assert.Equal(1, (await root.RequestAsync<DrainRequestCount>(ioPid, new GetDrainRequestCount())).Count);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task RequestStyle_Reset_DoesNot_Poison_Registered_IoGateway_For_Later_DrainInputs()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var ioPid = root.Spawn(Props.FromProducer(() => new CountingIoDrainActor(brainId, includeContribution: false)));
+        var inputShardId = ShardId32.From(NbnConstants.InputRegionId, 0);
+        var inputShardPid = root.Spawn(Props.FromProducer(() => new ResettableAckingInputShardActor(brainId, inputShardId)));
+
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(inputShardId.Value, inputShardPid)
+        })));
+
+        root.Send(router, new RegisterIoGateway
+        {
+            BrainId = brainId.ToProtoUuid(),
+            IoGatewayPid = PidLabel(ioPid),
+            InputCoordinatorMode = InputCoordinatorMode.DirtyOnChange,
+            InputTickDrainArmed = false
+        });
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var resetAck = await root.RequestAsync<IoCommandAck>(
+                router,
+                new ResetBrainRuntimeState
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    ResetBuffer = true,
+                    ResetAccumulator = true
+                })
+            .WaitAsync(timeoutCts.Token);
+
+        Assert.True(resetAck.Success, resetAck.Message);
+
+        root.Send(router, new InputWrite
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputIndex = 0,
+            Value = 0.75f
+        });
+
+        var tickDone = await root.RequestAsync<TickDeliverDone>(router, new TickDeliver { TickId = 1 })
+            .WaitAsync(timeoutCts.Token);
+
+        Assert.Equal((ulong)1, tickDone.TickId);
+        Assert.Equal(1, (await root.RequestAsync<DrainRequestCount>(ioPid, new GetDrainRequestCount())).Count);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task TickDeliver_MissingInputDrain_DoesNotWedge_SubsequentTicks()
     {
         var system = new ActorSystem();
@@ -886,6 +987,53 @@ public class BrainSignalRouterInputDrainTests
                 {
                     context.Request(context.Sender, ack);
                 }
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private bool Matches(Nbn.Proto.Uuid? brainId)
+            => brainId is not null && brainId.TryToGuid(out var guid) && guid == _brainId;
+    }
+
+    private sealed class ResettableAckingInputShardActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly ShardId32 _shardId;
+
+        public ResettableAckingInputShardActor(Guid brainId, ShardId32 shardId)
+        {
+            _brainId = brainId;
+            _shardId = shardId;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case SignalBatch batch when Matches(batch.BrainId):
+                    var ack = new SignalBatchAck
+                    {
+                        BrainId = _brainId.ToProtoUuid(),
+                        RegionId = (uint)_shardId.RegionId,
+                        ShardId = _shardId.ToProtoShardId32(),
+                        TickId = batch.TickId
+                    };
+                    if (context.Sender is not null)
+                    {
+                        context.Request(context.Sender, ack);
+                    }
+
+                    break;
+                case ResetBrainRuntimeState reset when Matches(reset.BrainId):
+                    context.Respond(new IoCommandAck
+                    {
+                        BrainId = reset.BrainId,
+                        Command = "reset_brain_runtime_state",
+                        Success = true,
+                        Message = "applied"
+                    });
+                    break;
             }
 
             return Task.CompletedTask;

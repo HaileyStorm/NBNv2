@@ -75,7 +75,8 @@ public sealed partial class BrainSignalRouterActor
             return;
         }
 
-        CaptureIoGateway(context.Sender);
+        // Request-style callers can arrive with a transient future PID as Sender.
+        // Preserve the registered IO gateway and only arm the next drain.
         _inputDrainPending = true;
         if (LogInputDiagnostics)
         {
@@ -112,7 +113,8 @@ public sealed partial class BrainSignalRouterActor
             return;
         }
 
-        CaptureIoGateway(context.Sender);
+        // Request-style callers can arrive with a transient future PID as Sender.
+        // Preserve the registered IO gateway and only arm the next drain.
         _inputDrainPending = true;
         if (LogInputDiagnostics)
         {
@@ -228,8 +230,8 @@ public sealed partial class BrainSignalRouterActor
             return;
         }
 
-        CaptureIoGateway(context.Sender);
-
+        // Runtime resets also arrive via request-style routing from IO Gateway.
+        // Do not replace the registered IO gateway from the transient request sender.
         if (!message.ResetBuffer && !message.ResetAccumulator)
         {
             context.Respond(new IoCommandAck
