@@ -570,6 +570,70 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
+    public async Task InputWrite_RequestToGateway_ReturnsAck_And_ArmsRouterBeforeDrain()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPid = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(
+            brainId,
+            3,
+            ProtoControl.InputCoordinatorMode.DirtyOnChange)));
+        var outputPid = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+        var routerPid = root.Spawn(Props.FromProducer(() => new InputRouterProbeActor(brainId)));
+        var hivePid = root.Spawn(Props.FromProducer(() => new BrainIoInfoHiveProbeActor(
+            brainId,
+            inputPid,
+            outputPid,
+            routerPid,
+            inputWidth: 3,
+            outputWidth: 1,
+            inputMode: ProtoControl.InputCoordinatorMode.DirtyOnChange)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hivePid)));
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 3,
+            OutputWidth = 1,
+            InputCoordinatorMode = ProtoControl.InputCoordinatorMode.DirtyOnChange,
+            InputCoordinatorPid = PidLabel(inputPid),
+            OutputCoordinatorPid = PidLabel(outputPid),
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = false
+        });
+
+        var ack = await root.RequestAsync<IoCommandAck>(
+            gateway,
+            new InputWrite
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputIndex = 1,
+                Value = 0.75f
+            },
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(ack.Success, ack.Message);
+        Assert.Equal("input_write", ack.Command);
+
+        var drain = await root.RequestAsync<InputDrain>(
+            gateway,
+            new DrainInputs
+            {
+                BrainId = brainId.ToProtoUuid(),
+                TickId = 43
+            },
+            TimeSpan.FromSeconds(5));
+
+        var contribution = Assert.Single(drain.Contribs);
+        Assert.Equal(1u, contribution.TargetNeuronId);
+        Assert.Equal(0.75f, contribution.Value);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RegisterBrain_DoesNotReplay_RejectedNonFiniteInputVector_Across_CoordinatorMoves()
     {
         var system = new ActorSystem();
@@ -1368,8 +1432,32 @@ public sealed class IoGatewayDistributedCoordinatorTests
         {
             switch (context.Message)
             {
+                case InputWrite inputWrite when inputWrite.BrainId.TryToGuid(out var inputWriteBrainId) && inputWriteBrainId == _brainId:
+                    if (context.Sender is not null)
+                    {
+                        context.Respond(new IoCommandAck
+                        {
+                            BrainId = inputWrite.BrainId,
+                            Command = "input_write",
+                            Success = true,
+                            Message = "accepted"
+                        });
+                    }
+
+                    break;
                 case InputVector input when input.BrainId.TryToGuid(out var brainId) && brainId == _brainId:
                     _inputVectorCount++;
+                    if (context.Sender is not null)
+                    {
+                        context.Respond(new IoCommandAck
+                        {
+                            BrainId = input.BrainId,
+                            Command = "input_vector",
+                            Success = true,
+                            Message = "accepted"
+                        });
+                    }
+
                     break;
                 case ResetBrainRuntimeState reset
                     when reset.BrainId.TryToGuid(out var resetBrainId)
@@ -1662,6 +1750,38 @@ public sealed class IoGatewayDistributedCoordinatorTests
         {
             switch (context.Message)
             {
+                case InputWrite inputWrite
+                    when inputWrite.BrainId is not null
+                         && inputWrite.BrainId.TryToGuid(out var inputWriteBrainId)
+                         && inputWriteBrainId == _brainId:
+                    if (context.Sender is not null)
+                    {
+                        context.Respond(new IoCommandAck
+                        {
+                            BrainId = inputWrite.BrainId,
+                            Command = "input_write",
+                            Success = true,
+                            Message = "accepted"
+                        });
+                    }
+
+                    break;
+                case InputVector inputVector
+                    when inputVector.BrainId is not null
+                         && inputVector.BrainId.TryToGuid(out var inputVectorBrainId)
+                         && inputVectorBrainId == _brainId:
+                    if (context.Sender is not null)
+                    {
+                        context.Respond(new IoCommandAck
+                        {
+                            BrainId = inputVector.BrainId,
+                            Command = "input_vector",
+                            Success = true,
+                            Message = "accepted"
+                        });
+                    }
+
+                    break;
                 case RegisterIoGateway register
                     when register.BrainId is not null
                          && register.BrainId.TryToGuid(out var brainId)

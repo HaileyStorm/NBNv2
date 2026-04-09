@@ -61,6 +61,17 @@ public sealed partial class BrainSignalRouterActor
     {
         if (!IsForBrain(message.BrainId))
         {
+            if (context.Sender is not null)
+            {
+                context.Respond(new IoCommandAck
+                {
+                    BrainId = message.BrainId,
+                    Command = "input_write",
+                    Success = false,
+                    Message = "brain_id_mismatch"
+                });
+            }
+
             return;
         }
 
@@ -70,12 +81,34 @@ public sealed partial class BrainSignalRouterActor
         {
             LogInput($"InputWrite received sender={PidLabel(context.Sender)} ioGateway={PidLabel(_ioGatewayPid)} index={message.InputIndex} value={message.Value:0.###}");
         }
+
+        if (context.Sender is not null)
+        {
+            context.Respond(new IoCommandAck
+            {
+                BrainId = _brainIdProto,
+                Command = "input_write",
+                Success = true,
+                Message = "accepted"
+            });
+        }
     }
 
     private void HandleInputVector(IContext context, InputVector message)
     {
         if (!IsForBrain(message.BrainId))
         {
+            if (context.Sender is not null)
+            {
+                context.Respond(new IoCommandAck
+                {
+                    BrainId = message.BrainId,
+                    Command = "input_vector",
+                    Success = false,
+                    Message = "brain_id_mismatch"
+                });
+            }
+
             return;
         }
 
@@ -84,6 +117,17 @@ public sealed partial class BrainSignalRouterActor
         if (LogInputDiagnostics)
         {
             LogInput($"InputVector received sender={PidLabel(context.Sender)} ioGateway={PidLabel(_ioGatewayPid)} width={message.Values.Count}");
+        }
+
+        if (context.Sender is not null)
+        {
+            context.Respond(new IoCommandAck
+            {
+                BrainId = _brainIdProto,
+                Command = "input_vector",
+                Success = true,
+                Message = "accepted"
+            });
         }
     }
 

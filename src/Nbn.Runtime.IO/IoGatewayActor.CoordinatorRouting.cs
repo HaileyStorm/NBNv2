@@ -90,7 +90,29 @@ public sealed partial class IoGatewayActor
             return;
         }
 
-        context.Send(routerPid, message);
+        IoCommandAck? routerAck;
+        try
+        {
+            routerAck = await context.RequestAsync<IoCommandAck>(routerPid, message, DefaultRequestTimeout).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            RespondInputCommandAck(context, message, brainId.ToProtoUuid(), success: false, $"brain_router_request_failed:{ex.GetBaseException().Message}");
+            return;
+        }
+
+        if (routerAck is null)
+        {
+            RespondInputCommandAck(context, message, brainId.ToProtoUuid(), success: false, "brain_router_empty_response");
+            return;
+        }
+
+        if (!routerAck.Success)
+        {
+            context.Respond(routerAck);
+            return;
+        }
+
         if (context.Sender is not null)
         {
             context.Respond(inputAck);
