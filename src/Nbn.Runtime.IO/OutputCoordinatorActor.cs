@@ -27,12 +27,14 @@ public sealed record ApplyOutputCoordinatorRuntimeReset(Guid BrainId, ulong Mini
 public sealed class OutputCoordinatorActor : IActor
 {
     private static readonly bool LogOutput = IsEnvTrue("NBN_IO_LOG_OUTPUT");
+    private static readonly TimeSpan LatestOnlyFlushDelay = TimeSpan.FromMilliseconds(1);
     private const int MaxPendingVectorTicks = 16;
     private readonly Guid _brainId;
     private readonly Nbn.Proto.Uuid _brainIdProto;
     private int _outputWidth;
-    private readonly Dictionary<string, PID> _outputSubscribers = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, PID> _vectorSubscribers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, OutputSubscriberState> _outputSubscribers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, OutputSubscriberState> _vectorSubscribers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _subscriberWatchRefCounts = new(StringComparer.Ordinal);
     private readonly Dictionary<ulong, PendingVectorTick> _pendingVectors = new();
     private ulong _latestCompletedVectorTick;
     private ulong _minimumAcceptedTickId = 1;
@@ -57,22 +59,53 @@ public sealed class OutputCoordinatorActor : IActor
             case SubscribeOutputs subscribe:
                 HandleSubscriptionCommand(
                     context,
-                    new SubscriptionCommand(subscribe.SubscriberActor, _outputSubscribers, "subscribe_outputs", "subscribe single", true));
+                    new SubscriptionCommand(
+                        subscribe.SubscriberActor,
+                        ResolveDeliveryMode(subscribe.DeliveryMode),
+                        _outputSubscribers,
+                        "subscribe_outputs",
+                        "subscribe single",
+                        "single",
+                        true));
                 break;
             case UnsubscribeOutputs unsubscribe:
                 HandleSubscriptionCommand(
                     context,
-                    new SubscriptionCommand(unsubscribe.SubscriberActor, _outputSubscribers, "unsubscribe_outputs", "unsubscribe single", false));
+                    new SubscriptionCommand(
+                        unsubscribe.SubscriberActor,
+                        OutputSubscriptionDeliveryMode.Exact,
+                        _outputSubscribers,
+                        "unsubscribe_outputs",
+                        "unsubscribe single",
+                        "single",
+                        false));
                 break;
             case SubscribeOutputsVector subscribeVector:
                 HandleSubscriptionCommand(
                     context,
-                    new SubscriptionCommand(subscribeVector.SubscriberActor, _vectorSubscribers, "subscribe_outputs_vector", "subscribe vector", true));
+                    new SubscriptionCommand(
+                        subscribeVector.SubscriberActor,
+                        ResolveDeliveryMode(subscribeVector.DeliveryMode),
+                        _vectorSubscribers,
+                        "subscribe_outputs_vector",
+                        "subscribe vector",
+                        "vector",
+                        true));
                 break;
             case UnsubscribeOutputsVector unsubscribeVector:
                 HandleSubscriptionCommand(
                     context,
-                    new SubscriptionCommand(unsubscribeVector.SubscriberActor, _vectorSubscribers, "unsubscribe_outputs_vector", "unsubscribe vector", false));
+                    new SubscriptionCommand(
+                        unsubscribeVector.SubscriberActor,
+                        OutputSubscriptionDeliveryMode.Exact,
+                        _vectorSubscribers,
+                        "unsubscribe_outputs_vector",
+                        "unsubscribe vector",
+                        "vector",
+                        false));
+                break;
+            case Terminated terminated:
+                HandleSubscriberTerminated(context, terminated);
                 break;
             case OutputEvent outputEvent:
                 EmitSingle(context, new EmitOutput(outputEvent.OutputIndex, outputEvent.Value, outputEvent.TickId));
@@ -96,6 +129,9 @@ public sealed class OutputCoordinatorActor : IActor
             case EmitOutputVectorSegment message:
                 EmitVectorSegment(context, message);
                 break;
+            case FlushLatestOutputSubscriberRequest message:
+                FlushLatestOutputSubscriber(context, message);
+                break;
         }
 
         return Task.CompletedTask;
@@ -106,20 +142,37 @@ public sealed class OutputCoordinatorActor : IActor
         var subscriber = ResolveSubscriberPid(context, command.SubscriberActor);
         if (command.Subscribe)
         {
-            AddSubscriber(subscriber, command.Set);
+            AddSubscriber(context, subscriber, command.DeliveryMode, command.Set);
         }
         else
         {
-            RemoveSubscriber(subscriber, command.Set);
+            RemoveSubscriber(context, subscriber, command.Set, command.Stream);
         }
 
         if (LogOutput)
         {
             Console.WriteLine(
-                $"OutputCoordinator[{_brainId:D}] {command.LogLabel} sender={PidLabel(context.Sender)} resolved={PidLabel(subscriber)} total={command.Set.Count}.");
+                $"OutputCoordinator[{_brainId:D}] {command.LogLabel} sender={PidLabel(context.Sender)} resolved={PidLabel(subscriber)} mode={command.DeliveryMode} total={command.Set.Count}.");
         }
 
         Respond(context, command.Command, success: subscriber is not null);
+    }
+
+    private void HandleSubscriberTerminated(IContext context, Terminated terminated)
+    {
+        if (terminated.Who is null)
+        {
+            return;
+        }
+
+        var key = PidKey(terminated.Who);
+        var removedSingle = RemoveSubscriberByKey(context, key, _outputSubscribers, "single", "terminated", releaseWatch: true);
+        var removedVector = RemoveSubscriberByKey(context, key, _vectorSubscribers, "vector", "terminated", releaseWatch: true);
+        if (LogOutput && (removedSingle || removedVector))
+        {
+            Console.WriteLine(
+                $"OutputCoordinator[{_brainId:D}] removed terminated subscriber={PidLabel(terminated.Who)} single={removedSingle} vector={removedVector}.");
+        }
     }
 
     private void ApplyOutputWidthUpdate(UpdateOutputWidth message)
@@ -172,7 +225,7 @@ public sealed class OutputCoordinatorActor : IActor
 
         foreach (var subscriber in _outputSubscribers.Values)
         {
-            context.Send(subscriber, evt);
+            SendOrQueueSingle(context, subscriber, evt);
         }
     }
 
@@ -320,7 +373,101 @@ public sealed class OutputCoordinatorActor : IActor
 
         foreach (var subscriber in _vectorSubscribers.Values)
         {
-            context.Send(subscriber, evt);
+            SendOrQueueVector(context, subscriber, evt);
+        }
+    }
+
+    private void SendOrQueueSingle(IContext context, OutputSubscriberState subscriber, OutputEvent evt)
+    {
+        if (subscriber.DeliveryMode == OutputSubscriptionDeliveryMode.LatestOnly)
+        {
+            QueueLatestSingle(context, subscriber, evt);
+            return;
+        }
+
+        context.Send(subscriber.Pid, evt);
+    }
+
+    private void SendOrQueueVector(IContext context, OutputSubscriberState subscriber, OutputVectorEvent evt)
+    {
+        if (subscriber.DeliveryMode == OutputSubscriptionDeliveryMode.LatestOnly)
+        {
+            QueueLatestVector(context, subscriber, evt);
+            return;
+        }
+
+        context.Send(subscriber.Pid, evt);
+    }
+
+    private void QueueLatestSingle(IContext context, OutputSubscriberState subscriber, OutputEvent evt)
+    {
+        if (subscriber.PendingSingle is not null)
+        {
+            IoTelemetry.RecordOutputSubscriberDropped(
+                _brainId,
+                stream: "single",
+                reason: "latest_replaced",
+                subscriber.DeliveryMode,
+                _outputWidth);
+        }
+
+        subscriber.PendingSingle = evt;
+        ScheduleLatestOnlyFlush(context, subscriber, vector: false);
+    }
+
+    private void QueueLatestVector(IContext context, OutputSubscriberState subscriber, OutputVectorEvent evt)
+    {
+        if (subscriber.PendingVector is not null)
+        {
+            IoTelemetry.RecordOutputSubscriberDropped(
+                _brainId,
+                stream: "vector",
+                reason: "latest_replaced",
+                subscriber.DeliveryMode,
+                _outputWidth);
+        }
+
+        subscriber.PendingVector = evt;
+        ScheduleLatestOnlyFlush(context, subscriber, vector: true);
+    }
+
+    private static void ScheduleLatestOnlyFlush(IContext context, OutputSubscriberState subscriber, bool vector)
+    {
+        if (subscriber.FlushScheduled)
+        {
+            return;
+        }
+
+        subscriber.FlushScheduled = true;
+        ScheduleSelf(context, LatestOnlyFlushDelay, new FlushLatestOutputSubscriberRequest(subscriber.Key, vector));
+    }
+
+    private void FlushLatestOutputSubscriber(IContext context, FlushLatestOutputSubscriberRequest message)
+    {
+        var subscribers = message.Vector ? _vectorSubscribers : _outputSubscribers;
+        if (!subscribers.TryGetValue(message.SubscriberKey, out var subscriber))
+        {
+            return;
+        }
+
+        subscriber.FlushScheduled = false;
+        if (message.Vector)
+        {
+            var output = subscriber.PendingVector;
+            subscriber.PendingVector = null;
+            if (output is not null)
+            {
+                context.Send(subscriber.Pid, output);
+            }
+
+            return;
+        }
+
+        var single = subscriber.PendingSingle;
+        subscriber.PendingSingle = null;
+        if (single is not null)
+        {
+            context.Send(subscriber.Pid, single);
         }
     }
 
@@ -374,28 +521,133 @@ public sealed class OutputCoordinatorActor : IActor
         Console.WriteLine($"OutputCoordinator[{_brainId:D}] output vector rejected: {reason}.");
     }
 
-    private static void AddSubscriber(PID? sender, Dictionary<string, PID> set)
+    private void AddSubscriber(
+        IContext context,
+        PID? sender,
+        OutputSubscriptionDeliveryMode deliveryMode,
+        Dictionary<string, OutputSubscriberState> set)
     {
         if (sender is null)
         {
             return;
         }
 
-        set[PidKey(sender)] = sender;
+        var key = PidKey(sender);
+        var normalizedMode = ResolveDeliveryMode(deliveryMode);
+        if (set.TryGetValue(key, out var existing))
+        {
+            existing.Update(sender, normalizedMode);
+            return;
+        }
+
+        set[key] = new OutputSubscriberState(key, sender, normalizedMode);
+        RetainSubscriberWatch(context, sender);
     }
 
-    private static void RemoveSubscriber(PID? sender, Dictionary<string, PID> set)
+    private void RemoveSubscriber(
+        IContext context,
+        PID? sender,
+        Dictionary<string, OutputSubscriberState> set,
+        string stream)
     {
         if (sender is null)
         {
             return;
         }
 
-        set.Remove(PidKey(sender));
+        RemoveSubscriberByKey(context, PidKey(sender), set, stream, "unsubscribe", releaseWatch: true);
+    }
+
+    private bool RemoveSubscriberByKey(
+        IContext context,
+        string key,
+        Dictionary<string, OutputSubscriberState> set,
+        string stream,
+        string reason,
+        bool releaseWatch)
+    {
+        if (!set.Remove(key, out var removed))
+        {
+            return false;
+        }
+
+        removed.PendingSingle = null;
+        removed.PendingVector = null;
+        if (releaseWatch)
+        {
+            ReleaseSubscriberWatch(context, removed.Pid);
+        }
+
+        IoTelemetry.RecordOutputSubscriberRemoved(_brainId, stream, reason, removed.DeliveryMode, _outputWidth);
+        return true;
+    }
+
+    private void RetainSubscriberWatch(IContext context, PID pid)
+    {
+        var key = PidKey(pid);
+        if (_subscriberWatchRefCounts.TryGetValue(key, out var count))
+        {
+            _subscriberWatchRefCounts[key] = count + 1;
+            return;
+        }
+
+        _subscriberWatchRefCounts[key] = 1;
+        try
+        {
+            context.Watch(pid);
+        }
+        catch
+        {
+            // Watch is a cleanup optimization; subscription delivery still works without it.
+        }
+    }
+
+    private void ReleaseSubscriberWatch(IContext context, PID pid)
+    {
+        var key = PidKey(pid);
+        if (!_subscriberWatchRefCounts.TryGetValue(key, out var count))
+        {
+            return;
+        }
+
+        if (count > 1)
+        {
+            _subscriberWatchRefCounts[key] = count - 1;
+            return;
+        }
+
+        _subscriberWatchRefCounts.Remove(key);
+        try
+        {
+            context.Unwatch(pid);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void ScheduleSelf(IContext context, TimeSpan delay, object message)
+    {
+        if (delay <= TimeSpan.Zero)
+        {
+            context.Send(context.Self, message);
+            return;
+        }
+
+        context.ReenterAfter(Task.Delay(delay), _ =>
+        {
+            context.Send(context.Self, message);
+            return Task.CompletedTask;
+        });
     }
 
     private static string PidKey(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+    private static OutputSubscriptionDeliveryMode ResolveDeliveryMode(OutputSubscriptionDeliveryMode deliveryMode)
+        => deliveryMode == OutputSubscriptionDeliveryMode.LatestOnly
+            ? OutputSubscriptionDeliveryMode.LatestOnly
+            : OutputSubscriptionDeliveryMode.Exact;
 
     private static PID? ResolveSubscriberPid(IContext context, string? subscriberActor)
     {
@@ -477,10 +729,44 @@ public sealed class OutputCoordinatorActor : IActor
 
     private sealed record SubscriptionCommand(
         string? SubscriberActor,
-        Dictionary<string, PID> Set,
+        OutputSubscriptionDeliveryMode DeliveryMode,
+        Dictionary<string, OutputSubscriberState> Set,
         string Command,
         string LogLabel,
+        string Stream,
         bool Subscribe);
+
+    private sealed record FlushLatestOutputSubscriberRequest(string SubscriberKey, bool Vector);
+
+    private sealed class OutputSubscriberState
+    {
+        public OutputSubscriberState(string key, PID pid, OutputSubscriptionDeliveryMode deliveryMode)
+        {
+            Key = key;
+            Pid = pid;
+            DeliveryMode = deliveryMode;
+        }
+
+        public string Key { get; }
+        public PID Pid { get; private set; }
+        public OutputSubscriptionDeliveryMode DeliveryMode { get; private set; }
+        public bool FlushScheduled { get; set; }
+        public OutputEvent? PendingSingle { get; set; }
+        public OutputVectorEvent? PendingVector { get; set; }
+
+        public void Update(PID pid, OutputSubscriptionDeliveryMode deliveryMode)
+        {
+            Pid = pid;
+            if (DeliveryMode != deliveryMode)
+            {
+                PendingSingle = null;
+                PendingVector = null;
+                FlushScheduled = false;
+            }
+
+            DeliveryMode = deliveryMode;
+        }
+    }
 
     private sealed class PendingVectorTick
     {

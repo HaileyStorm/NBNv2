@@ -509,6 +509,74 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
+    public async Task OutputSubscriberTermination_RemovesGatewayReplayState_ForExplicitSubscriber()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputPidA = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, 1)));
+        var outputPidA = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, 1)));
+        var inputPidB = root.Spawn(Props.FromProducer(() => new InputCoordinatorActor(brainId, 1)));
+        var outputPidB = root.Spawn(Props.FromProducer(() => new RecordingOutputCoordinatorActor(brainId)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+        var subscriberPid = root.Spawn(Props.FromProducer(() => new OutputSubscriberProbeActor()));
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            InputCoordinatorPid = PidLabel(inputPidA),
+            OutputCoordinatorPid = PidLabel(outputPidA),
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = false
+        });
+        root.Send(subscriberPid, new OutputSubscriberProbeActor.SubscribeGateway(gateway, brainId));
+
+        var tick = 1UL;
+        await WaitForAsync(
+            async () =>
+            {
+                root.Send(outputPidA, new OutputVectorEvent
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    TickId = tick++,
+                    Values = { 0.5f }
+                });
+
+                var snapshot = await root.RequestAsync<OutputSubscriberProbeActor.Snapshot>(
+                    subscriberPid,
+                    new OutputSubscriberProbeActor.GetSnapshot());
+                return snapshot.VectorCount >= 1;
+            },
+            timeoutMs: 2_000);
+
+        root.Stop(subscriberPid);
+        await Task.Delay(200);
+
+        root.Send(gateway, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            InputWidth = 1,
+            OutputWidth = 1,
+            InputCoordinatorPid = PidLabel(inputPidB),
+            OutputCoordinatorPid = PidLabel(outputPidB),
+            IoGatewayOwnsInputCoordinator = false,
+            IoGatewayOwnsOutputCoordinator = false
+        });
+
+        await Task.Delay(200);
+        var replaySnapshot = await root.RequestAsync<RecordingOutputCoordinatorActor.Snapshot>(
+            outputPidB,
+            new RecordingOutputCoordinatorActor.GetSnapshot());
+        Assert.Equal(0, replaySnapshot.SingleSubscribeCount);
+        Assert.Equal(0, replaySnapshot.VectorSubscribeCount);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task InputVector_RequestToGateway_ReturnsAck_And_ForwardsToCoordinator()
     {
         var system = new ActorSystem();
@@ -1249,6 +1317,61 @@ public sealed class IoGatewayDistributedCoordinatorTests
         }
 
         throw new XunitException($"Condition was not met within {timeoutMs} ms.");
+    }
+
+    private sealed class RecordingOutputCoordinatorActor : IActor
+    {
+        private readonly Guid _brainId;
+        private int _singleSubscribeCount;
+        private int _vectorSubscribeCount;
+
+        public RecordingOutputCoordinatorActor(Guid brainId)
+        {
+            _brainId = brainId;
+        }
+
+        public sealed record GetSnapshot;
+
+        public sealed record Snapshot(int SingleSubscribeCount, int VectorSubscribeCount);
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case SubscribeOutputs subscribe when IsForBrain(subscribe.BrainId):
+                    _singleSubscribeCount++;
+                    Respond(context, subscribe.BrainId, "subscribe_outputs");
+                    break;
+                case SubscribeOutputsVector subscribe when IsForBrain(subscribe.BrainId):
+                    _vectorSubscribeCount++;
+                    Respond(context, subscribe.BrainId, "subscribe_outputs_vector");
+                    break;
+                case GetSnapshot:
+                    context.Respond(new Snapshot(_singleSubscribeCount, _vectorSubscribeCount));
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private bool IsForBrain(Uuid? brainId)
+            => brainId is not null && brainId.TryToGuid(out var parsed) && parsed == _brainId;
+
+        private static void Respond(IContext context, Uuid? brainId, string command)
+        {
+            if (context.Sender is null)
+            {
+                return;
+            }
+
+            context.Respond(new IoCommandAck
+            {
+                BrainId = brainId?.Clone(),
+                Command = command,
+                Success = true,
+                Message = "applied"
+            });
+        }
     }
 
     private sealed class BrainIoInfoHiveProbeActor : IActor

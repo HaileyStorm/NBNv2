@@ -39,6 +39,8 @@ public sealed partial class IoGatewayActor
         {
             context.Unwatch(terminated.Who);
         }
+
+        RemoveOutputSubscriberFromAllEntries(context, terminated.Who);
     }
 
     private void BroadcastToClients(IContext context, object message)

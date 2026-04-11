@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Nbn.Proto;
+using Nbn.Proto.Io;
 using Proto;
 using ProtoControl = Nbn.Proto.Control;
 
@@ -46,11 +47,13 @@ internal sealed class BrainIoEntry
     public ProtoControl.InputCoordinatorMode InputCoordinatorMode { get; set; }
     public ProtoControl.OutputVectorSource OutputVectorSource { get; set; }
     public InputCoordinatorShadowState InputState { get; }
-    public Dictionary<string, PID> OutputSubscribers { get; } = new(StringComparer.Ordinal);
-    public Dictionary<string, PID> OutputVectorSubscribers { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, OutputSubscriberRegistration> OutputSubscribers { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, OutputSubscriberRegistration> OutputVectorSubscribers { get; } = new(StringComparer.Ordinal);
     public ArtifactRef? BaseDefinition { get; set; }
     public ArtifactRef? LastSnapshot { get; set; }
     public bool EnergyDepletedSignaled { get; set; }
     public ulong? LastAppliedTickCostId { get; set; }
     public long RegisteredAtMs { get; set; }
 }
+
+internal sealed record OutputSubscriberRegistration(PID Pid, OutputSubscriptionDeliveryMode DeliveryMode);

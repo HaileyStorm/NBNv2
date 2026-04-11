@@ -664,9 +664,14 @@ public class ProtoCompatibilityTests
     {
         var descriptor = NbnIoReflection.Descriptor;
 
+        var deliveryMode = descriptor.EnumTypes.Single(@enum => @enum.Name == "OutputSubscriptionDeliveryMode");
+        AssertEnumValue(deliveryMode, "OUTPUT_SUBSCRIPTION_DELIVERY_MODE_EXACT", 0);
+        AssertEnumValue(deliveryMode, "OUTPUT_SUBSCRIPTION_DELIVERY_MODE_LATEST_ONLY", 1);
+
         var subscribeOutputs = descriptor.MessageTypes.Single(message => message.Name == "SubscribeOutputs");
         AssertField(subscribeOutputs, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(subscribeOutputs, "subscriber_actor", 2, FieldType.String);
+        AssertField(subscribeOutputs, "delivery_mode", 3, FieldType.Enum, "nbn.io.OutputSubscriptionDeliveryMode");
 
         var unsubscribeOutputs = descriptor.MessageTypes.Single(message => message.Name == "UnsubscribeOutputs");
         AssertField(unsubscribeOutputs, "brain_id", 1, FieldType.Message, "nbn.Uuid");
@@ -675,6 +680,7 @@ public class ProtoCompatibilityTests
         var subscribeOutputsVector = descriptor.MessageTypes.Single(message => message.Name == "SubscribeOutputsVector");
         AssertField(subscribeOutputsVector, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(subscribeOutputsVector, "subscriber_actor", 2, FieldType.String);
+        AssertField(subscribeOutputsVector, "delivery_mode", 3, FieldType.Enum, "nbn.io.OutputSubscriptionDeliveryMode");
 
         var unsubscribeOutputsVector = descriptor.MessageTypes.Single(message => message.Name == "UnsubscribeOutputsVector");
         AssertField(unsubscribeOutputsVector, "brain_id", 1, FieldType.Message, "nbn.Uuid");

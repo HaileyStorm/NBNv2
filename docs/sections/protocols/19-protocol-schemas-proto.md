@@ -968,6 +968,11 @@ import "nbn_repro.proto";
 import "nbn_speciation.proto";
 import "nbn_signals.proto";
 
+enum OutputSubscriptionDeliveryMode {
+  OUTPUT_SUBSCRIPTION_DELIVERY_MODE_EXACT = 0;
+  OUTPUT_SUBSCRIPTION_DELIVERY_MODE_LATEST_ONLY = 1;
+}
+
 message Connect {
   string client_name = 1;
 }
@@ -1178,6 +1183,7 @@ message InputDrain {
 message SubscribeOutputs {
   nbn.Uuid brain_id = 1;
   string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
+  OutputSubscriptionDeliveryMode delivery_mode = 3;
 }
 
 message UnsubscribeOutputs {
@@ -1195,6 +1201,7 @@ message OutputEvent {
 message SubscribeOutputsVector {
   nbn.Uuid brain_id = 1;
   string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
+  OutputSubscriptionDeliveryMode delivery_mode = 3;
 }
 
 message UnsubscribeOutputsVector {

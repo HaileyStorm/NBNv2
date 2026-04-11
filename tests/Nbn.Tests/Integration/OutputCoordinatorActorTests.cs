@@ -254,6 +254,95 @@ public sealed class OutputCoordinatorActorTests
     }
 
     [Fact]
+    public async Task OutputVector_LatestOnlySubscriber_CoalescesBurstToLatestVector()
+    {
+        using var metrics = new MeterCollector(IoTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var brainId = Guid.NewGuid();
+        var root = system.Root;
+
+        try
+        {
+            var coordinator = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, outputWidth: 2)));
+            var vectors = Channel.CreateUnbounded<OutputVectorEvent>();
+            root.Spawn(Props.FromProducer(() => new VectorSubscriberProbe(
+                brainId,
+                coordinator,
+                vectors.Writer,
+                OutputSubscriptionDeliveryMode.LatestOnly)));
+
+            await Task.Delay(100);
+
+            const int emittedCount = 128;
+            for (var tick = 1; tick <= emittedCount; tick++)
+            {
+                root.Send(coordinator, new EmitOutputVectorSegment(0, new[] { (float)tick, (float)-tick }, (ulong)tick));
+            }
+
+            var first = await ReadVectorAsync(vectors.Reader, TimeSpan.FromSeconds(2));
+            await Task.Delay(200);
+            var received = new List<OutputVectorEvent> { first };
+            received.AddRange(DrainAvailableVectors(vectors.Reader));
+
+            Assert.True(received.Count < emittedCount, $"Expected latest-only delivery to coalesce at least one vector; got {received.Count}.");
+            Assert.Equal((ulong)emittedCount, received[^1].TickId);
+            Assert.Equal(new[] { (float)emittedCount, (float)-emittedCount }, received[^1].Values);
+
+            await WaitForMetricSumAsync(
+                () => metrics.SumLong(
+                    "nbn.io.output.subscriber.dropped",
+                    ("brain_id", brainId.ToString("D")),
+                    ("stream", "vector"),
+                    ("reason", "latest_replaced"),
+                    ("delivery_mode", OutputSubscriptionDeliveryMode.LatestOnly.ToString()),
+                    ("output_width", "2")),
+                minValue: 1,
+                timeout: TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task OutputVector_TerminatedSubscriber_IsRemovedFromFanout()
+    {
+        using var metrics = new MeterCollector(IoTelemetry.MeterNameValue);
+        var system = new ActorSystem();
+        var brainId = Guid.NewGuid();
+        var root = system.Root;
+
+        try
+        {
+            var coordinator = root.Spawn(Props.FromProducer(() => new OutputCoordinatorActor(brainId, outputWidth: 2)));
+            var vectors = Channel.CreateUnbounded<OutputVectorEvent>();
+            var subscriber = root.Spawn(Props.FromProducer(() => new VectorSubscriberProbe(brainId, coordinator, vectors.Writer)));
+
+            await Task.Delay(100);
+
+            root.Stop(subscriber);
+            await WaitForMetricSumAsync(
+                () => metrics.SumLong(
+                    "nbn.io.output.subscriber.removed",
+                    ("brain_id", brainId.ToString("D")),
+                    ("stream", "vector"),
+                    ("reason", "terminated"),
+                    ("delivery_mode", OutputSubscriptionDeliveryMode.Exact.ToString()),
+                    ("output_width", "2")),
+                minValue: 1,
+                timeout: TimeSpan.FromSeconds(2));
+
+            root.Send(coordinator, new EmitOutputVectorSegment(0, new[] { 1f, 2f }, 40));
+            await AssertNoVectorAsync(vectors.Reader, TimeSpan.FromMilliseconds(200));
+        }
+        finally
+        {
+            await system.ShutdownAsync();
+        }
+    }
+
+    [Fact]
     public async Task OutputVector_OutputWidthCanIncrease_AfterCoordinatorStart()
     {
         using var metrics = new MeterCollector(IoTelemetry.MeterNameValue);
@@ -387,6 +476,17 @@ public sealed class OutputCoordinatorActorTests
         }
     }
 
+    private static IReadOnlyList<OutputVectorEvent> DrainAvailableVectors(ChannelReader<OutputVectorEvent> reader)
+    {
+        var outputs = new List<OutputVectorEvent>();
+        while (reader.TryRead(out var output))
+        {
+            outputs.Add(output);
+        }
+
+        return outputs;
+    }
+
     private static async Task WaitForMetricSumAsync(Func<long> readMetric, long minValue, TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
@@ -408,12 +508,18 @@ public sealed class OutputCoordinatorActorTests
         private readonly Guid _brainId;
         private readonly PID _outputCoordinator;
         private readonly ChannelWriter<OutputVectorEvent> _writer;
+        private readonly OutputSubscriptionDeliveryMode _deliveryMode;
 
-        public VectorSubscriberProbe(Guid brainId, PID outputCoordinator, ChannelWriter<OutputVectorEvent> writer)
+        public VectorSubscriberProbe(
+            Guid brainId,
+            PID outputCoordinator,
+            ChannelWriter<OutputVectorEvent> writer,
+            OutputSubscriptionDeliveryMode deliveryMode = OutputSubscriptionDeliveryMode.Exact)
         {
             _brainId = brainId;
             _outputCoordinator = outputCoordinator;
             _writer = writer;
+            _deliveryMode = deliveryMode;
         }
 
         public Task ReceiveAsync(IContext context)
@@ -421,7 +527,11 @@ public sealed class OutputCoordinatorActorTests
             switch (context.Message)
             {
                 case Started:
-                    context.Request(_outputCoordinator, new SubscribeOutputsVector { BrainId = _brainId.ToProtoUuid() });
+                    context.Request(_outputCoordinator, new SubscribeOutputsVector
+                    {
+                        BrainId = _brainId.ToProtoUuid(),
+                        DeliveryMode = _deliveryMode
+                    });
                     break;
                 case UnsubscribeVectorOutputs:
                     context.Request(_outputCoordinator, new UnsubscribeOutputsVector { BrainId = _brainId.ToProtoUuid() });

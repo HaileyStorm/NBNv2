@@ -891,7 +891,7 @@ public sealed partial class IoGatewayActor
         }
     }
 
-    private static void TrackOutputSubscription(IContext context, BrainIoEntry entry, object message)
+    private void TrackOutputSubscription(IContext context, BrainIoEntry entry, object message)
     {
         if (!TryGetOutputSubscriptionCommand(message, out var command))
         {
@@ -901,6 +901,7 @@ public sealed partial class IoGatewayActor
         ApplySubscriberChange(
             context,
             command.SubscriberActor,
+            command.DeliveryMode,
             command.Subscribe,
             command.IsVector ? entry.OutputVectorSubscribers : entry.OutputSubscribers);
     }
@@ -917,6 +918,7 @@ public sealed partial class IoGatewayActor
             ApplySubscriberChange(
                 context,
                 command.SubscriberActor,
+                command.DeliveryMode,
                 true,
                 GetPendingSubscriberSet(brainId, command.IsVector));
             return;
@@ -952,49 +954,66 @@ public sealed partial class IoGatewayActor
         return merged;
     }
 
-    private static void AddSubscriber(IContext context, string? subscriberActor, Dictionary<string, PID> set)
-    {
-        var subscriber = ResolveSubscriberPid(context, subscriberActor);
-        if (subscriber is null)
-        {
-            return;
-        }
-
-        set[PidKey(subscriber)] = subscriber;
-    }
-
-    private static void RemoveSubscriber(IContext context, string? subscriberActor, Dictionary<string, PID> set)
-    {
-        var subscriber = ResolveSubscriberPid(context, subscriberActor);
-        if (subscriber is null)
-        {
-            return;
-        }
-
-        set.Remove(PidKey(subscriber));
-    }
-
-    private static void ApplySubscriberChange(
+    private void AddSubscriber(
         IContext context,
         string? subscriberActor,
+        OutputSubscriptionDeliveryMode deliveryMode,
+        Dictionary<string, OutputSubscriberRegistration> set)
+    {
+        var subscriber = ResolveSubscriberPid(context, subscriberActor);
+        if (subscriber is null)
+        {
+            return;
+        }
+
+        var key = PidKey(subscriber);
+        if (!set.ContainsKey(key))
+        {
+            RetainOutputSubscriberWatch(context, subscriber);
+        }
+
+        set[key] = new OutputSubscriberRegistration(subscriber, ResolveDeliveryMode(deliveryMode));
+    }
+
+    private void RemoveSubscriber(
+        IContext context,
+        string? subscriberActor,
+        Dictionary<string, OutputSubscriberRegistration> set)
+    {
+        var subscriber = ResolveSubscriberPid(context, subscriberActor);
+        if (subscriber is null)
+        {
+            return;
+        }
+
+        if (set.Remove(PidKey(subscriber), out var removed))
+        {
+            ReleaseOutputSubscriberWatch(context, removed.Pid);
+        }
+    }
+
+    private void ApplySubscriberChange(
+        IContext context,
+        string? subscriberActor,
+        OutputSubscriptionDeliveryMode deliveryMode,
         bool subscribe,
-        Dictionary<string, PID> set)
+        Dictionary<string, OutputSubscriberRegistration> set)
     {
         if (subscribe)
         {
-            AddSubscriber(context, subscriberActor, set);
+            AddSubscriber(context, subscriberActor, deliveryMode, set);
             return;
         }
 
         RemoveSubscriber(context, subscriberActor, set);
     }
 
-    private Dictionary<string, PID> GetPendingSubscriberSet(Guid brainId, bool vector)
+    private Dictionary<string, OutputSubscriberRegistration> GetPendingSubscriberSet(Guid brainId, bool vector)
     {
         var source = vector ? _pendingOutputVectorSubscribers : _pendingOutputSubscribers;
         if (!source.TryGetValue(brainId, out var set))
         {
-            set = new Dictionary<string, PID>(StringComparer.Ordinal);
+            set = new Dictionary<string, OutputSubscriberRegistration>(StringComparer.Ordinal);
             source.Add(brainId, set);
         }
 
@@ -1049,6 +1068,141 @@ public sealed partial class IoGatewayActor
         return subscriberPid is null ? string.Empty : PidLabel(subscriberPid);
     }
 
+    private static OutputSubscriptionDeliveryMode ResolveDeliveryMode(OutputSubscriptionDeliveryMode deliveryMode)
+        => deliveryMode == OutputSubscriptionDeliveryMode.LatestOnly
+            ? OutputSubscriptionDeliveryMode.LatestOnly
+            : OutputSubscriptionDeliveryMode.Exact;
+
+    private void RetainOutputSubscriberWatch(IContext context, PID subscriber)
+    {
+        var key = PidKey(subscriber);
+        if (_outputSubscriberWatchRefCounts.TryGetValue(key, out var count))
+        {
+            _outputSubscriberWatchRefCounts[key] = count + 1;
+            return;
+        }
+
+        _outputSubscriberWatchRefCounts[key] = 1;
+        try
+        {
+            context.Watch(subscriber);
+        }
+        catch
+        {
+            // Gateway replay cleanup is best-effort for remote PIDs that cannot be watched.
+        }
+    }
+
+    private void ReleaseOutputSubscriberWatch(IContext context, PID subscriber)
+    {
+        var key = PidKey(subscriber);
+        if (!_outputSubscriberWatchRefCounts.TryGetValue(key, out var count))
+        {
+            return;
+        }
+
+        if (count > 1)
+        {
+            _outputSubscriberWatchRefCounts[key] = count - 1;
+            return;
+        }
+
+        _outputSubscriberWatchRefCounts.Remove(key);
+        try
+        {
+            context.Unwatch(subscriber);
+        }
+        catch
+        {
+        }
+    }
+
+    private void RemoveOutputSubscriberFromAllEntries(IContext context, PID subscriber)
+    {
+        var keys = ResolveSubscriberKeys(context, subscriber);
+        var removed = new List<OutputSubscriberRegistration>();
+        foreach (var entry in _brains.Values)
+        {
+            RemoveOutputSubscriberFromEntry(context, entry, keys, removed);
+        }
+
+        RemovePendingOutputSubscriber(keys, removed);
+        foreach (var registration in removed)
+        {
+            ReleaseOutputSubscriberWatch(context, registration.Pid);
+        }
+    }
+
+    private static void RemoveOutputSubscriberFromEntry(
+        IContext context,
+        BrainIoEntry entry,
+        IReadOnlyList<string> keys,
+        List<OutputSubscriberRegistration> removed)
+    {
+        foreach (var key in keys)
+        {
+            if (entry.OutputSubscribers.Remove(key, out var single))
+            {
+                removed.Add(single);
+                context.Send(entry.OutputPid, new UnsubscribeOutputs
+                {
+                    BrainId = entry.BrainId.ToProtoUuid(),
+                    SubscriberActor = PidLabel(single.Pid)
+                });
+            }
+
+            if (entry.OutputVectorSubscribers.Remove(key, out var vector))
+            {
+                removed.Add(vector);
+                context.Send(entry.OutputPid, new UnsubscribeOutputsVector
+                {
+                    BrainId = entry.BrainId.ToProtoUuid(),
+                    SubscriberActor = PidLabel(vector.Pid)
+                });
+            }
+        }
+    }
+
+    private void RemovePendingOutputSubscriber(
+        IReadOnlyList<string> keys,
+        List<OutputSubscriberRegistration> removed)
+    {
+        RemovePendingOutputSubscriber(_pendingOutputSubscribers, keys, removed);
+        RemovePendingOutputSubscriber(_pendingOutputVectorSubscribers, keys, removed);
+    }
+
+    private static void RemovePendingOutputSubscriber(
+        Dictionary<Guid, Dictionary<string, OutputSubscriberRegistration>> source,
+        IReadOnlyList<string> keys,
+        List<OutputSubscriberRegistration> removed)
+    {
+        foreach (var brain in source.ToArray())
+        {
+            foreach (var key in keys)
+            {
+                if (brain.Value.Remove(key, out var registration))
+                {
+                    removed.Add(registration);
+                }
+            }
+
+            if (brain.Value.Count == 0)
+            {
+                source.Remove(brain.Key);
+            }
+        }
+    }
+
+    private static IReadOnlyList<string> ResolveSubscriberKeys(IContext context, PID subscriber)
+    {
+        var remote = ToRemotePid(context, subscriber);
+        var primary = PidKey(remote);
+        var fallback = PidKey(subscriber);
+        return string.Equals(primary, fallback, StringComparison.Ordinal)
+            ? new[] { primary }
+            : new[] { primary, fallback };
+    }
+
     private static bool UpdateCoordinatorReference(
         IContext context,
         PID currentPid,
@@ -1098,7 +1252,8 @@ public sealed partial class IoGatewayActor
             await DispatchCoordinatorMessageAsync(context, entry.OutputPid, new SubscribeOutputs
             {
                 BrainId = entry.BrainId.ToProtoUuid(),
-                SubscriberActor = PidLabel(subscriber)
+                SubscriberActor = PidLabel(subscriber.Pid),
+                DeliveryMode = subscriber.DeliveryMode
             }).ConfigureAwait(false);
         }
 
@@ -1107,7 +1262,8 @@ public sealed partial class IoGatewayActor
             await DispatchCoordinatorMessageAsync(context, entry.OutputPid, new SubscribeOutputsVector
             {
                 BrainId = entry.BrainId.ToProtoUuid(),
-                SubscriberActor = PidLabel(subscriber)
+                SubscriberActor = PidLabel(subscriber.Pid),
+                DeliveryMode = subscriber.DeliveryMode
             }).ConfigureAwait(false);
         }
     }
@@ -1278,16 +1434,40 @@ public sealed partial class IoGatewayActor
         switch (message)
         {
             case SubscribeOutputs subscribe:
-                command = new OutputSubscriptionCommand(subscribe.BrainId, subscribe.SubscriberActor, false, true, "subscribe_outputs");
+                command = new OutputSubscriptionCommand(
+                    subscribe.BrainId,
+                    subscribe.SubscriberActor,
+                    false,
+                    true,
+                    "subscribe_outputs",
+                    ResolveDeliveryMode(subscribe.DeliveryMode));
                 return true;
             case UnsubscribeOutputs unsubscribe:
-                command = new OutputSubscriptionCommand(unsubscribe.BrainId, unsubscribe.SubscriberActor, false, false, "unsubscribe_outputs");
+                command = new OutputSubscriptionCommand(
+                    unsubscribe.BrainId,
+                    unsubscribe.SubscriberActor,
+                    false,
+                    false,
+                    "unsubscribe_outputs",
+                    OutputSubscriptionDeliveryMode.Exact);
                 return true;
             case SubscribeOutputsVector subscribeVector:
-                command = new OutputSubscriptionCommand(subscribeVector.BrainId, subscribeVector.SubscriberActor, true, true, "subscribe_outputs_vector");
+                command = new OutputSubscriptionCommand(
+                    subscribeVector.BrainId,
+                    subscribeVector.SubscriberActor,
+                    true,
+                    true,
+                    "subscribe_outputs_vector",
+                    ResolveDeliveryMode(subscribeVector.DeliveryMode));
                 return true;
             case UnsubscribeOutputsVector unsubscribeVector:
-                command = new OutputSubscriptionCommand(unsubscribeVector.BrainId, unsubscribeVector.SubscriberActor, true, false, "unsubscribe_outputs_vector");
+                command = new OutputSubscriptionCommand(
+                    unsubscribeVector.BrainId,
+                    unsubscribeVector.SubscriberActor,
+                    true,
+                    false,
+                    "unsubscribe_outputs_vector",
+                    OutputSubscriptionDeliveryMode.Exact);
                 return true;
             default:
                 command = default;
@@ -1303,12 +1483,14 @@ public sealed partial class IoGatewayActor
                 ? new SubscribeOutputsVector
                 {
                     BrainId = command.BrainId,
-                    SubscriberActor = subscriberActor
+                    SubscriberActor = subscriberActor,
+                    DeliveryMode = command.DeliveryMode
                 }
                 : new SubscribeOutputs
                 {
                     BrainId = command.BrainId,
-                    SubscriberActor = subscriberActor
+                    SubscriberActor = subscriberActor,
+                    DeliveryMode = command.DeliveryMode
                 };
         }
 
@@ -1330,5 +1512,6 @@ public sealed partial class IoGatewayActor
         string? SubscriberActor,
         bool IsVector,
         bool Subscribe,
-        string Command);
+        string Command,
+        OutputSubscriptionDeliveryMode DeliveryMode);
 }

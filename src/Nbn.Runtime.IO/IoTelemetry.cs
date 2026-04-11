@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using Nbn.Proto.Io;
 
 namespace Nbn.Runtime.IO;
 
@@ -17,6 +18,10 @@ public static class IoTelemetry
 
     private static readonly Counter<long> OutputSingleRejected =
         Meter.CreateCounter<long>("nbn.io.output.single.rejected");
+    private static readonly Counter<long> OutputSubscriberDropped =
+        Meter.CreateCounter<long>("nbn.io.output.subscriber.dropped");
+    private static readonly Counter<long> OutputSubscriberRemoved =
+        Meter.CreateCounter<long>("nbn.io.output.subscriber.removed");
     private static readonly Counter<long> AwaitSpawnPlacementCompleted =
         Meter.CreateCounter<long>("nbn.io.await_spawn_placement.completed");
     private static readonly Counter<long> AwaitSpawnPlacementFailed =
@@ -51,6 +56,38 @@ public static class IoTelemetry
             1,
             new KeyValuePair<string, object?>("brain_id", brainId.ToString("D")),
             new KeyValuePair<string, object?>("reason", reason),
+            new KeyValuePair<string, object?>("output_width", outputWidth));
+    }
+
+    public static void RecordOutputSubscriberDropped(
+        Guid brainId,
+        string stream,
+        string reason,
+        OutputSubscriptionDeliveryMode deliveryMode,
+        int outputWidth)
+    {
+        OutputSubscriberDropped.Add(
+            1,
+            new KeyValuePair<string, object?>("brain_id", brainId.ToString("D")),
+            new KeyValuePair<string, object?>("stream", stream),
+            new KeyValuePair<string, object?>("reason", reason),
+            new KeyValuePair<string, object?>("delivery_mode", deliveryMode.ToString()),
+            new KeyValuePair<string, object?>("output_width", outputWidth));
+    }
+
+    public static void RecordOutputSubscriberRemoved(
+        Guid brainId,
+        string stream,
+        string reason,
+        OutputSubscriptionDeliveryMode deliveryMode,
+        int outputWidth)
+    {
+        OutputSubscriberRemoved.Add(
+            1,
+            new KeyValuePair<string, object?>("brain_id", brainId.ToString("D")),
+            new KeyValuePair<string, object?>("stream", stream),
+            new KeyValuePair<string, object?>("reason", reason),
+            new KeyValuePair<string, object?>("delivery_mode", deliveryMode.ToString()),
             new KeyValuePair<string, object?>("output_width", outputWidth));
     }
 
