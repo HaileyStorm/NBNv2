@@ -906,6 +906,8 @@ Output events are emitted per tick and delivered to subscribed clients.
 * **OutputEvent (single):** emitted when an output neuron fires (abs(potential) > ActivationThreshold).
 * **OutputVectorEvent (vector):** emitted by IO as one full brain-level vector per tick with deterministic ordering by `output_index` (`0..output_width-1`). For sharded output regions, shard-local vectors are merged by absolute output-index ranges before publication. Invalid vector payloads (width/range/overlap/late-tick violations) are rejected and surfaced via deterministic IO telemetry/debug paths.
 
+Output subscriptions default to exact delivery. Callers that prefer bounded-memory pressure behavior over per-tick completeness can opt into `OUTPUT_SUBSCRIPTION_DELIVERY_MODE_LATEST_ONLY`; the output coordinator then coalesces pending delivery for that subscriber and emits only the latest pending single/vector event for each flush window. Subscriber termination also prunes coordinator fan-out state and IO Gateway replay state so disconnected clients are not replayed after coordinator moves.
+
 Output vector source is runtime-selectable:
 
 * `potential` (default): vector samples activation potential semantics (existing behavior).
@@ -2802,6 +2804,11 @@ import "nbn_repro.proto";
 import "nbn_speciation.proto";
 import "nbn_signals.proto";
 
+enum OutputSubscriptionDeliveryMode {
+  OUTPUT_SUBSCRIPTION_DELIVERY_MODE_EXACT = 0;
+  OUTPUT_SUBSCRIPTION_DELIVERY_MODE_LATEST_ONLY = 1;
+}
+
 message Connect {
   string client_name = 1;
 }
@@ -3012,6 +3019,7 @@ message InputDrain {
 message SubscribeOutputs {
   nbn.Uuid brain_id = 1;
   string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
+  OutputSubscriptionDeliveryMode delivery_mode = 3;
 }
 
 message UnsubscribeOutputs {
@@ -3029,6 +3037,7 @@ message OutputEvent {
 message SubscribeOutputsVector {
   nbn.Uuid brain_id = 1;
   string subscriber_actor = 2; // optional explicit subscriber pid label ("address/id" or "id")
+  OutputSubscriptionDeliveryMode delivery_mode = 3;
 }
 
 message UnsubscribeOutputsVector {
