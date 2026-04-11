@@ -1222,6 +1222,8 @@ public sealed partial class IoGatewayActor
         _routerCache.Remove(entry.BrainId);
         _routerRegistrationTargetCache.Remove(entry.BrainId);
         _routerRegistration.Remove(entry.BrainId);
+        _pendingOutputSubscribers.Remove(entry.BrainId);
+        _pendingOutputVectorSubscribers.Remove(entry.BrainId);
     }
 
     private static PID SpawnOwnedInputCoordinator(
