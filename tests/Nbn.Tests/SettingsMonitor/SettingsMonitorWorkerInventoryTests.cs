@@ -1,3 +1,7 @@
+using System.Collections;
+using System.Reflection;
+using Dapper;
+using Microsoft.Data.Sqlite;
 using Nbn.Runtime.SettingsMonitor;
 using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
@@ -278,6 +282,67 @@ public sealed class SettingsMonitorWorkerInventoryTests
         Assert.Equal(30f, row.CpuScore);
     }
 
+    [Fact]
+    public async Task PruneStaleNodeCapabilitiesAsync_RemovesOldRowsButKeepsLatestPerWorker()
+    {
+        using var db = new TempDatabaseScope();
+        var timeProvider = new MutableTimeProvider(100);
+        var store = new SettingsMonitorStore(db.DatabasePath, timeProvider);
+        await store.InitializeAsync();
+
+        var worker = Guid.NewGuid();
+        await store.UpsertNodeAsync(new NodeRegistration(worker, "worker-a", "127.0.0.1:12040", "worker-node"), timeMs: 100);
+        await store.RecordHeartbeatAsync(new NodeHeartbeat(worker, 100, CreateCapabilities(cpuCores: 8, ramFreeBytes: 1_024, storageFreeBytes: 10_240, cpuScore: 1f)));
+        await store.RecordHeartbeatAsync(new NodeHeartbeat(worker, 200, CreateCapabilities(cpuCores: 8, ramFreeBytes: 2_048, storageFreeBytes: 10_240, cpuScore: 2f)));
+        await store.RecordHeartbeatAsync(new NodeHeartbeat(worker, 300, CreateCapabilities(cpuCores: 8, ramFreeBytes: 3_072, storageFreeBytes: 10_240, cpuScore: 3f)));
+
+        var deleted = await store.PruneStaleNodeCapabilitiesAsync(cutoffMs: 250);
+
+        Assert.Equal(2, deleted);
+        await using var connection = new SqliteConnection($"Data Source={db.DatabasePath}");
+        var remaining = (await connection.QueryAsync<long>(
+                "SELECT time_ms FROM node_capabilities WHERE node_id = @node_id ORDER BY time_ms;",
+                new { node_id = worker.ToString("D") }))
+            .ToArray();
+        Assert.Equal(new[] { 300L }, remaining);
+
+        var snapshot = await store.GetWorkerInventorySnapshotAsync();
+        var row = Assert.Single(snapshot.Workers);
+        Assert.Equal(300, row.CapabilityTimeMs);
+        Assert.Equal(3_072, row.RamFreeBytes);
+        Assert.Equal(3f, row.CpuScore);
+    }
+
+    [Fact]
+    public async Task ObservedSettingsCache_PrunesOldKeys_WhenKeyChurnExceedsCap()
+    {
+        using var db = new TempDatabaseScope();
+        var store = new SettingsMonitorStore(db.DatabasePath);
+        await store.InitializeAsync();
+        var actor = new SettingsMonitorActor(store);
+        var remember = typeof(SettingsMonitorActor).GetMethod(
+            "RememberObservedSetting",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(remember);
+
+        for (var index = 0; index < 4_200; index++)
+        {
+            remember!.Invoke(actor, new object[] { $"key.{index:0000}", "value", (long)index });
+        }
+
+        var observed = GetObservedSettings(actor);
+        Assert.Equal(4_096, observed.Count);
+        Assert.False(observed.Contains("key.0000"));
+        Assert.True(observed.Contains("key.4199"));
+
+        var shouldPublish = typeof(SettingsMonitorActor).GetMethod(
+            "ShouldPublishObservedSetting",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(shouldPublish);
+        Assert.False((bool)shouldPublish!.Invoke(actor, new object[] { "key.0000", "value", 0L })!);
+        Assert.True((bool)shouldPublish.Invoke(actor, new object[] { "key.new", "value", 99_999L })!);
+    }
+
     private static NodeCapabilities CreateCapabilities(
         uint cpuCores,
         long ramFreeBytes,
@@ -320,6 +385,13 @@ public sealed class SettingsMonitorWorkerInventoryTests
             GpuVramLimitPercent: gpuVramLimitPercent,
             ProcessCpuLoadPercent: processCpuLoadPercent,
             ProcessRamUsedBytes: processRamUsedBytes);
+
+    private static IDictionary GetObservedSettings(SettingsMonitorActor actor)
+    {
+        var field = typeof(SettingsMonitorActor).GetField("_observedSettings", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        return Assert.IsAssignableFrom<IDictionary>(field!.GetValue(actor));
+    }
 
     private sealed class TempDatabaseScope : IDisposable
     {

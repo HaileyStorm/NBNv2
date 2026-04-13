@@ -80,6 +80,7 @@ public sealed partial class HiveMindActor : IActor
     private static readonly TimeSpan PlacementPeerLatencyProbeTimeout = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan RuntimeResetBarrierTimeout = TimeSpan.FromSeconds(15);
     private const int MaxCompletedSpawnResults = 1024;
+    private const int MaxWorkerCatalogEntries = 4096;
     private const float DefaultPlasticityRate = 0.001f;
     private const float DefaultPlasticityDelta = DefaultPlasticityRate;
     private const long DefaultPlasticityEnergyCostReferenceTickCost = 100;

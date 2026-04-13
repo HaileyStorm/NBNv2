@@ -159,6 +159,7 @@ public sealed partial class HiveMindActor
         RefreshWorkerCatalogFreshness(receivedLocalMs);
         DetectWorkerLossRecoveries(context, snapshotMs, seenWorkerIds);
         MaybeRequestWorkerPressureReschedule(context, snapshotMs);
+        PruneUntrackedStaleWorkerCatalogEntries(seenWorkerIds, forceToCatalogLimit: _workerCatalog.Count > MaxWorkerCatalogEntries);
         MaybeRefreshPeerLatency(context, force: false);
     }
 
@@ -278,6 +279,31 @@ public sealed partial class HiveMindActor
                        vramTotalBytes,
                        worker.GpuVramLimitPercent,
                        _workerPressureLimitTolerancePercent));
+    }
+
+    private void PruneUntrackedStaleWorkerCatalogEntries(IReadOnlySet<Guid> seenWorkerIds, bool forceToCatalogLimit)
+    {
+        foreach (var worker in _workerCatalog.Values
+                     .OrderBy(static item => item.IsFresh)
+                     .ThenBy(static item => item.LastUpdatedMs)
+                     .ThenBy(static item => item.NodeId)
+                     .ToArray())
+        {
+            if (forceToCatalogLimit && _workerCatalog.Count <= MaxWorkerCatalogEntries)
+            {
+                return;
+            }
+
+            if (worker.IsFresh
+                || (!forceToCatalogLimit && seenWorkerIds.Contains(worker.NodeId))
+                || GetTrackedBrainIdsForWorker(worker.NodeId).Count > 0
+                || _workerPlacementDispatches.ContainsKey(worker.NodeId))
+            {
+                continue;
+            }
+
+            _workerCatalog.Remove(worker.NodeId);
+        }
     }
 
     private IReadOnlyList<Guid> GetTrackedBrainIdsForWorker(Guid workerNodeId)

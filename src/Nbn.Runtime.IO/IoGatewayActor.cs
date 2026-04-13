@@ -35,6 +35,9 @@ public sealed partial class IoGatewayActor : IActor
         ProtoControl.InputCoordinatorMode.DirtyOnChange;
     private const ProtoControl.OutputVectorSource DefaultOutputVectorSource =
         ProtoControl.OutputVectorSource.Potential;
+    private const int MaxPendingOutputSubscriberBrains = 1024;
+    private const int MaxPendingOutputSubscribersPerBrain = 64;
+    private const int MaxRouterCacheEntries = 4096;
 
     private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 

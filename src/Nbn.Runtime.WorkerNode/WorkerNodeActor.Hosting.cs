@@ -49,6 +49,21 @@ public sealed partial class WorkerNodeActor
         brain.RuntimeInfo = null;
     }
 
+    private void RemoveBrainStateIfEmpty(BrainHostingState brain)
+    {
+        if (brain.BrainRootPid is not null
+            || brain.SignalRouterPid is not null
+            || brain.InputCoordinatorPid is not null
+            || brain.OutputCoordinatorPid is not null
+            || brain.Assignments.Count > 0
+            || brain.RegionShards.Count > 0)
+        {
+            return;
+        }
+
+        _brains.Remove(brain.BrainId);
+    }
+
     private static void AddPid(Dictionary<string, PID> toStop, PID? pid)
     {
         if (pid is null)

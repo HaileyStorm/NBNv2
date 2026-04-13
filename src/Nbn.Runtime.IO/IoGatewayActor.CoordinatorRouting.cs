@@ -915,12 +915,15 @@ public sealed partial class IoGatewayActor
 
         if (command.Subscribe)
         {
+            var set = GetPendingSubscriberSet(brainId, command.IsVector);
             ApplySubscriberChange(
                 context,
                 command.SubscriberActor,
                 command.DeliveryMode,
                 true,
-                GetPendingSubscriberSet(brainId, command.IsVector));
+                set);
+            PrunePendingSubscriberSet(context, brainId, set);
+            PrunePendingSubscriberBrainSets(context, brainId, command.IsVector);
             return;
         }
 
@@ -1203,6 +1206,68 @@ public sealed partial class IoGatewayActor
             : new[] { primary, fallback };
     }
 
+    private void PrunePendingSubscriberSet(
+        IContext context,
+        Guid brainId,
+        Dictionary<string, OutputSubscriberRegistration> set)
+    {
+        if (set.Count <= MaxPendingOutputSubscribersPerBrain)
+        {
+            return;
+        }
+
+        foreach (var key in set.Keys.ToArray())
+        {
+            if (set.Count <= MaxPendingOutputSubscribersPerBrain)
+            {
+                break;
+            }
+
+            if (set.Remove(key, out var removed))
+            {
+                ReleaseOutputSubscriberWatch(context, removed.Pid);
+            }
+        }
+
+        if (set.Count == 0)
+        {
+            _pendingOutputSubscribers.Remove(brainId);
+            _pendingOutputVectorSubscribers.Remove(brainId);
+        }
+    }
+
+    private void PrunePendingSubscriberBrainSets(IContext context, Guid protectedBrainId, bool vector)
+    {
+        var source = vector ? _pendingOutputVectorSubscribers : _pendingOutputSubscribers;
+        if (source.Count <= MaxPendingOutputSubscriberBrains)
+        {
+            return;
+        }
+
+        foreach (var brainId in source.Keys.ToArray())
+        {
+            if (source.Count <= MaxPendingOutputSubscriberBrains)
+            {
+                return;
+            }
+
+            if (brainId == protectedBrainId || _brains.ContainsKey(brainId))
+            {
+                continue;
+            }
+
+            if (!source.Remove(brainId, out var removed))
+            {
+                continue;
+            }
+
+            foreach (var registration in removed.Values)
+            {
+                ReleaseOutputSubscriberWatch(context, registration.Pid);
+            }
+        }
+    }
+
     private static bool UpdateCoordinatorReference(
         IContext context,
         PID currentPid,
@@ -1352,6 +1417,7 @@ public sealed partial class IoGatewayActor
                 }
 
                 _routerCache[brainId] = routerPid;
+                PruneRouterCaches();
                 RegisterIoGatewayPid(context, brainId, routerPid);
                 return routerPid;
             }
@@ -1371,6 +1437,7 @@ public sealed partial class IoGatewayActor
 
                 _routerCache[brainId] = rootPid!;
                 _routerRegistrationTargetCache[brainId] = rootPid!;
+                PruneRouterCaches();
                 RegisterIoGatewayPid(context, brainId, rootPid!);
                 return rootPid!;
             }
@@ -1422,12 +1489,46 @@ public sealed partial class IoGatewayActor
         context.Send(registrationTarget, register);
 
         _routerRegistration[brainId] = routerLabel;
+        PruneRouterCaches();
     }
 
     private PID ResolveRegistrationTarget(Guid brainId, PID routerPid)
         => _routerRegistrationTargetCache.TryGetValue(brainId, out var target)
             ? target
             : routerPid;
+
+    private void PruneRouterCaches()
+    {
+        if (_routerCache.Count <= MaxRouterCacheEntries
+            && _routerRegistrationTargetCache.Count <= MaxRouterCacheEntries
+            && _routerRegistration.Count <= MaxRouterCacheEntries)
+        {
+            return;
+        }
+
+        foreach (var brainId in _routerCache.Keys
+                     .Concat(_routerRegistrationTargetCache.Keys)
+                     .Concat(_routerRegistration.Keys)
+                     .Distinct()
+                     .ToArray())
+        {
+            if (_routerCache.Count <= MaxRouterCacheEntries
+                && _routerRegistrationTargetCache.Count <= MaxRouterCacheEntries
+                && _routerRegistration.Count <= MaxRouterCacheEntries)
+            {
+                return;
+            }
+
+            if (_brains.ContainsKey(brainId))
+            {
+                continue;
+            }
+
+            _routerCache.Remove(brainId);
+            _routerRegistrationTargetCache.Remove(brainId);
+            _routerRegistration.Remove(brainId);
+        }
+    }
 
     private static bool TryGetOutputSubscriptionCommand(object message, out OutputSubscriptionCommand command)
     {

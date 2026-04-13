@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Reflection;
 using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Runtime.IO;
@@ -1128,6 +1130,36 @@ public sealed class IoGatewayDistributedCoordinatorTests
     }
 
     [Fact]
+    public void PendingOutputSubscriberReplay_PrunesMissingBrainSetsPastCap()
+    {
+        var gateway = new IoGatewayActor(CreateOptions());
+        var pendingField = typeof(IoGatewayActor).GetField(
+            "_pendingOutputSubscribers",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(pendingField);
+        var pending = Assert.IsAssignableFrom<IDictionary>(pendingField!.GetValue(gateway));
+        var pendingSetType = pendingField.FieldType.GetGenericArguments()[1];
+        var registration = CreateOutputSubscriberRegistration();
+
+        var protectedBrainId = Guid.NewGuid();
+        pending.Add(protectedBrainId, CreatePendingSubscriberSet(pendingSetType, registration));
+        for (var index = 0; index < 1_030; index++)
+        {
+            pending.Add(Guid.NewGuid(), CreatePendingSubscriberSet(pendingSetType, registration));
+        }
+
+        var prune = typeof(IoGatewayActor).GetMethod(
+            "PrunePendingSubscriberBrainSets",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(prune);
+
+        prune!.Invoke(gateway, new object?[] { null, protectedBrainId, false });
+
+        Assert.True(pending.Count <= 1_024);
+        Assert.True(pending.Contains(protectedBrainId));
+    }
+
+    [Fact]
     public async Task ForwardInput_Refreshes_RouterRegistration_When_BrainRouting_Changes()
     {
         var system = new ActorSystem();
@@ -1927,6 +1959,28 @@ public sealed class IoGatewayDistributedCoordinatorTests
 
             return Task.CompletedTask;
         }
+    }
+
+    private static object CreateOutputSubscriberRegistration()
+    {
+        var registrationType = typeof(IoGatewayActor).Assembly.GetType("Nbn.Runtime.IO.OutputSubscriberRegistration");
+        Assert.NotNull(registrationType);
+        var registration = Activator.CreateInstance(
+            registrationType!,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null,
+            args: new object[] { new PID("test", "subscriber"), OutputSubscriptionDeliveryMode.Exact },
+            culture: null);
+        Assert.NotNull(registration);
+        return registration!;
+    }
+
+    private static object CreatePendingSubscriberSet(Type pendingSetType, object registration)
+    {
+        var set = Activator.CreateInstance(pendingSetType);
+        Assert.NotNull(set);
+        pendingSetType.GetMethod("Add")!.Invoke(set, new[] { "subscriber", registration });
+        return set!;
     }
 
     private sealed class OutputSubscriberProbeActor : IActor

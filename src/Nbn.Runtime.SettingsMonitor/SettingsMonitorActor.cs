@@ -12,15 +12,19 @@ public sealed partial class SettingsMonitorActor : IActor
     private static readonly TimeSpan DefaultStaleDeadBrainPruneInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan DefaultStaleDeadBrainRetention = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan DefaultStaleNonLiveBrainRetention = TimeSpan.FromHours(1);
+    private static readonly TimeSpan DefaultNodeCapabilityRetention = TimeSpan.FromHours(1);
+    private const int MaxObservedSettings = 4096;
 
     private readonly SettingsMonitorStore _store;
     private readonly TimeSpan _externalSettingsPollInterval;
     private readonly TimeSpan _staleDeadBrainPruneInterval;
     private readonly TimeSpan _staleDeadBrainRetention;
     private readonly TimeSpan _staleNonLiveBrainRetention;
+    private readonly TimeSpan _nodeCapabilityRetention;
     private readonly Dictionary<string, PID> _subscribers = new(StringComparer.Ordinal);
     private readonly Dictionary<Guid, NodeStatus> _nodes = new();
     private readonly Dictionary<string, ObservedSetting> _observedSettings = new(StringComparer.OrdinalIgnoreCase);
+    private long _observedSettingsEvictionWatermarkMs;
     private bool _externalSettingsPollInFlight;
     private bool _staleDeadBrainPruneInFlight;
 
@@ -32,7 +36,8 @@ public sealed partial class SettingsMonitorActor : IActor
         TimeSpan? externalSettingsPollInterval = null,
         TimeSpan? staleDeadBrainPruneInterval = null,
         TimeSpan? staleDeadBrainRetention = null,
-        TimeSpan? staleNonLiveBrainRetention = null)
+        TimeSpan? staleNonLiveBrainRetention = null,
+        TimeSpan? nodeCapabilityRetention = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         var pollInterval = externalSettingsPollInterval.GetValueOrDefault(DefaultExternalSettingsPollInterval);
@@ -51,6 +56,10 @@ public sealed partial class SettingsMonitorActor : IActor
         _staleNonLiveBrainRetention = staleNonLiveRetention > TimeSpan.Zero
             ? staleNonLiveRetention
             : DefaultStaleNonLiveBrainRetention;
+        var capabilitiesRetention = nodeCapabilityRetention.GetValueOrDefault(DefaultNodeCapabilityRetention);
+        _nodeCapabilityRetention = capabilitiesRetention > TimeSpan.Zero
+            ? capabilitiesRetention
+            : DefaultNodeCapabilityRetention;
     }
 
     /// <summary>

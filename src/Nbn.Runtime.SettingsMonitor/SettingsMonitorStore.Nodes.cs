@@ -172,6 +172,17 @@ LEFT JOIN node_capabilities AS c
 ORDER BY n.logical_name, n.node_id;
 """;
 
+    private const string DeleteStaleNodeCapabilitiesSql = """
+DELETE FROM node_capabilities
+WHERE time_ms < @cutoff_ms
+  AND EXISTS (
+      SELECT 1
+      FROM node_capabilities AS newer
+      WHERE newer.node_id = node_capabilities.node_id
+        AND newer.time_ms > node_capabilities.time_ms
+  );
+""";
+
     /// <summary>
     /// Inserts or refreshes a node registration row.
     /// </summary>
@@ -344,5 +355,22 @@ ORDER BY n.logical_name, n.node_id;
         var rows = await connection.QueryAsync<WorkerReadinessCapability>(
             new CommandDefinition(ListWorkerInventorySnapshotSql, cancellationToken: cancellationToken));
         return new WorkerInventorySnapshot(NowMs(), rows.AsList());
+    }
+
+    /// <summary>
+    /// Deletes historical capability rows older than the supplied cutoff while retaining each node's latest sample.
+    /// </summary>
+    /// <param name="cutoffMs">Inclusive retention cutoff in milliseconds.</param>
+    /// <param name="cancellationToken">Cancels the prune operation.</param>
+    public async Task<int> PruneStaleNodeCapabilitiesAsync(
+        long cutoffMs,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        return await connection.ExecuteAsync(
+            new CommandDefinition(
+                DeleteStaleNodeCapabilitiesSql,
+                new { cutoff_ms = cutoffMs },
+                cancellationToken: cancellationToken));
     }
 }

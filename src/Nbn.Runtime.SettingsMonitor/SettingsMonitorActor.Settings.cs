@@ -196,7 +196,8 @@ public sealed partial class SettingsMonitorActor
 
         if (!_observedSettings.TryGetValue(key, out var existing))
         {
-            return true;
+            return _observedSettingsEvictionWatermarkMs <= 0
+                   || updatedMs > _observedSettingsEvictionWatermarkMs;
         }
 
         if (updatedMs < existing.UpdatedMs)
@@ -228,7 +229,36 @@ public sealed partial class SettingsMonitorActor
             return;
         }
 
-        _observedSettings[key] = new ObservedSetting(value, updatedMs);
+        _observedSettings[key] = new ObservedSetting(value, updatedMs, NowMs());
+        PruneObservedSettings(key);
+    }
+
+    private void PruneObservedSettings(string protectedKey)
+    {
+        if (_observedSettings.Count <= MaxObservedSettings)
+        {
+            return;
+        }
+
+        foreach (var key in _observedSettings
+                     .Where(entry => !string.Equals(entry.Key, protectedKey, StringComparison.OrdinalIgnoreCase))
+                     .OrderBy(static entry => entry.Value.ObservedMs)
+                     .ThenBy(static entry => entry.Value.UpdatedMs)
+                     .Select(static entry => entry.Key)
+                     .ToArray())
+        {
+            if (_observedSettings.Count <= MaxObservedSettings)
+            {
+                return;
+            }
+
+            if (_observedSettings.Remove(key, out var removed))
+            {
+                _observedSettingsEvictionWatermarkMs = Math.Max(
+                    _observedSettingsEvictionWatermarkMs,
+                    removed.UpdatedMs);
+            }
+        }
     }
 
     private static bool TryParsePid(string? value, out PID pid)
@@ -262,5 +292,5 @@ public sealed partial class SettingsMonitorActor
     private static string PidKey(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
-    private sealed record ObservedSetting(string Value, long UpdatedMs);
+    private sealed record ObservedSetting(string Value, long UpdatedMs, long ObservedMs);
 }

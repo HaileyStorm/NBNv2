@@ -73,7 +73,8 @@ public sealed partial class SettingsMonitorActor
         var nowMs = NowMs();
         var deadCutoffMs = nowMs - checked((long)_staleDeadBrainRetention.TotalMilliseconds);
         var nonLiveCutoffMs = nowMs - checked((long)_staleNonLiveBrainRetention.TotalMilliseconds);
-        var task = PruneStaleBrainRowsAsync(deadCutoffMs, nonLiveCutoffMs);
+        var capabilityCutoffMs = nowMs - checked((long)_nodeCapabilityRetention.TotalMilliseconds);
+        var task = PruneStaleRowsAsync(deadCutoffMs, nonLiveCutoffMs, capabilityCutoffMs);
         context.ReenterAfter(task, completed =>
         {
             try
@@ -95,6 +96,12 @@ public sealed partial class SettingsMonitorActor
                         Console.WriteLine(
                             $"[{DateTime.UtcNow:O}] [SettingsMonitor] Pruned stale non-live brain rows: {completed.Result.NonLiveRows.DeletedBrains} brains, {completed.Result.NonLiveRows.DeletedControllers} controllers.");
                     }
+
+                    if (completed.Result.DeletedCapabilityRows > 0)
+                    {
+                        Console.WriteLine(
+                            $"[{DateTime.UtcNow:O}] [SettingsMonitor] Pruned stale node capability rows: {completed.Result.DeletedCapabilityRows} rows.");
+                    }
                 }
             }
             finally
@@ -107,11 +114,15 @@ public sealed partial class SettingsMonitorActor
         });
     }
 
-    private async Task<PrunedBrainCleanup> PruneStaleBrainRowsAsync(long deadCutoffMs, long nonLiveCutoffMs)
+    private async Task<PrunedRetentionCleanup> PruneStaleRowsAsync(
+        long deadCutoffMs,
+        long nonLiveCutoffMs,
+        long capabilityCutoffMs)
     {
         var deadRows = await _store.PruneStaleDeadBrainsAsync(deadCutoffMs).ConfigureAwait(false);
         var nonLiveRows = await _store.PruneStaleNonLiveBrainsAsync(nonLiveCutoffMs).ConfigureAwait(false);
-        return new PrunedBrainCleanup(deadRows, nonLiveRows);
+        var capabilityRows = await _store.PruneStaleNodeCapabilitiesAsync(capabilityCutoffMs).ConfigureAwait(false);
+        return new PrunedRetentionCleanup(deadRows, nonLiveRows, capabilityRows);
     }
 
     private static void ScheduleSelf(IContext context, TimeSpan delay, object message)
@@ -142,7 +153,8 @@ public sealed partial class SettingsMonitorActor
         public static readonly PruneStaleDeadBrains Instance = new();
     }
 
-    private sealed record PrunedBrainCleanup(
+    private sealed record PrunedRetentionCleanup(
         SettingsMonitorStore.PrunedBrainRows DeadRows,
-        SettingsMonitorStore.PrunedBrainRows NonLiveRows);
+        SettingsMonitorStore.PrunedBrainRows NonLiveRows,
+        int DeletedCapabilityRows);
 }

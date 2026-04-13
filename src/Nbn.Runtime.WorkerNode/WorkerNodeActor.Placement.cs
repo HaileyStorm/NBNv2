@@ -304,6 +304,7 @@ public sealed partial class WorkerNodeActor
         }
 
         PublishHostedBrainState(context, brain, refreshCoordinatorWidths: false, allowClearOutputSink: true);
+        RemoveBrainStateIfEmpty(brain);
         return removed;
     }
 
@@ -547,6 +548,7 @@ public sealed partial class WorkerNodeActor
         }
 
         RespondArtifactMetadataUnavailable(context, brain, assignment, replyTarget);
+        RemoveBrainStateIfEmpty(brain);
         return false;
     }
 

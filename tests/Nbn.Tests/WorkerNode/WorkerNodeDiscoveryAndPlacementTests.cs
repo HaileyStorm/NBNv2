@@ -758,8 +758,9 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         await using var harness = await WorkerHarness.CreateAsync();
 
         var workerNodeId = Guid.NewGuid();
+        var workerActor = new WorkerNodeActor(workerNodeId, "127.0.0.1:12041");
         var workerPid = harness.Root.Spawn(
-            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+            Props.FromProducer(() => workerActor));
 
         var brainId = Guid.NewGuid();
         var assignment = BuildAssignment(
@@ -800,6 +801,7 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
                 PlacementEpoch = 5
             });
         Assert.Empty(reconcile.Assignments);
+        Assert.Equal(0, GetTrackedBrainStateCount(workerActor));
     }
 
     [Fact]
@@ -2288,8 +2290,9 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         var brainId = Guid.NewGuid();
         var workerNodeId = Guid.NewGuid();
         var workerName = $"worker-{Guid.NewGuid():N}";
+        var workerActor = new WorkerNodeActor(workerNodeId, "worker.local");
         var workerPid = harness.Root.SpawnNamed(
-            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "worker.local")),
+            Props.FromProducer(() => workerActor),
             workerName);
 
         var assignmentAck = new TaskCompletionSource<PlacementAssignmentAck>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -2324,6 +2327,7 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
             workerPid,
             new WorkerNodeActor.GetWorkerNodeSnapshot());
         Assert.Equal(0, snapshot.TrackedAssignmentCount);
+        Assert.Equal(0, GetTrackedBrainStateCount(workerActor));
     }
 
     [Fact]
@@ -3372,6 +3376,14 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         Assert.NotNull(hostedShard);
 
         regionShards[shardId] = hostedShard;
+    }
+
+    private static int GetTrackedBrainStateCount(WorkerNodeActor actor)
+    {
+        var brainsField = typeof(WorkerNodeActor).GetField("_brains", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(brainsField);
+        var brains = Assert.IsAssignableFrom<IDictionary>(brainsField!.GetValue(actor));
+        return brains.Count;
     }
 
     private sealed class WorkerHarness : IAsyncDisposable

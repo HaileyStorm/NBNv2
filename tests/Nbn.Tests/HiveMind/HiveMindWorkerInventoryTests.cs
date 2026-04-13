@@ -134,6 +134,70 @@ public sealed class HiveMindWorkerInventoryTests
     }
 
     [Fact]
+    public async Task WorkerInventory_PrunesUnseenStaleUntrackedWorkers()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var staleAfterMs = 1_000;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(workerInventoryRefreshMs: 100, workerInventoryStaleAfterMs: staleAfterMs))));
+
+        var retainedWorkerId = Guid.NewGuid();
+        var staleWorkerId = Guid.NewGuid();
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    retainedWorkerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "worker-retained:12040",
+                    rootActorName: "region-host"),
+                BuildWorker(
+                    staleWorkerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs - staleAfterMs - 1,
+                    capabilityTimeMs: nowMs - staleAfterMs - 1,
+                    address: "worker-stale:12040",
+                    rootActorName: "region-host")
+            }
+        });
+
+        var nextSnapshotMs = nowMs + staleAfterMs + 100;
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nextSnapshotMs,
+            Workers =
+            {
+                BuildWorker(
+                    retainedWorkerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nextSnapshotMs,
+                    capabilityTimeMs: nextSnapshotMs,
+                    address: "worker-retained:12040",
+                    rootActorName: "region-host")
+            }
+        });
+
+        var inventory = await root.RequestAsync<PlacementWorkerInventory>(
+            hiveMind,
+            new PlacementWorkerInventoryRequest());
+
+        Assert.Equal((uint)1, inventory.TotalWorkersSeen);
+        Assert.Single(inventory.Workers);
+        Assert.Equal(retainedWorkerId.ToProtoUuid().Value, inventory.Workers[0].WorkerNodeId.Value);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task PlacementWorkerInventory_Excludes_Workers_Without_PlannerUsable_Capacity()
     {
         var system = new ActorSystem();
