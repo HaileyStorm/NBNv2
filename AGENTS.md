@@ -121,6 +121,13 @@ Keep docs concise and high-value:
   - `dotnet test -c Release --disable-build-servers --artifacts-path .artifacts-temp`
 - When tests create temporary SQLite-backed artifact stores on Windows, clear pools before deleting the temp directory (`SqliteConnection.ClearAllPools()`) or cleanup may fail on `artifacts.db` locks.
 
+## Runtime log inspection safety
+
+- Runtime, Workbench, performance, and demo logs can be huge and may contain very long JSONL records. Before searching them, check file sizes and modification times.
+- Do not run unbounded `rg`/`grep` searches across `artifacts`, `logs`, `.local/share`, generated JSONL, or live run logs. Use bounded slices (`tail`, `head`, targeted `sed`) and structured field extraction (`jq -r '...'`) instead.
+- When diagnosing OOMs or timeouts, query `journalctl` with tight `--since/--until` windows and specific patterns. Avoid recursive artifact searches unless large files are excluded or a size cap is enforced.
+- For Basics UI run logs from `../NBNv2-demos`, never search the raw JSONL with broad terms like `failure` or `timeout`; each snapshot may include cumulative histories and large memory arrays. Use `tail -n <small N> | jq ...` or a purpose-built parser that emits only selected fields.
+
 ## Artifact store bootstrap
 
 - Non-file `store_uri` values must resolve through the shared artifact resolver, not local-path fallback.
