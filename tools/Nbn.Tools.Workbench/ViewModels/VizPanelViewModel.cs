@@ -34,7 +34,11 @@ public sealed partial class VizPanelViewModel : ViewModelBase
     }
 
     private const int MaxEvents = 400;
-    private const int MaxProjectionEvents = 24000;
+    private const int MaxProjectionEvents = 8192;
+    private const int MaxTopologyBrainStates = 64;
+    private const int MaxTopologyRegionRoutesPerBrain = 1024;
+    private const int MaxTopologyNeuronAddressesPerBrain = 8192;
+    private const int MaxTopologyNeuronRoutesPerBrain = 8192;
     private const int MaxEventsPerUiFlush = 96;
     private const int MaxPendingEvents = 1600;
     private const int DefaultTickWindow = 64;

@@ -16,10 +16,32 @@ public sealed partial class SpeciationManagerActor
             return;
         }
 
-        var memberships = await _store.ListMembershipsAsync(epochId).ConfigureAwait(false);
-        foreach (var membership in memberships)
+        var offset = 0;
+        while (true)
         {
-            RecordCommittedMembership(membership);
+            var page = await _store.ListHistoryPageAsync(
+                    epochId,
+                    brainId: null,
+                    limit: SpeciesFloorPrimePageSize,
+                    offset)
+                .ConfigureAwait(false);
+            if (page.Records.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var membership in page.Records)
+            {
+                RecordCommittedMembership(membership);
+            }
+
+            var nextOffset = offset + page.Records.Count;
+            if (nextOffset >= page.TotalRecords || nextOffset <= offset)
+            {
+                return;
+            }
+
+            offset = nextOffset;
         }
     }
 
@@ -365,6 +387,18 @@ public sealed partial class SpeciationManagerActor
 
     private void StoreRecentDerivedSpeciesHint(RecentDerivedSpeciesHint hint)
     {
+        if (_recentDerivedSpeciesHintsByTargetSpecies.TryGetValue(hint.TargetSpeciesId, out var priorTargetHint)
+            && !string.Equals(priorTargetHint.SourceSpeciesId, hint.SourceSpeciesId, StringComparison.Ordinal)
+            && _recentDerivedSpeciesHintsBySourceSpecies.TryGetValue(priorTargetHint.SourceSpeciesId, out var priorSourceHints))
+        {
+            priorSourceHints.RemoveAll(existing =>
+                string.Equals(existing.TargetSpeciesId, hint.TargetSpeciesId, StringComparison.Ordinal));
+            if (priorSourceHints.Count == 0)
+            {
+                _recentDerivedSpeciesHintsBySourceSpecies.Remove(priorTargetHint.SourceSpeciesId);
+            }
+        }
+
         if (!_recentDerivedSpeciesHintsBySourceSpecies.TryGetValue(hint.SourceSpeciesId, out var hints))
         {
             hints = new List<RecentDerivedSpeciesHint>();
@@ -391,7 +425,17 @@ public sealed partial class SpeciationManagerActor
                 _assignmentPolicy.RecentSplitRealignParentMembershipWindow));
         if (hints.Count > hintLimit)
         {
+            var staleHints = hints.Skip(hintLimit).ToArray();
             hints.RemoveRange(hintLimit, hints.Count - hintLimit);
+            foreach (var staleHint in staleHints)
+            {
+                if (_recentDerivedSpeciesHintsByTargetSpecies.TryGetValue(staleHint.TargetSpeciesId, out var targetHint)
+                    && string.Equals(targetHint.SourceSpeciesId, staleHint.SourceSpeciesId, StringComparison.Ordinal)
+                    && targetHint.AssignedMs == staleHint.AssignedMs)
+                {
+                    _recentDerivedSpeciesHintsByTargetSpecies.Remove(staleHint.TargetSpeciesId);
+                }
+            }
         }
     }
 

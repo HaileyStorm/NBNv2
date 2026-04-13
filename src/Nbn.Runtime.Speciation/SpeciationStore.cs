@@ -83,6 +83,10 @@ CREATE INDEX IF NOT EXISTS idx_taxonomy_config_epoch_snapshot
     ON taxonomy_config_snapshots(epoch_id, snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_species_membership_epoch_species
     ON species_membership(epoch_id, species_id);
+CREATE INDEX IF NOT EXISTS idx_species_membership_epoch_assigned_brain
+    ON species_membership(epoch_id, assigned_ms, brain_id);
+CREATE INDEX IF NOT EXISTS idx_species_membership_epoch_species_assigned_brain
+    ON species_membership(epoch_id, species_id, assigned_ms, brain_id);
 CREATE INDEX IF NOT EXISTS idx_speciation_decisions_epoch_brain
     ON speciation_decisions(epoch_id, brain_id);
 CREATE INDEX IF NOT EXISTS idx_lineage_edges_epoch_child

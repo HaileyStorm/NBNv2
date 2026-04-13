@@ -799,9 +799,10 @@ public class SpeciationPanelViewModelTests
         Assert.Contains("Epochs 10..11", vm.PopulationChartRangeLabel, StringComparison.Ordinal);
 
         vm.SelectedEpochOption = vm.EpochOptions.Single(option => option.EpochId == 10);
-        await WaitForAsync(() => client.HistoryCallCount == 2 && client.LastMembershipEpochFilter == 10);
+        await WaitForAsync(() => client.HistoryCallCount >= 3 && client.LastMembershipEpochFilter == 10);
         await WaitForAsync(() => vm.PopulationChartRangeLabel.Contains("Epoch 10", StringComparison.Ordinal));
 
+        Assert.Contains(10L, client.RequestedHistoryEpochIds);
         Assert.Equal("Epochs: 2 total. Active: 11. Viewing: 10.", vm.EpochInventorySummary);
         Assert.Equal(10L, vm.SelectedEpochOption!.EpochId);
     }
@@ -2311,23 +2312,22 @@ public class SpeciationPanelViewModelTests
     }
 
     [Fact]
-    public async Task RefreshHistoryCommand_PagesHistoryBeyondDefaultChartWindow()
+    public async Task RefreshHistoryCommand_LoadsBoundedLatestHistoryWindow()
     {
-        const int totalHistoryCount = 8_200;
-        var page0 = Enumerable
-            .Range(0, 8_192)
-            .Select(index => new SpeciationMembershipRecord
-            {
-                EpochId = 41,
-                BrainId = Guid.NewGuid().ToProtoUuid(),
-                SpeciesId = index % 2 == 0 ? "species.a" : "species.b",
-                SpeciesDisplayName = index % 2 == 0 ? "Alpha" : "Beta",
-                AssignedMs = (ulong)(1_000 + index),
-                DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.77},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
-            })
-            .ToArray();
-        var page1 = Enumerable
-            .Range(page0.Length, totalHistoryCount - page0.Length)
+        const int totalHistoryCount = 20_000;
+        const int retainedHistoryCount = 8_192;
+        const int startOffset = totalHistoryCount - retainedHistoryCount;
+        var probeRow = new SpeciationMembershipRecord
+        {
+            EpochId = 41,
+            BrainId = Guid.NewGuid().ToProtoUuid(),
+            SpeciesId = "species.a",
+            SpeciesDisplayName = "Alpha",
+            AssignedMs = 1_000,
+            DecisionMetadataJson = "{\"scores\":{\"similarity_score\":0.77},\"assignment_policy\":{\"lineage_split_threshold\":0.66}}"
+        };
+        var tailPage = Enumerable
+            .Range(startOffset, retainedHistoryCount)
             .Select(index => new SpeciationMembershipRecord
             {
                 EpochId = 41,
@@ -2350,24 +2350,106 @@ public class SpeciationPanelViewModelTests
         {
             FailureReason = SpeciationFailureReason.SpeciationFailureNone,
             TotalRecords = (uint)totalHistoryCount,
-            History = { page0 }
+            History = { probeRow }
         };
-        client.HistoryResponsesByOffset[8192] = new SpeciationListHistoryResponse
+        client.HistoryResponsesByOffset[(uint)startOffset] = new SpeciationListHistoryResponse
         {
             FailureReason = SpeciationFailureReason.SpeciationFailureNone,
             TotalRecords = (uint)totalHistoryCount,
-            History = { page1 }
+            History = { tailPage }
         };
         var vm = CreateViewModel(client);
         vm.CurrentEpochId = 41;
+        vm.HistoryLimitText = "10000";
 
         vm.RefreshHistoryCommand.Execute(null);
-        await WaitForAsync(() => client.HistoryCallCount == 2 && vm.HistoryStatus.Contains("fetched=8200", StringComparison.Ordinal));
+        await WaitForAsync(() => client.HistoryCallCount == 2 && vm.HistoryStatus.Contains("fetched=8192", StringComparison.Ordinal));
 
         Assert.Equal(2, client.HistoryCallCount);
-        Assert.Equal([8192u, 8192u], client.RequestedHistoryLimits);
-        Assert.Equal([0u, 8192u], client.RequestedHistoryOffsets);
-        Assert.Equal($"Speciation data loaded: fetched={totalHistoryCount} total={totalHistoryCount}", vm.HistoryStatus);
+        Assert.Equal([1u, 8192u], client.RequestedHistoryLimits);
+        Assert.Equal([0u, (uint)startOffset], client.RequestedHistoryOffsets);
+        Assert.Equal($"Speciation data loaded: fetched={retainedHistoryCount} total={totalHistoryCount}", vm.HistoryStatus);
+    }
+
+    [Fact]
+    public async Task RefreshHistoryCommand_SelectedEpochKeepsOverviewEpochOptions()
+    {
+        var overviewHistory = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 1,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.one",
+                SpeciesDisplayName = "One",
+                AssignedMs = 1_000
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 2,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.two",
+                SpeciesDisplayName = "Two",
+                AssignedMs = 2_000
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 3,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.three",
+                SpeciesDisplayName = "Three",
+                AssignedMs = 3_000
+            }
+        };
+        var selectedHistory = new[]
+        {
+            new SpeciationMembershipRecord
+            {
+                EpochId = 2,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.two",
+                SpeciesDisplayName = "Two",
+                AssignedMs = 2_100
+            },
+            new SpeciationMembershipRecord
+            {
+                EpochId = 2,
+                BrainId = Guid.NewGuid().ToProtoUuid(),
+                SpeciesId = "species.two.child",
+                SpeciesDisplayName = "Two [A]",
+                DecisionReason = "lineage_diverged_new_species",
+                DecisionMetadataJson = "{\"lineage\":{\"source_species_id\":\"species.two\",\"source_species_display_name\":\"Two\"}}",
+                AssignedMs = 2_200
+            }
+        };
+        var client = new FakeWorkbenchClient();
+        client.HistoryResponsesByEpochAndOffset[(null, 0u)] = new SpeciationListHistoryResponse
+        {
+            FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+            TotalRecords = (uint)overviewHistory.Length,
+            History = { overviewHistory }
+        };
+        client.HistoryResponsesByEpochAndOffset[(2L, 0u)] = new SpeciationListHistoryResponse
+        {
+            FailureReason = SpeciationFailureReason.SpeciationFailureNone,
+            TotalRecords = (uint)selectedHistory.Length,
+            History = { selectedHistory }
+        };
+        var vm = CreateViewModel(client);
+        vm.CurrentEpochId = 3;
+        vm.EpochFilterText = "2";
+
+        vm.RefreshHistoryCommand.Execute(null);
+        await WaitForAsync(() => vm.SelectedEpochOption?.EpochId == 2 && vm.CladogramItems.Count > 0);
+
+        Assert.Equal(new long?[] { null, 2L }, client.RequestedHistoryEpochIds);
+        Assert.Contains(vm.EpochOptions, option => option.EpochId == 1);
+        Assert.Contains(vm.EpochOptions, option => option.EpochId == 2);
+        Assert.Contains(vm.EpochOptions, option => option.EpochId == 3);
+        Assert.Equal("Speciation data loaded: fetched=2 total=2", vm.HistoryStatus);
+        Assert.Single(vm.EpochSummaries);
+        Assert.Equal(2L, vm.EpochSummaries[0].EpochId);
+        Assert.Contains(FlattenCladogram(vm.CladogramItems), item => string.Equals(item.SpeciesId, "species.two.child", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -2892,8 +2974,10 @@ public class SpeciationPanelViewModelTests
         public long LastDeletedEpochId { get; private set; }
         public long? LastMembershipEpochFilter { get; private set; }
         public int HistoryCallCount { get; private set; }
+        public List<long?> RequestedHistoryEpochIds { get; } = new();
         public List<uint> RequestedHistoryLimits { get; } = new();
         public List<uint> RequestedHistoryOffsets { get; } = new();
+        public Dictionary<(long? EpochId, uint Offset), SpeciationListHistoryResponse> HistoryResponsesByEpochAndOffset { get; } = new();
         public Dictionary<uint, SpeciationListHistoryResponse> HistoryResponsesByOffset { get; } = new();
         public Dictionary<string, string> SettingUpdates { get; } = new(StringComparer.Ordinal);
         public List<(string Key, string Value)> SettingUpdateEvents { get; } = new();
@@ -2953,8 +3037,14 @@ public class SpeciationPanelViewModelTests
             CancellationToken cancellationToken = default)
         {
             HistoryCallCount++;
+            RequestedHistoryEpochIds.Add(epochId);
             RequestedHistoryLimits.Add(limit);
             RequestedHistoryOffsets.Add(offset);
+            if (HistoryResponsesByEpochAndOffset.TryGetValue((epochId, offset), out var epochResponse))
+            {
+                return Task.FromResult(epochResponse);
+            }
+
             if (HistoryResponsesByOffset.TryGetValue(offset, out var response))
             {
                 return Task.FromResult(response);

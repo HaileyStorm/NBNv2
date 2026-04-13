@@ -15,6 +15,10 @@ namespace Nbn.Tools.Workbench.Views.Panels;
 /// </summary>
 public sealed class VizActivityCanvasSurface : Control
 {
+    private const int MaxBrushCacheEntries = 512;
+    private const int MaxDashStyleCacheEntries = 128;
+    private const int MaxLabelTextCacheEntries = 4096;
+
     public static readonly StyledProperty<IReadOnlyList<VizActivityCanvasNode>?> NodesProperty =
         AvaloniaProperty.Register<VizActivityCanvasSurface, IReadOnlyList<VizActivityCanvasNode>?>(nameof(Nodes));
 
@@ -81,6 +85,7 @@ public sealed class VizActivityCanvasSurface : Control
         var viewScale = ResolveEffectiveViewScale();
 
         var seenRoutes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenDashPatterns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (edges is not null)
         {
             foreach (var edge in edges)
@@ -88,6 +93,11 @@ public sealed class VizActivityCanvasSurface : Control
                 if (!string.IsNullOrWhiteSpace(edge.RouteLabel))
                 {
                     seenRoutes.Add(edge.RouteLabel);
+                }
+
+                if (!string.IsNullOrWhiteSpace(edge.DirectionDashArray))
+                {
+                    seenDashPatterns.Add(edge.DirectionDashArray);
                 }
 
                 var geometry = ResolveEdgeGeometry(edge);
@@ -116,9 +126,12 @@ public sealed class VizActivityCanvasSurface : Control
         }
 
         PruneEdgeGeometryCache(seenRoutes);
+        PruneDashStyleCache(seenDashPatterns);
 
+        var seenLabels = new HashSet<string>(StringComparer.Ordinal);
         if (nodes is null)
         {
+            PruneLabelTextCache(seenLabels);
             return;
         }
 
@@ -148,6 +161,7 @@ public sealed class VizActivityCanvasSurface : Control
 
             if (!string.IsNullOrWhiteSpace(node.Label))
             {
+                seenLabels.Add(node.Label);
                 var text = ResolveNodeLabelText(node.Label, labelBrush);
                 var textOrigin = new Point(
                     center.X - (text.Width / 2.0),
@@ -155,6 +169,8 @@ public sealed class VizActivityCanvasSurface : Control
                 context.DrawText(text, textOrigin);
             }
         }
+
+        PruneLabelTextCache(seenLabels);
     }
 
     private void DrawEdgeStateOverlay(
@@ -267,6 +283,50 @@ public sealed class VizActivityCanvasSurface : Control
         }
     }
 
+    private void PruneDashStyleCache(IReadOnlySet<string> seenPatterns)
+    {
+        if (_dashStyleCache.Count == 0)
+        {
+            return;
+        }
+
+        var stale = new List<string>();
+        foreach (var key in _dashStyleCache.Keys)
+        {
+            if (!seenPatterns.Contains(key))
+            {
+                stale.Add(key);
+            }
+        }
+
+        foreach (var key in stale)
+        {
+            _dashStyleCache.Remove(key);
+        }
+    }
+
+    private void PruneLabelTextCache(IReadOnlySet<string> seenLabels)
+    {
+        if (_labelTextCache.Count == 0)
+        {
+            return;
+        }
+
+        var stale = new List<string>();
+        foreach (var key in _labelTextCache.Keys)
+        {
+            if (!seenLabels.Contains(key))
+            {
+                stale.Add(key);
+            }
+        }
+
+        foreach (var key in stale)
+        {
+            _labelTextCache.Remove(key);
+        }
+    }
+
     private Pen CreatePen(
         string colorCode,
         double opacity,
@@ -301,6 +361,11 @@ public sealed class VizActivityCanvasSurface : Control
             return cached;
         }
 
+        if (_brushCache.Count >= MaxBrushCacheEntries)
+        {
+            _brushCache.Clear();
+        }
+
         if (!Color.TryParse(colorCode, out var parsed))
         {
             parsed = Colors.Gray;
@@ -323,6 +388,11 @@ public sealed class VizActivityCanvasSurface : Control
         if (_dashStyleCache.TryGetValue(dashPattern, out var cached))
         {
             return cached;
+        }
+
+        if (_dashStyleCache.Count >= MaxDashStyleCacheEntries)
+        {
+            _dashStyleCache.Clear();
         }
 
         var segments = new List<double>();
@@ -350,6 +420,11 @@ public sealed class VizActivityCanvasSurface : Control
             return cached;
         }
 
+        if (_brushCache.Count >= MaxBrushCacheEntries)
+        {
+            _brushCache.Clear();
+        }
+
         var fallback = new SolidColorBrush(fallbackColor);
         _brushCache[cacheKey] = fallback;
         return fallback;
@@ -360,6 +435,11 @@ public sealed class VizActivityCanvasSurface : Control
         if (_labelTextCache.TryGetValue(label, out var cached))
         {
             return cached;
+        }
+
+        if (_labelTextCache.Count >= MaxLabelTextCacheEntries)
+        {
+            _labelTextCache.Clear();
         }
 
         var layout = new FormattedText(

@@ -559,14 +559,34 @@ public sealed partial class SpeciationPanelViewModel
         var chartWindow = ParseUInt(ChartWindowText, DefaultVisibleChartWindow);
         ChartWindowText = chartWindow.ToString(CultureInfo.InvariantCulture);
         var chartHistoryLimit = chartWindow == 0u ? DefaultChartHistoryLimit : chartWindow;
-        var historyPageSize = Math.Max(historyLimit, Math.Max(chartHistoryLimit, DefaultCladogramHistoryLimit));
+        var retainedHistoryLimit = Math.Min(
+            MaxRetainedHistoryLimit,
+            Math.Max(historyLimit, Math.Max(chartHistoryLimit, DefaultCladogramHistoryLimit)));
         var requestedEpochId = ResolveEpochFilter();
 
-        var chartResponse = await LoadCompleteSpeciationHistoryAsync(
+        var overviewResponse = await LoadBoundedSpeciationHistoryAsync(
                 epochId: null,
                 brainId: null,
-                historyPageSize)
+                retainedHistoryLimit)
             .ConfigureAwait(false);
+        if (overviewResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        {
+            var reason = NormalizeFailure(overviewResponse.FailureReason, overviewResponse.FailureDetail);
+            HistoryStatus = $"History load failed: {reason}";
+            Status = HistoryStatus;
+            return;
+        }
+
+        var chartResponse = overviewResponse;
+        if (requestedEpochId.HasValue)
+        {
+            chartResponse = await LoadBoundedSpeciationHistoryAsync(
+                    epochId: requestedEpochId,
+                    brainId: null,
+                    retainedHistoryLimit)
+                .ConfigureAwait(false);
+        }
+
         if (chartResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
         {
             var reason = NormalizeFailure(chartResponse.FailureReason, chartResponse.FailureDetail);
@@ -575,7 +595,7 @@ public sealed partial class SpeciationPanelViewModel
             return;
         }
 
-        var epochOptions = BuildEpochOptions(chartResponse.History, CurrentEpochId);
+        var epochOptions = BuildEpochOptions(overviewResponse.History, CurrentEpochId, requestedEpochId);
         var effectiveEpochId = ResolveEffectiveEpochId(epochOptions, requestedEpochId, CurrentEpochId);
         var filteredHistory = effectiveEpochId.HasValue
             ? chartResponse.History
@@ -585,12 +605,12 @@ public sealed partial class SpeciationPanelViewModel
         var chartHistory = TrimHistoryToChartWindow(filteredHistory, chartWindow);
         var populationFrame = BuildEpochPopulationFrame(chartHistory);
         var epochSummaries = BuildEpochSummaries(chartHistory);
-        var speciesColors = BuildSpeciesColorMap(chartResponse.History, _speciesColorOverrides);
+        var speciesColors = BuildSpeciesColorMap(overviewResponse.History, _speciesColorOverrides);
         var epochInventorySummary = BuildEpochInventorySummary(epochOptions, CurrentEpochId, effectiveEpochId);
         var flowChartSource = new FlowChartSourceFrame(populationFrame.EpochRows, populationFrame.SpeciesOrder, speciesColors);
         var speciationChartSource = new SpeciationChartSourceFrame(
             ChartHistory: chartHistory,
-            ColorSourceHistory: chartResponse.History,
+            ColorSourceHistory: overviewResponse.History,
             CladogramHistory: filteredHistory);
         var populationSnapshot = BuildPopulationChartSnapshot(populationFrame.EpochRows, populationFrame.SpeciesOrder, speciesColors);
         var flowSnapshot = BuildFlowChartSnapshot(
@@ -638,58 +658,49 @@ public sealed partial class SpeciationPanelViewModel
         });
     }
 
-    private async Task<SpeciationListHistoryResponse> LoadCompleteSpeciationHistoryAsync(
+    private async Task<SpeciationListHistoryResponse> LoadBoundedSpeciationHistoryAsync(
         long? epochId,
         Guid? brainId,
-        uint pageSize)
+        uint maxRecords)
     {
-        var normalizedPageSize = Math.Max(1u, pageSize);
-        var combined = new List<SpeciationMembershipRecord>();
-        uint offset = 0;
-        uint totalRecords = 0;
-
-        while (true)
+        var normalizedMaxRecords = Math.Max(1u, maxRecords);
+        var probeResponse = await _client.ListSpeciationHistoryAsync(
+                epochId: epochId,
+                brainId: brainId,
+                limit: 1u,
+                offset: 0u)
+            .ConfigureAwait(false);
+        if (probeResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
         {
-            var response = await _client.ListSpeciationHistoryAsync(
-                    epochId: epochId,
-                    brainId: brainId,
-                    limit: normalizedPageSize,
-                    offset: offset)
-                .ConfigureAwait(false);
-            if (response.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
-            {
-                return response;
-            }
-
-            totalRecords = response.TotalRecords;
-            if (response.History.Count == 0)
-            {
-                break;
-            }
-
-            combined.AddRange(response.History);
-            if ((uint)combined.Count >= totalRecords)
-            {
-                break;
-            }
-
-            var nextOffset = (uint)combined.Count;
-            if (nextOffset <= offset)
-            {
-                break;
-            }
-
-            offset = nextOffset;
+            return probeResponse;
         }
 
-        var combinedResponse = new SpeciationListHistoryResponse
+        var totalRecords = probeResponse.TotalRecords;
+        if (totalRecords <= 1u || (uint)probeResponse.History.Count >= totalRecords)
         {
-            FailureReason = SpeciationFailureReason.SpeciationFailureNone,
-            FailureDetail = string.Empty,
-            TotalRecords = totalRecords
-        };
-        combinedResponse.History.AddRange(combined);
-        return combinedResponse;
+            return probeResponse;
+        }
+
+        var startOffset = totalRecords > normalizedMaxRecords
+            ? totalRecords - normalizedMaxRecords
+            : 0u;
+        var pageLimit = totalRecords > normalizedMaxRecords
+            ? normalizedMaxRecords
+            : totalRecords;
+
+        var windowResponse = await _client.ListSpeciationHistoryAsync(
+                epochId: epochId,
+                brainId: brainId,
+                limit: pageLimit,
+                offset: startOffset)
+            .ConfigureAwait(false);
+        if (windowResponse.FailureReason != SpeciationFailureReason.SpeciationFailureNone)
+        {
+            return windowResponse;
+        }
+
+        windowResponse.TotalRecords = totalRecords;
+        return windowResponse;
     }
 
     private static IReadOnlyList<SpeciationMembershipRecord> TrimHistoryToChartWindow(
@@ -1016,7 +1027,8 @@ public sealed partial class SpeciationPanelViewModel
 
     private static IReadOnlyList<SpeciationEpochOptionItem> BuildEpochOptions(
         IReadOnlyList<SpeciationMembershipRecord> history,
-        long currentEpochId)
+        long currentEpochId,
+        long? requestedEpochId = null)
     {
         var epochIds = history
             .Select(entry => (long)entry.EpochId)
@@ -1024,6 +1036,11 @@ public sealed partial class SpeciationPanelViewModel
             .Distinct()
             .OrderByDescending(epochId => epochId)
             .ToList();
+        if (requestedEpochId.HasValue && requestedEpochId.Value > 0 && !epochIds.Contains(requestedEpochId.Value))
+        {
+            epochIds.Insert(0, requestedEpochId.Value);
+        }
+
         if (currentEpochId > 0 && !epochIds.Contains(currentEpochId))
         {
             epochIds.Insert(0, currentEpochId);

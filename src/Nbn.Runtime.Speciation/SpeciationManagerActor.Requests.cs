@@ -1033,7 +1033,7 @@ public sealed partial class SpeciationManagerActor
                             && parsedBrainId != Guid.Empty
             ? parsedBrainId
             : (Guid?)null;
-        var limit = (int)Math.Min(int.MaxValue, Math.Max(1u, message.Limit));
+        var limit = (int)Math.Min(MaxSpeciationHistoryPageSize, Math.Max(1u, message.Limit));
         var offset = (int)Math.Min(int.MaxValue, message.Offset);
         var listTask = _store.ListHistoryPageAsync(
             epochId,

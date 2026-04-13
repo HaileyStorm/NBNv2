@@ -58,6 +58,7 @@ public sealed partial class SpeciationPanelViewModel : ViewModelBase, IAsyncDisp
     private const uint DefaultHistoryLimit = 100u;
     private const uint DefaultChartHistoryLimit = 2048u;
     private const uint DefaultCladogramHistoryLimit = 8192u;
+    private const uint MaxRetainedHistoryLimit = 8192u;
     private const uint DefaultVisibleChartWindow = 0u;
     private static readonly TimeSpan MembershipRefreshCadence = TimeSpan.FromSeconds(6);
     private static readonly IReadOnlyList<string> SimRunPressureModeOptions = ["divergence", "neutral", "stability"];

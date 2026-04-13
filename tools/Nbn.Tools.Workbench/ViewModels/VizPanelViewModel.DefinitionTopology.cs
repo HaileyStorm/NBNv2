@@ -55,6 +55,7 @@ public sealed partial class VizPanelViewModel
                         state.Regions.Add((uint)NbnConstants.InputRegionId);
                         state.Regions.Add((uint)NbnConstants.OutputRegionId);
                         _topologyByBrainId[brainId] = state;
+                        PruneTopologyBrainStates(brainId);
                     }
 
                     state.DefinitionSource = resolvedReference.Source;
@@ -76,6 +77,7 @@ public sealed partial class VizPanelViewModel
                         state.Regions.Add((uint)NbnConstants.InputRegionId);
                         state.Regions.Add((uint)NbnConstants.OutputRegionId);
                         _topologyByBrainId[brainId] = state;
+                        PruneTopologyBrainStates(brainId);
                     }
 
                     state.DefinitionSource = resolvedReference.Source;
@@ -98,6 +100,7 @@ public sealed partial class VizPanelViewModel
                     state.Regions.Add((uint)NbnConstants.InputRegionId);
                     state.Regions.Add((uint)NbnConstants.OutputRegionId);
                     _topologyByBrainId[brainId] = state;
+                    PruneTopologyBrainStates(brainId);
                 }
 
                 if (state.HasDefinitionRegionTopology
@@ -127,13 +130,13 @@ public sealed partial class VizPanelViewModel
                 state.LastDefinitionRootsTried.AddRange(loadAttempt.RootsTried.Take(12));
                 state.HasDefinitionRegionTopology = true;
                 state.Regions.UnionWith(loaded.Regions);
-                state.RegionRoutes.UnionWith(loaded.RegionRoutes);
+                UnionBounded(state.RegionRoutes, loaded.RegionRoutes, MaxTopologyRegionRoutesPerBrain);
 
                 if (focusRegionId.HasValue)
                 {
                     state.DefinitionFocusRegions.Add(focusRegionId.Value);
-                    state.NeuronAddresses.UnionWith(loaded.NeuronAddresses);
-                    state.NeuronRoutes.UnionWith(loaded.NeuronRoutes);
+                    UnionBounded(state.NeuronAddresses, loaded.NeuronAddresses, MaxTopologyNeuronAddressesPerBrain);
+                    UnionBounded(state.NeuronRoutes, loaded.NeuronRoutes, MaxTopologyNeuronRoutesPerBrain);
                 }
                 else
                 {
@@ -498,6 +501,7 @@ public sealed partial class VizPanelViewModel
             state.Regions.Add((uint)NbnConstants.InputRegionId);
             state.Regions.Add((uint)NbnConstants.OutputRegionId);
             _topologyByBrainId[brainId] = state;
+            PruneTopologyBrainStates(brainId);
         }
 
         if (TryParseRegionForTopology(item.Region, out var eventRegion))
@@ -511,22 +515,71 @@ public sealed partial class VizPanelViewModel
         {
             var sourceRegion = sourceAddress >> NbnConstants.AddressNeuronBits;
             state.Regions.Add(sourceRegion);
-            state.NeuronAddresses.Add(sourceAddress);
+            AddBounded(state.NeuronAddresses, sourceAddress, MaxTopologyNeuronAddressesPerBrain);
         }
 
         if (hasTarget)
         {
             var targetRegion = targetAddress >> NbnConstants.AddressNeuronBits;
             state.Regions.Add(targetRegion);
-            state.NeuronAddresses.Add(targetAddress);
+            AddBounded(state.NeuronAddresses, targetAddress, MaxTopologyNeuronAddressesPerBrain);
         }
 
         if (hasSource && hasTarget)
         {
             var sourceRegion = sourceAddress >> NbnConstants.AddressNeuronBits;
             var targetRegion = targetAddress >> NbnConstants.AddressNeuronBits;
-            state.RegionRoutes.Add(new VizActivityCanvasRegionRoute(sourceRegion, targetRegion));
-            state.NeuronRoutes.Add(new VizActivityCanvasNeuronRoute(sourceAddress, targetAddress));
+            AddBounded(
+                state.RegionRoutes,
+                new VizActivityCanvasRegionRoute(sourceRegion, targetRegion),
+                MaxTopologyRegionRoutesPerBrain);
+            AddBounded(
+                state.NeuronRoutes,
+                new VizActivityCanvasNeuronRoute(sourceAddress, targetAddress),
+                MaxTopologyNeuronRoutesPerBrain);
         }
+    }
+
+    private void PruneTopologyBrainStates(Guid keepBrainId)
+    {
+        if (_topologyByBrainId.Count <= MaxTopologyBrainStates)
+        {
+            return;
+        }
+
+        var selectedBrainId = SelectedBrain?.BrainId;
+        foreach (var brainId in _topologyByBrainId.Keys.ToArray())
+        {
+            if (_topologyByBrainId.Count <= MaxTopologyBrainStates)
+            {
+                return;
+            }
+
+            if (brainId == keepBrainId || (selectedBrainId.HasValue && brainId == selectedBrainId.Value))
+            {
+                continue;
+            }
+
+            _topologyByBrainId.Remove(brainId);
+        }
+    }
+
+    private static void UnionBounded<T>(HashSet<T> target, IEnumerable<T> source, int maxCount)
+    {
+        foreach (var item in source)
+        {
+            AddBounded(target, item, maxCount);
+        }
+    }
+
+    private static void AddBounded<T>(HashSet<T> target, T item, int maxCount)
+    {
+        var boundedMax = Math.Max(1, maxCount);
+        if (target.Count >= boundedMax && !target.Contains(item))
+        {
+            return;
+        }
+
+        target.Add(item);
     }
 }
