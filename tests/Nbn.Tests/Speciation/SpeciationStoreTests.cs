@@ -102,6 +102,38 @@ public sealed class SpeciationStoreTests
     }
 
     [Fact]
+    public async Task ListMembershipsAsync_AppliesLimitAndOffset()
+    {
+        using var db = new TempDatabaseScope();
+        var store = new SpeciationStore(db.DatabasePath);
+        await store.InitializeAsync();
+
+        var runtimeConfig = CreateRuntimeConfig();
+        var epoch = await store.EnsureCurrentEpochAsync(runtimeConfig, createdMs: 100);
+        for (var index = 1; index <= 5; index++)
+        {
+            var assigned = await store.TryAssignMembershipAsync(
+                epoch.EpochId,
+                new SpeciationAssignment(
+                    BrainId: Guid.Parse($"00000000-0000-0000-0000-00000000000{index}"),
+                    SpeciesId: "species-a",
+                    SpeciesDisplayName: "Species A",
+                    PolicyVersion: "policy-v1",
+                    DecisionReason: "manual_assign",
+                    DecisionMetadataJson: "{}"),
+                decisionTimeMs: 200 + index);
+            Assert.True(assigned.Created);
+        }
+
+        var firstPage = await store.ListMembershipsAsync(epoch.EpochId, limit: 2, offset: 0);
+        var secondPage = await store.ListMembershipsAsync(epoch.EpochId, limit: 2, offset: 2);
+
+        Assert.Equal(2, firstPage.Count);
+        Assert.Equal(2, secondPage.Count);
+        Assert.Empty(firstPage.Select(static membership => membership.BrainId).Intersect(secondPage.Select(static membership => membership.BrainId)));
+    }
+
+    [Fact]
     public async Task TryReassignMembershipAsync_ReassignsWhenExpectedSpeciesMatches()
     {
         using var db = new TempDatabaseScope();

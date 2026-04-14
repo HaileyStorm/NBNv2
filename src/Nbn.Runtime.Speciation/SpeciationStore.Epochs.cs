@@ -19,6 +19,7 @@ public sealed partial class SpeciationStore
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await connection.ExecuteAsync(new CommandDefinition(CreateSchemaSql, cancellationToken: cancellationToken));
+        await RunStorageMaintenanceAsync(connection, compactFreePages: false, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

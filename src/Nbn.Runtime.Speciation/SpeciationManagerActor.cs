@@ -34,6 +34,7 @@ public sealed partial class SpeciationManagerActor : IActor
     private const int DerivedSpeciesBootstrapMembershipLimit = DerivedSpeciesBootstrapActualSampleRequirement;
     private const int SpeciesFloorPrimePageSize = 2048;
     private const int MaxSpeciationHistoryPageSize = 8192;
+    private const int MaxSpeciationMembershipListSize = 8192;
 
     private readonly SpeciationStore _store;
     private SpeciationRuntimeConfig _runtimeConfig;

@@ -129,6 +129,68 @@ public sealed partial class SpeciationStore
         return connection;
     }
 
+    public async Task RunStorageMaintenanceAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await RunStorageMaintenanceAsync(connection, compactFreePages: true, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task RunStorageMaintenanceAsync(
+        SqliteConnection connection,
+        bool compactFreePages,
+        CancellationToken cancellationToken)
+    {
+        await TryCheckpointWalAsync(connection, cancellationToken).ConfigureAwait(false);
+        if (!compactFreePages || !File.Exists(_databasePath) || new FileInfo(_databasePath).Length < StorageMaintenanceMinimumBytes)
+        {
+            return;
+        }
+
+        try
+        {
+            var pageCount = await connection.ExecuteScalarAsync<long>(
+                new CommandDefinition("PRAGMA page_count;", cancellationToken: cancellationToken));
+            var freeListCount = await connection.ExecuteScalarAsync<long>(
+                new CommandDefinition("PRAGMA freelist_count;", cancellationToken: cancellationToken));
+            if (pageCount <= 0 || freeListCount <= 0 || freeListCount / (double)pageCount < StorageMaintenanceFreePageRatio)
+            {
+                return;
+            }
+
+            await connection.ExecuteAsync(new CommandDefinition("VACUUM;", cancellationToken: cancellationToken));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Storage compaction is opportunistic; maintenance should not fail because a DB is busy.
+        }
+
+        await TryCheckpointWalAsync(connection, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task TryCheckpointWalAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var rows = await connection.QueryAsync(
+                new CommandDefinition("PRAGMA wal_checkpoint(TRUNCATE);", cancellationToken: cancellationToken));
+            _ = rows.ToArray();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Checkpointing is best-effort; SQLite may refuse while another connection is active.
+        }
+    }
+
     private async Task UpsertSpeciesAsync(
         SqliteConnection connection,
         IDbTransaction transaction,

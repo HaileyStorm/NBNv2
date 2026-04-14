@@ -309,6 +309,12 @@ public sealed class SpeciationManagerActorTests
             Assert.True(secondAssign.Success);
             Assert.True(secondAssign.Created);
 
+            var currentScopeMemberships = await system.Root.RequestAsync<SpeciationListMembershipsResponse>(
+                managerPid,
+                new SpeciationListMembershipsRequest());
+            Assert.Single(currentScopeMemberships.Memberships);
+            Assert.Equal("species-two", currentScopeMemberships.Memberships[0].SpeciesId);
+
             var immutableConflict = await system.Root.RequestAsync<SpeciationAssignMembershipResponse>(
                 managerPid,
                 new SpeciationAssignMembershipRequest(

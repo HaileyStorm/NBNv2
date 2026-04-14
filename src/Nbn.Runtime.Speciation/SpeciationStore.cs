@@ -14,11 +14,13 @@ public sealed partial class SpeciationStore
     }
 
     private const string PragmaSql = """
-PRAGMA journal_mode=WAL;
-PRAGMA synchronous=NORMAL;
-PRAGMA foreign_keys=ON;
-PRAGMA busy_timeout=5000;
-""";
+    PRAGMA journal_mode=WAL;
+    PRAGMA synchronous=NORMAL;
+    PRAGMA foreign_keys=ON;
+    PRAGMA busy_timeout=5000;
+    PRAGMA wal_autocheckpoint=1000;
+    PRAGMA journal_size_limit=67108864;
+    """;
 
     private const string CreateSchemaSql = """
 CREATE TABLE IF NOT EXISTS taxonomy_epochs (
@@ -232,7 +234,8 @@ JOIN species AS s
 JOIN speciation_decisions AS d
     ON d.decision_id = m.decision_id
 WHERE (@epoch_id IS NULL OR m.epoch_id = @epoch_id)
-ORDER BY m.epoch_id, m.brain_id;
+ORDER BY m.epoch_id, m.brain_id
+LIMIT @limit OFFSET @offset;
 """;
 
     private const string CountHistorySql = """
@@ -495,6 +498,9 @@ WHERE name IN (
     private readonly string _databasePath;
     private readonly string _connectionString;
     private readonly TimeProvider _timeProvider;
+    private const int DefaultMembershipListLimit = 8192;
+    private const long StorageMaintenanceMinimumBytes = 512L * 1024L * 1024L;
+    private const double StorageMaintenanceFreePageRatio = 0.35d;
 
     private static readonly object HandlerGate = new();
     private static bool _handlersRegistered;

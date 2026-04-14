@@ -43,6 +43,21 @@ public sealed partial class SpeciationManagerActor
             _currentEpoch = completed.Result;
             _initialized = true;
             StartStartupReconciliation(context);
+            StartStorageMaintenance(context);
+            return Task.CompletedTask;
+        });
+    }
+
+    private void StartStorageMaintenance(IContext context)
+    {
+        var maintenanceTask = _store.RunStorageMaintenanceAsync(StoreMutationCancellationToken);
+        context.ReenterAfter(maintenanceTask, completed =>
+        {
+            if (completed.IsFaulted)
+            {
+                LogError($"Speciation storage maintenance skipped: {completed.Exception?.GetBaseException().Message}");
+            }
+
             return Task.CompletedTask;
         });
     }

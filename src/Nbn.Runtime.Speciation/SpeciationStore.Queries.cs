@@ -9,13 +9,17 @@ public sealed partial class SpeciationStore
     /// </summary>
     public async Task<IReadOnlyList<SpeciationMembershipRecord>> ListMembershipsAsync(
         long? epochId = null,
+        int limit = DefaultMembershipListLimit,
+        int offset = 0,
         CancellationToken cancellationToken = default)
     {
+        var normalizedLimit = Math.Max(1, limit);
+        var normalizedOffset = Math.Max(0, offset);
         await using var connection = await OpenConnectionAsync(cancellationToken);
         var rows = await connection.QueryAsync<MembershipRow>(
             new CommandDefinition(
                 ListMembershipsSql,
-                new { epoch_id = epochId },
+                new { epoch_id = epochId, limit = normalizedLimit, offset = normalizedOffset },
                 cancellationToken: cancellationToken));
         return rows.Select(ToMembershipRecord).ToArray();
     }

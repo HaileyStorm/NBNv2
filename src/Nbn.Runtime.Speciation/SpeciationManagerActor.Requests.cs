@@ -159,7 +159,7 @@ public sealed partial class SpeciationManagerActor
             return;
         }
 
-        var listTask = _store.ListMembershipsAsync(message.EpochId);
+        var listTask = _store.ListMembershipsAsync(ResolveMembershipListEpochId(message.EpochId), MaxSpeciationMembershipListSize);
         context.ReenterAfter(listTask, completed =>
         {
             if (completed.IsFaulted)
@@ -930,8 +930,8 @@ public sealed partial class SpeciationManagerActor
             return;
         }
 
-        var epochId = message.HasEpochId ? (long?)message.EpochId : null;
-        var listTask = _store.ListMembershipsAsync(epochId);
+        var epochId = ResolveMembershipListEpochId(message.HasEpochId ? (long?)message.EpochId : null);
+        var listTask = _store.ListMembershipsAsync(epochId, MaxSpeciationMembershipListSize);
         context.ReenterAfter(listTask, completed =>
         {
             if (completed.IsFaulted)
@@ -1012,6 +1012,11 @@ public sealed partial class SpeciationManagerActor
             return Task.CompletedTask;
         });
     }
+
+    private long? ResolveMembershipListEpochId(long? requestedEpochId)
+        => requestedEpochId.HasValue && requestedEpochId.Value > 0
+            ? requestedEpochId.Value
+            : _currentEpoch?.EpochId;
 
     private void HandleProtoListHistory(IContext context, ProtoSpec.SpeciationListHistoryRequest message)
     {

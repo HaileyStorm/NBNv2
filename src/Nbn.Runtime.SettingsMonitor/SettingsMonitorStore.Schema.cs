@@ -6,11 +6,13 @@ namespace Nbn.Runtime.SettingsMonitor;
 public sealed partial class SettingsMonitorStore
 {
     private const string PragmaSql = """
-PRAGMA journal_mode=WAL;
-PRAGMA synchronous=NORMAL;
-PRAGMA foreign_keys=ON;
-PRAGMA busy_timeout=5000;
-""";
+    PRAGMA journal_mode=WAL;
+    PRAGMA synchronous=NORMAL;
+    PRAGMA foreign_keys=ON;
+    PRAGMA busy_timeout=5000;
+    PRAGMA wal_autocheckpoint=1000;
+    PRAGMA journal_size_limit=67108864;
+    """;
 
     private const string CreateSchemaSql = """
 CREATE TABLE IF NOT EXISTS nodes (
@@ -190,6 +192,7 @@ WHERE updated_ms <= 0;
         await EnsureNodeCapabilitiesColumnsAsync(connection, cancellationToken);
         await EnsureBrainsColumnsAsync(connection, cancellationToken);
         await BackfillLegacyBrainsUpdatedMsAsync(connection, NowMs(), cancellationToken);
+        await RunStorageMaintenanceAsync(connection, compactFreePages: false, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task EnsureNodeCapabilitiesColumnsAsync(

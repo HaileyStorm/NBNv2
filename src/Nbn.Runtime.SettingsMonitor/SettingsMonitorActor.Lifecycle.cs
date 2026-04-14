@@ -122,6 +122,7 @@ public sealed partial class SettingsMonitorActor
         var deadRows = await _store.PruneStaleDeadBrainsAsync(deadCutoffMs).ConfigureAwait(false);
         var nonLiveRows = await _store.PruneStaleNonLiveBrainsAsync(nonLiveCutoffMs).ConfigureAwait(false);
         var capabilityRows = await _store.PruneStaleNodeCapabilitiesAsync(capabilityCutoffMs).ConfigureAwait(false);
+        await _store.RunStorageMaintenanceAsync().ConfigureAwait(false);
         return new PrunedRetentionCleanup(deadRows, nonLiveRows, capabilityRows);
     }
 
