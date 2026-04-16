@@ -13,6 +13,7 @@ public sealed record WorkerNodeOptions(
     int SettingsPort,
     string SettingsName,
     Guid? WorkerNodeId,
+    int WorkerCount,
     WorkerServiceRole ServiceRoles,
     WorkerResourceAvailability ResourceAvailability)
 {
@@ -28,6 +29,7 @@ public sealed record WorkerNodeOptions(
         var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
         var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
         var workerNodeId = GetEnvGuid("NBN_WORKER_NODE_ID");
+        var workerCount = GetEnvInt("NBN_WORKER_COUNT") ?? 1;
         var serviceRoles = WorkerServiceRole.All;
         var serviceRolesRaw = GetEnv("NBN_WORKER_SERVICE_ROLES");
         var cpuPercent = GetEnvPercent("NBN_WORKER_CPU_PCT", WorkerResourceAvailability.DefaultPercent);
@@ -119,6 +121,11 @@ public sealed record WorkerNodeOptions(
                     {
                         workerNodeId = workerNodeIdValue;
                     }
+                    continue;
+                case "--worker-count":
+                case "--workers":
+                case "--worker_count":
+                    workerCount = ParseCliPositiveInt(args, ref index, arg);
                     continue;
                 case "--service-roles":
                     if (index + 1 < args.Length)
@@ -246,6 +253,24 @@ public sealed record WorkerNodeOptions(
                 && Guid.TryParse(arg.Substring("--worker-node-id=".Length), out var workerNodeIdInline))
             {
                 workerNodeId = workerNodeIdInline;
+                continue;
+            }
+
+            if (arg.StartsWith("--worker-count=", StringComparison.OrdinalIgnoreCase))
+            {
+                workerCount = ParsePositiveInt(arg.Substring("--worker-count=".Length), "--worker-count");
+                continue;
+            }
+
+            if (arg.StartsWith("--workers=", StringComparison.OrdinalIgnoreCase))
+            {
+                workerCount = ParsePositiveInt(arg.Substring("--workers=".Length), "--workers");
+                continue;
+            }
+
+            if (arg.StartsWith("--worker_count=", StringComparison.OrdinalIgnoreCase))
+            {
+                workerCount = ParsePositiveInt(arg.Substring("--worker_count=".Length), "--worker_count");
                 continue;
             }
 
@@ -382,6 +407,11 @@ public sealed record WorkerNodeOptions(
             settingsName = "SettingsMonitor";
         }
 
+        if (workerCount <= 0)
+        {
+            workerCount = 1;
+        }
+
         return new WorkerNodeOptions(
             bindHost,
             port,
@@ -393,8 +423,44 @@ public sealed record WorkerNodeOptions(
             settingsPort,
             settingsName,
             workerNodeId,
+            workerCount,
             WorkerServiceRoles.Sanitize(serviceRoles),
             new WorkerResourceAvailability(cpuPercent, ramPercent, storagePercent, gpuComputePercent, gpuVramPercent));
+    }
+
+    public string ResolveRootActorName(int workerIndex)
+    {
+        var count = Math.Max(1, WorkerCount);
+        if (workerIndex < 0 || workerIndex >= count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(workerIndex), workerIndex, "Worker index is outside the configured worker count.");
+        }
+
+        if (count == 1 || workerIndex == 0)
+        {
+            return RootActorName;
+        }
+
+        return $"{RootActorName}-{workerIndex + 1}";
+    }
+
+    public Guid ResolveWorkerNodeId(string nodeAddress, int workerIndex)
+    {
+        var rootActorName = ResolveRootActorName(workerIndex);
+        var count = Math.Max(1, WorkerCount);
+        if (WorkerNodeId is { } configuredNodeId
+            && configuredNodeId != Guid.Empty
+            && (count <= 1 || workerIndex == 0))
+        {
+            return configuredNodeId;
+        }
+
+        if (count <= 1)
+        {
+            return Nbn.Shared.NodeIdentity.DeriveNodeId(nodeAddress);
+        }
+
+        return Nbn.Shared.NodeIdentity.DeriveNodeId(nodeAddress, rootActorName);
     }
 
     private static string? GetEnv(string key) => Environment.GetEnvironmentVariable(key);
@@ -444,6 +510,33 @@ public sealed record WorkerNodeOptions(
         return ParsePercent(args[index], option);
     }
 
+    private static int ParseCliPositiveInt(string[] args, ref int index, string option)
+    {
+        if (index + 1 >= args.Length)
+        {
+            throw new ArgumentException($"{option} requires a value.");
+        }
+
+        index++;
+        return ParsePositiveInt(args[index], option);
+    }
+
+    private static int ParsePositiveInt(string rawValue, string source)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            throw new ArgumentException($"{source} requires a non-empty positive integer.");
+        }
+
+        if (!int.TryParse(rawValue.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            || parsed <= 0)
+        {
+            throw new ArgumentException($"{source} must be a positive integer.");
+        }
+
+        return parsed;
+    }
+
     private static int ParsePercent(string rawValue, string source)
     {
         if (string.IsNullOrWhiteSpace(rawValue))
@@ -478,6 +571,7 @@ public sealed record WorkerNodeOptions(
         Console.WriteLine("  --settings-port <port>           SettingsMonitor port (default 12010)");
         Console.WriteLine("  --settings-name <name>           SettingsMonitor actor name (default SettingsMonitor)");
         Console.WriteLine("  --worker-node-id <guid>          Optional stable worker node id (default derives from advertised address)");
+        Console.WriteLine("  --worker-count <count>           Worker root actor count on this shared port (default 1)");
         Console.WriteLine("  --service-roles <list>           Enabled worker roles (default all)");
         Console.WriteLine("  --service-role <role>            Enable one or more roles (repeatable)");
         Console.WriteLine("  --disable-service-role <role>    Disable one or more roles (repeatable)");
@@ -496,5 +590,6 @@ public sealed record WorkerNodeOptions(
         Console.WriteLine("  env: NBN_WORKER_GPU_COMPUTE_PCT  GPU compute availability percentage");
         Console.WriteLine("  env: NBN_WORKER_GPU_VRAM_PCT     GPU VRAM availability percentage");
         Console.WriteLine("  env: NBN_WORKER_GPU_PCT          Legacy alias that sets both GPU compute and VRAM percentages");
+        Console.WriteLine("  env: NBN_WORKER_COUNT            Worker root actor count on this shared port");
     }
 }

@@ -10,6 +10,8 @@ Each running process hosts a Proto.Actor **ActorSystem**. Actors can be spawned 
 
 Runtime service roots bind all interfaces by default unless the operator explicitly pins `--bind-host` to a narrower interface such as `127.0.0.1`. When a service binds all interfaces and no explicit advertise host is supplied, NBN resolves a non-loopback local advertised address so peer discovery does not publish `0.0.0.0`.
 
+WorkerNode hosts may expose multiple worker root actors through one Proto.Remote address. Each root actor uses a unique actor name and worker node id, so SettingsMonitor and HiveMind treat `host:port/worker-root` as the reachable worker identity while still sharing the same listening port. The singular `service.endpoint.worker_node` setting remains a bootstrap/discovery endpoint; multi-worker readiness comes from SettingsMonitor node and capability inventory rows.
+
 NBN treats placement as a runtime concern:
 
 * RegionShards are expected to be distributed across worker processes.

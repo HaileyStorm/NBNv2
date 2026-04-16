@@ -88,6 +88,7 @@ public sealed class SettingsMonitorReporterTests
             cpuScore: 12.5f,
             gpuScore: 24.5f,
             ilgpuCudaAvailable: true);
+        var nodeId = Guid.NewGuid();
 
         var providerCalls = 0;
         var reporter = SettingsMonitorReporter.Start(
@@ -106,7 +107,8 @@ public sealed class SettingsMonitorReporterTests
 
                 throw new InvalidOperationException("simulated capability failure");
             },
-            heartbeatInterval: TimeSpan.FromMilliseconds(20));
+            heartbeatInterval: TimeSpan.FromMilliseconds(20),
+            nodeId: nodeId);
 
         Assert.NotNull(reporter);
         var activeReporter = reporter;
@@ -116,6 +118,8 @@ public sealed class SettingsMonitorReporterTests
             var online = await capture.Online.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var heartbeats = await capture.Heartbeats.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+            Assert.True(online.NodeId.TryToGuid(out var observedNodeId));
+            Assert.Equal(nodeId, observedNodeId);
             Assert.Equal(2, heartbeats.Count);
             Assert.Equal(online.NodeId, heartbeats[0].NodeId);
             Assert.Equal(online.NodeId, heartbeats[1].NodeId);

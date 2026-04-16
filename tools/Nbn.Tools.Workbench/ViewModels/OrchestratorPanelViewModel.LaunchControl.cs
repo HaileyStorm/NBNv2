@@ -154,53 +154,19 @@ public sealed partial class OrchestratorPanelViewModel
 
     private async Task StartWorkerAsync()
     {
-        if (!TryParsePort(Connections.WorkerPortText, out var workerPort))
+        if (!TryBuildWorkerLaunchRuntimeArgs(
+                Connections,
+                out var args,
+                out var workerPort,
+                out var workerCount,
+                out var errorMessage))
         {
-            WorkerLaunchStatus = "Invalid worker port.";
-            return;
-        }
-
-        if (!TryParsePort(Connections.SettingsPortText, out var settingsPort))
-        {
-            WorkerLaunchStatus = "Invalid Settings port.";
-            return;
-        }
-
-        if (!TryParsePercent(Connections.WorkerCpuLimitPercentText, out var workerCpuLimitPercent))
-        {
-            WorkerLaunchStatus = "Invalid worker CPU limit.";
-            return;
-        }
-
-        if (!TryParsePercent(Connections.WorkerRamLimitPercentText, out var workerRamLimitPercent))
-        {
-            WorkerLaunchStatus = "Invalid worker RAM limit.";
-            return;
-        }
-
-        if (!TryParsePercent(Connections.WorkerGpuLimitPercentText, out var workerGpuLimitPercent))
-        {
-            WorkerLaunchStatus = "Invalid worker GPU limit.";
-            return;
-        }
-
-        if (!TryParsePercent(Connections.WorkerVramLimitPercentText, out var workerVramLimitPercent))
-        {
-            WorkerLaunchStatus = "Invalid worker VRAM limit.";
+            WorkerLaunchStatus = errorMessage;
             return;
         }
 
         var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.WorkerNode");
-        var args = BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.WorkerHost, workerPort)
-                 + $" --logical-name {Connections.WorkerLogicalName}"
-                 + $" --root-name {Connections.WorkerRootName}"
-                 + $" --cpu-pct {workerCpuLimitPercent}"
-                 + $" --ram-pct {workerRamLimitPercent}"
-                 + $" --storage-pct {LocalDefaultWorkerStorageLimitPercent}"
-                 + $" --gpu-compute-pct {workerGpuLimitPercent}"
-                 + $" --gpu-vram-pct {workerVramLimitPercent}"
-                 + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
-        WorkerLaunchStatus = await StartLocalServiceAsync(
+        var launchStatus = await StartLocalServiceAsync(
             projectPath,
             "Nbn.Runtime.WorkerNode",
             args,
@@ -209,6 +175,76 @@ public sealed partial class OrchestratorPanelViewModel
             _workerRunner,
             includeRuntimeDiagnostics: true,
             includeObservabilityEnvironment: true).ConfigureAwait(false);
+        WorkerLaunchStatus = workerCount > 1 && IsSuccessfulLaunchStatus(launchStatus)
+            ? $"{launchStatus} {workerCount} workers share port {workerPort}."
+            : launchStatus;
+    }
+
+    internal static bool TryBuildWorkerLaunchRuntimeArgs(
+        ConnectionViewModel connections,
+        out string args,
+        out int workerPort,
+        out int workerCount,
+        out string errorMessage)
+    {
+        args = string.Empty;
+        workerPort = 0;
+        workerCount = 1;
+        errorMessage = string.Empty;
+
+        if (!TryParsePort(connections.WorkerPortText, out workerPort))
+        {
+            errorMessage = "Invalid worker port.";
+            return false;
+        }
+
+        if (!TryParsePort(connections.SettingsPortText, out var settingsPort))
+        {
+            errorMessage = "Invalid Settings port.";
+            return false;
+        }
+
+        if (!TryParsePositiveInt(connections.WorkerCountText, out workerCount))
+        {
+            errorMessage = "Invalid worker count.";
+            return false;
+        }
+
+        if (!TryParsePercent(connections.WorkerCpuLimitPercentText, out var workerCpuLimitPercent))
+        {
+            errorMessage = "Invalid worker CPU limit.";
+            return false;
+        }
+
+        if (!TryParsePercent(connections.WorkerRamLimitPercentText, out var workerRamLimitPercent))
+        {
+            errorMessage = "Invalid worker RAM limit.";
+            return false;
+        }
+
+        if (!TryParsePercent(connections.WorkerGpuLimitPercentText, out var workerGpuLimitPercent))
+        {
+            errorMessage = "Invalid worker GPU limit.";
+            return false;
+        }
+
+        if (!TryParsePercent(connections.WorkerVramLimitPercentText, out var workerVramLimitPercent))
+        {
+            errorMessage = "Invalid worker VRAM limit.";
+            return false;
+        }
+
+        args = BuildLocalServiceNetworkArgs(connections.ResolveExplicitLocalAdvertiseHost(), connections.WorkerHost, workerPort)
+               + $" --logical-name {connections.WorkerLogicalName}"
+               + $" --root-name {connections.WorkerRootName}"
+               + $" --worker-count {workerCount}"
+               + $" --cpu-pct {workerCpuLimitPercent}"
+               + $" --ram-pct {workerRamLimitPercent}"
+               + $" --storage-pct {LocalDefaultWorkerStorageLimitPercent}"
+               + $" --gpu-compute-pct {workerGpuLimitPercent}"
+               + $" --gpu-vram-pct {workerVramLimitPercent}"
+               + $" --settings-host {connections.SettingsHost} --settings-port {settingsPort} --settings-name {connections.SettingsName}";
+        return true;
     }
 
     private async Task StartObsAsync()

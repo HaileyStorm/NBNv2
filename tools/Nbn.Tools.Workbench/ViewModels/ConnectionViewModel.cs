@@ -20,6 +20,7 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _speciationManager = "SpeciationManager";
     private string _workerHost = "127.0.0.1";
     private string _workerPortText = "12041";
+    private string _workerCountText = "1";
     private string _workerRootName = "worker-node";
     private string _workerLogicalName = "nbn.worker";
     private string _workerCpuLimitPercentText = "90";
@@ -176,6 +177,12 @@ public sealed class ConnectionViewModel : ViewModelBase
     {
         get => _workerPortText;
         set => SetProperty(ref _workerPortText, value);
+    }
+
+    public string WorkerCountText
+    {
+        get => _workerCountText;
+        set => SetProperty(ref _workerCountText, value);
     }
 
     public string WorkerRootName

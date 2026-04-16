@@ -134,6 +134,60 @@ public sealed class HiveMindWorkerInventoryTests
     }
 
     [Fact]
+    public async Task PlacementWorkerInventory_IncludesGeneratedRootSiblings_ForConfiguredCustomWorkerRoot()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(workerInventoryRefreshMs: 1000, workerInventoryStaleAfterMs: 5_000))));
+
+        root.Send(hiveMind, new ProtoSettings.SettingValue
+        {
+            Key = ServiceEndpointSettings.WorkerNodeKey,
+            Value = ServiceEndpointSettings.EncodeValue("127.0.0.1:12041", "gpu-worker")
+        });
+
+        var firstWorkerId = Guid.NewGuid();
+        var secondWorkerId = Guid.NewGuid();
+        root.Send(hiveMind, new ProtoSettings.WorkerInventorySnapshotResponse
+        {
+            SnapshotMs = (ulong)nowMs,
+            Workers =
+            {
+                BuildWorker(
+                    firstWorkerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "127.0.0.1:12041",
+                    rootActorName: "gpu-worker",
+                    logicalName: "custom-worker"),
+                BuildWorker(
+                    secondWorkerId,
+                    isAlive: true,
+                    isReady: true,
+                    lastSeenMs: nowMs,
+                    capabilityTimeMs: nowMs,
+                    address: "127.0.0.1:12041",
+                    rootActorName: "gpu-worker-2",
+                    logicalName: "custom-worker")
+            }
+        });
+
+        var inventory = await root.RequestAsync<PlacementWorkerInventory>(
+            hiveMind,
+            new PlacementWorkerInventoryRequest());
+
+        Assert.Equal(2, inventory.Workers.Count);
+        Assert.Contains(inventory.Workers, worker => worker.WorkerNodeId.Value == firstWorkerId.ToProtoUuid().Value);
+        Assert.Contains(inventory.Workers, worker => worker.WorkerNodeId.Value == secondWorkerId.ToProtoUuid().Value);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task WorkerInventory_PrunesUnseenStaleUntrackedWorkers()
     {
         var system = new ActorSystem();

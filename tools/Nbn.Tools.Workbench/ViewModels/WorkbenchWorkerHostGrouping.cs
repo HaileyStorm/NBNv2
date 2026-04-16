@@ -15,9 +15,7 @@ internal static class WorkbenchWorkerHostGrouping
                 return true;
             }
 
-            if (!string.IsNullOrWhiteSpace(connections.WorkerRootName)
-                && !string.IsNullOrWhiteSpace(rootActorName)
-                && string.Equals(rootActorName.Trim(), connections.WorkerRootName.Trim(), StringComparison.OrdinalIgnoreCase))
+            if (MatchesRootActorNameOrGeneratedSibling(rootActorName, connections.WorkerRootName))
             {
                 return true;
             }
@@ -120,4 +118,27 @@ internal static class WorkbenchWorkerHostGrouping
 
     internal static string FormatWorkerCountLabel(int workerCount)
         => $"{workerCount} worker{(workerCount == 1 ? string.Empty : "s")}";
+
+    private static bool MatchesRootActorNameOrGeneratedSibling(string? rootActorName, string? configuredRootActorName)
+    {
+        if (string.IsNullOrWhiteSpace(rootActorName) || string.IsNullOrWhiteSpace(configuredRootActorName))
+        {
+            return false;
+        }
+
+        var root = rootActorName.Trim();
+        var configured = configuredRootActorName.Trim();
+        if (root.Equals(configured, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!root.StartsWith(configured + "-", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var suffix = root[(configured.Length + 1)..];
+        return int.TryParse(suffix, out var index) && index > 1;
+    }
 }

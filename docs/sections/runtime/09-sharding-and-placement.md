@@ -16,7 +16,7 @@ RegionHost may materialize a shard from a selective `.nbn` region fetch when the
 
 ### 9.2 Node capabilities and placement telemetry
 
-Worker processes report capabilities periodically to SettingsMonitor:
+Worker roots report capabilities periodically to SettingsMonitor. A WorkerNode process may host one or more worker roots on the same advertised Proto.Remote address; each root publishes its own worker node id, root actor name, heartbeat, and capability row so HiveMind can route placement to distinct actors on the shared port.
 
 * CPU core count
 * free and total RAM

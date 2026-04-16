@@ -1,5 +1,6 @@
 using Nbn.Proto.Settings;
 using Nbn.Runtime.WorkerNode;
+using Nbn.Shared;
 using Proto;
 
 namespace Nbn.Tests.WorkerNode;
@@ -11,6 +12,7 @@ public sealed class WorkerNodeResourceAvailabilityTests
     public void FromArgs_Defaults_ResourceAvailability_ToConfiguredDefaultPercent()
     {
         using var _ = new EnvironmentVariableScope(
+            ("NBN_WORKER_COUNT", null),
             ("NBN_WORKER_CPU_PCT", null),
             ("NBN_WORKER_RAM_PCT", null),
             ("NBN_WORKER_STORAGE_PCT", null),
@@ -25,6 +27,62 @@ public sealed class WorkerNodeResourceAvailabilityTests
         Assert.Equal(WorkerResourceAvailability.DefaultPercent, options.ResourceAvailability.StoragePercent);
         Assert.Equal(WorkerResourceAvailability.DefaultPercent, options.ResourceAvailability.GpuComputePercent);
         Assert.Equal(WorkerResourceAvailability.DefaultPercent, options.ResourceAvailability.GpuVramPercent);
+    }
+
+    [Fact]
+    public void FromArgs_Defaults_WorkerCount_ToOne()
+    {
+        using var _ = new EnvironmentVariableScope(("NBN_WORKER_COUNT", null));
+
+        var options = WorkerNodeOptions.FromArgs([]);
+
+        Assert.Equal(1, options.WorkerCount);
+        Assert.Equal("worker-node", options.ResolveRootActorName(0));
+        Assert.Equal(
+            NodeIdentity.DeriveNodeId("127.0.0.1:12041"),
+            options.ResolveWorkerNodeId("127.0.0.1:12041", 0));
+    }
+
+    [Fact]
+    public void FromArgs_ParsesWorkerCount_AndDerivesUniqueSharedPortIdentities()
+    {
+        using var _ = new EnvironmentVariableScope(("NBN_WORKER_COUNT", null));
+        var configuredNodeId = Guid.NewGuid();
+
+        var options = WorkerNodeOptions.FromArgs(
+        [
+            "--worker-count", "3",
+            "--root-name", "worker-node",
+            "--worker-node-id", configuredNodeId.ToString("D")
+        ]);
+
+        Assert.Equal(3, options.WorkerCount);
+        Assert.Equal("worker-node", options.ResolveRootActorName(0));
+        Assert.Equal("worker-node-2", options.ResolveRootActorName(1));
+        Assert.Equal("worker-node-3", options.ResolveRootActorName(2));
+
+        var address = "127.0.0.1:12041";
+        var firstNodeId = options.ResolveWorkerNodeId(address, 0);
+        var secondNodeId = options.ResolveWorkerNodeId(address, 1);
+        var thirdNodeId = options.ResolveWorkerNodeId(address, 2);
+
+        Assert.Equal(configuredNodeId, firstNodeId);
+        Assert.Equal(NodeIdentity.DeriveNodeId(address, "worker-node-2"), secondNodeId);
+        Assert.Equal(NodeIdentity.DeriveNodeId(address, "worker-node-3"), thirdNodeId);
+        Assert.NotEqual(Guid.Empty, secondNodeId);
+        Assert.NotEqual(Guid.Empty, thirdNodeId);
+        Assert.NotEqual(firstNodeId, secondNodeId);
+        Assert.NotEqual(secondNodeId, thirdNodeId);
+    }
+
+    [Fact]
+    public void FromArgs_RejectsInvalidWorkerCount_FromCli()
+    {
+        using var _ = new EnvironmentVariableScope(("NBN_WORKER_COUNT", null));
+
+        var exception = Assert.Throws<ArgumentException>(() => WorkerNodeOptions.FromArgs(["--worker-count", "0"]));
+
+        Assert.Contains("--worker-count", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

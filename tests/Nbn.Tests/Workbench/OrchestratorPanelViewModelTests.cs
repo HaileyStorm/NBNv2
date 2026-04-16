@@ -692,6 +692,54 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_MapsGeneratedRootSiblings_ForCustomWorkerRoot()
+    {
+        var connections = new ConnectionViewModel
+        {
+            WorkerLogicalName = "custom-worker",
+            WorkerRootName = "gpu-worker"
+        };
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var firstWorkerId = Guid.NewGuid();
+        var secondWorkerId = Guid.NewGuid();
+        var workerAddress = $"{connections.WorkerHost}:{connections.WorkerPortText}";
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    BuildNodeStatus(firstWorkerId, connections.WorkerLogicalName, workerAddress, "gpu-worker", nowMs),
+                    BuildNodeStatus(secondWorkerId, connections.WorkerLogicalName, workerAddress, "gpu-worker-2", nowMs)
+                }
+            },
+            WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)nowMs,
+                Workers =
+                {
+                    BuildWorkerReadiness(firstWorkerId, connections.WorkerLogicalName, workerAddress, "gpu-worker", nowMs),
+                    BuildWorkerReadiness(secondWorkerId, connections.WorkerLogicalName, workerAddress, "gpu-worker-2", nowMs)
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.True(connections.WorkerDiscoverable);
+        Assert.Equal(2, vm.WorkerEndpoints.Count);
+        Assert.Contains(vm.WorkerEndpoints, worker => worker.NodeId == firstWorkerId && worker.RootActor == "gpu-worker");
+        Assert.Contains(vm.WorkerEndpoints, worker => worker.NodeId == secondWorkerId && worker.RootActor == "gpu-worker-2");
+        var group = Assert.Single(vm.WorkerNodeGroups);
+        Assert.Equal("2 workers", group.WorkerCountText);
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_BuildsSystemLoadSummary_And_CountsWorkerBrains()
     {
         var connections = new ConnectionViewModel();
@@ -3592,6 +3640,50 @@ public class OrchestratorPanelViewModelTests
             launchPreparer: launchPreparer,
             firewallManager: firewallManager ?? new FakeLocalFirewallManager());
     }
+
+    private static NodeStatus BuildNodeStatus(
+        Guid nodeId,
+        string logicalName,
+        string address,
+        string rootActorName,
+        long lastSeenMs)
+        => new()
+        {
+            NodeId = nodeId.ToProtoUuid(),
+            LogicalName = logicalName,
+            Address = address,
+            RootActorName = rootActorName,
+            LastSeenMs = (ulong)lastSeenMs,
+            IsAlive = true
+        };
+
+    private static WorkerReadinessCapability BuildWorkerReadiness(
+        Guid nodeId,
+        string logicalName,
+        string address,
+        string rootActorName,
+        long nowMs)
+        => new()
+        {
+            NodeId = nodeId.ToProtoUuid(),
+            LogicalName = logicalName,
+            Address = address,
+            RootActorName = rootActorName,
+            IsAlive = true,
+            IsReady = true,
+            LastSeenMs = (ulong)nowMs,
+            HasCapabilities = true,
+            CapabilityTimeMs = (ulong)nowMs,
+            Capabilities = new NodeCapabilities
+            {
+                CpuCores = 4,
+                RamFreeBytes = 4UL * 1024 * 1024 * 1024,
+                RamTotalBytes = 8UL * 1024 * 1024 * 1024,
+                StorageFreeBytes = 32UL * 1024 * 1024 * 1024,
+                StorageTotalBytes = 64UL * 1024 * 1024 * 1024,
+                CpuScore = 10f
+            }
+        };
 
     private static ProcessStartInfo CreateLongRunningProcessStartInfo()
     {

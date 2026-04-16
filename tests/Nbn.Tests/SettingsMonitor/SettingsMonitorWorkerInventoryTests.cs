@@ -90,6 +90,37 @@ public sealed class SettingsMonitorWorkerInventoryTests
     }
 
     [Fact]
+    public async Task StoreSnapshotQuery_PreservesWorkersSharingAddressWithDistinctRoots()
+    {
+        using var db = new TempDatabaseScope();
+        var timeProvider = new MutableTimeProvider(100);
+        var store = new SettingsMonitorStore(db.DatabasePath, timeProvider);
+        await store.InitializeAsync();
+
+        var workerA = Guid.NewGuid();
+        var workerB = Guid.NewGuid();
+        var sharedAddress = "127.0.0.1:12041";
+
+        await store.UpsertNodeAsync(new NodeRegistration(workerA, "nbn.worker", sharedAddress, "worker-node"), timeMs: 100);
+        await store.UpsertNodeAsync(new NodeRegistration(workerB, "nbn.worker", sharedAddress, "worker-node-2"), timeMs: 100);
+
+        await store.RecordHeartbeatAsync(new NodeHeartbeat(
+            workerA,
+            120,
+            CreateCapabilities(cpuCores: 4, ramFreeBytes: 1_024, storageFreeBytes: 2_048)));
+        await store.RecordHeartbeatAsync(new NodeHeartbeat(
+            workerB,
+            130,
+            CreateCapabilities(cpuCores: 4, ramFreeBytes: 1_024, storageFreeBytes: 2_048)));
+
+        var snapshot = await store.GetWorkerInventorySnapshotAsync();
+
+        Assert.Equal(2, snapshot.Workers.Count(worker => worker.Address == sharedAddress));
+        Assert.Contains(snapshot.Workers, worker => worker.NodeId == workerA && worker.RootActorName == "worker-node");
+        Assert.Contains(snapshot.Workers, worker => worker.NodeId == workerB && worker.RootActorName == "worker-node-2");
+    }
+
+    [Fact]
     public async Task ActorSnapshotRequest_MergesRuntimeNodeStateWithStoredCapabilities()
     {
         using var db = new TempDatabaseScope();

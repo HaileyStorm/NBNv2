@@ -83,6 +83,8 @@ Each running process hosts a Proto.Actor **ActorSystem**. Actors can be spawned 
 
 Runtime service roots bind all interfaces by default unless the operator explicitly pins `--bind-host` to a narrower interface such as `127.0.0.1`. When a service binds all interfaces and no explicit advertise host is supplied, NBN resolves a non-loopback local advertised address so peer discovery does not publish `0.0.0.0`.
 
+WorkerNode hosts may expose multiple worker root actors through one Proto.Remote address. Each root actor uses a unique actor name and worker node id, so SettingsMonitor and HiveMind treat `host:port/worker-root` as the reachable worker identity while still sharing the same listening port. The singular `service.endpoint.worker_node` setting remains a bootstrap/discovery endpoint; multi-worker readiness comes from SettingsMonitor node and capability inventory rows.
+
 NBN treats placement as a runtime concern:
 
 * RegionShards are expected to be distributed across worker processes.
@@ -531,7 +533,7 @@ RegionHost may materialize a shard from a selective `.nbn` region fetch when the
 
 ### 9.2 Node capabilities and placement telemetry
 
-Worker processes report capabilities periodically to SettingsMonitor:
+Worker roots report capabilities periodically to SettingsMonitor. A WorkerNode process may host one or more worker roots on the same advertised Proto.Remote address; each root publishes its own worker node id, root actor name, heartbeat, and capability row so HiveMind can route placement to distinct actors on the shared port.
 
 * CPU core count
 * free and total RAM
@@ -1180,7 +1182,7 @@ Runtime behavior:
 * Workbench visualizer cadence controls consume SettingsMonitor snapshots plus `SettingChanged` feeds, including external Settings DB value updates detected and published by SettingsMonitor for existing setting rows, so the operator control target tracks the authoritative settings value without reconnecting.
 * When `tick.cadence.hz` changes externally, Workbench re-queries HiveMind status so the visualizer continues to show both the configured cadence target and the current authoritative runtime target when they temporarily diverge.
 * When stream throttling is active (`target tick cadence faster than configured stream interval`), RegionShards sample visualization work in deterministic region phases across ticks to spread CPU cost without changing simulation compute/deliver semantics.
-* Workbench Orchestrator exposes settings-backed worker policy controls for capability refresh cadence and pressure-rebalance thresholds, node-scoped resource-usage summaries derived from SettingsMonitor worker capability snapshots (workers grouped by address host), recent worker-pressure/tick-health summaries from HiveMind status, and `Profile Current System` for attached perf-probe runs against the currently running deployment.
+* Workbench Orchestrator exposes local worker count for WorkerNode launch, settings-backed worker policy controls for capability refresh cadence and pressure-rebalance thresholds, node-scoped resource-usage summaries derived from SettingsMonitor worker capability snapshots (workers grouped by address host, including multiple worker roots that share one port), recent worker-pressure/tick-health summaries from HiveMind status, and `Profile Current System` for attached perf-probe runs against the currently running deployment.
 * Workbench Debug mirrors that same node-scoped system-load summary so operators can correlate debug streams with current node resource usage, recent worker pressure, and automatic tick-cadence backpressure without leaving the debug surface.
 * Workbench Speciation surfaces total epoch count, current active epoch, and a pane-wide epoch selector so memberships and history visualizations stay aligned to one epoch scope when the operator drills into historical taxonomy state.
 

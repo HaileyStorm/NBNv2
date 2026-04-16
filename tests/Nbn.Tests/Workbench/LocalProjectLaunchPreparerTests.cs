@@ -3,12 +3,85 @@ using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using Nbn.Tools.Workbench.Services;
+using Nbn.Tools.Workbench.ViewModels;
 using Xunit;
 
 namespace Nbn.Tests.Workbench;
 
 public class LocalProjectLaunchPreparerTests
 {
+    [Fact]
+    public void TryBuildWorkerLaunchRuntimeArgs_IncludesWorkerCountOnSharedPort()
+    {
+        var connections = new ConnectionViewModel
+        {
+            LocalAdvertiseHost = "10.0.0.5",
+            WorkerPortText = "12041",
+            WorkerCountText = "3",
+            WorkerRootName = "worker-node",
+            WorkerLogicalName = "nbn.worker",
+            WorkerCpuLimitPercentText = "80",
+            WorkerRamLimitPercentText = "70",
+            WorkerGpuLimitPercentText = "60",
+            WorkerVramLimitPercentText = "50",
+            SettingsHost = "127.0.0.1",
+            SettingsPortText = "12010",
+            SettingsName = "SettingsMonitor"
+        };
+
+        var built = OrchestratorPanelViewModel.TryBuildWorkerLaunchRuntimeArgs(
+            connections,
+            out var args,
+            out var workerPort,
+            out var workerCount,
+            out var errorMessage);
+
+        Assert.True(built, errorMessage);
+        Assert.Equal(12041, workerPort);
+        Assert.Equal(3, workerCount);
+        Assert.Contains("--port 12041", args, StringComparison.Ordinal);
+        Assert.Contains("--advertise-host 10.0.0.5", args, StringComparison.Ordinal);
+        Assert.Contains("--root-name worker-node", args, StringComparison.Ordinal);
+        Assert.Contains("--worker-count 3", args, StringComparison.Ordinal);
+        Assert.DoesNotContain("12042", args, StringComparison.Ordinal);
+        Assert.DoesNotContain("12043", args, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryBuildWorkerLaunchRuntimeArgs_RejectsInvalidWorkerCount()
+    {
+        var connections = new ConnectionViewModel
+        {
+            WorkerPortText = "12041",
+            WorkerCountText = "0",
+            SettingsPortText = "12010"
+        };
+
+        var built = OrchestratorPanelViewModel.TryBuildWorkerLaunchRuntimeArgs(
+            connections,
+            out _,
+            out _,
+            out _,
+            out var errorMessage);
+
+        Assert.False(built);
+        Assert.Equal("Invalid worker count.", errorMessage);
+    }
+
+    [Fact]
+    public void WorkerHostCandidate_AllowsGeneratedRootSiblings_ForCustomRootName()
+    {
+        var connections = new ConnectionViewModel
+        {
+            WorkerLogicalName = "custom-worker",
+            WorkerRootName = "gpu-worker"
+        };
+
+        Assert.True(WorkbenchWorkerHostGrouping.IsWorkerHostCandidate(connections, "other-logical", "gpu-worker"));
+        Assert.True(WorkbenchWorkerHostGrouping.IsWorkerHostCandidate(connections, "other-logical", "gpu-worker-2"));
+        Assert.False(WorkbenchWorkerHostGrouping.IsWorkerHostCandidate(connections, "other-logical", "gpu-worker-alpha"));
+    }
+
     [Fact]
     public async Task PrepareAsync_UsesBuiltExecutable_WhenAvailable()
     {

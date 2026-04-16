@@ -28,34 +28,49 @@ await system.Remote().StartAsync();
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
 var advertisedPort = remoteConfig.AdvertisedPort ?? remoteConfig.Port;
 var nodeAddress = $"{advertisedHost}:{advertisedPort}";
-var workerNodeId = options.WorkerNodeId ?? NodeIdentity.DeriveNodeId(nodeAddress);
-if (workerNodeId == Guid.Empty)
-{
-    throw new InvalidOperationException("WorkerNode could not derive a stable worker node id.");
-}
 
 var capabilityProvider = new WorkerNodeCapabilityProvider(
     options.ResourceAvailability);
-var workerPid = system.Root.SpawnNamed(
-    Props.FromProducer(() => new WorkerNodeActor(
-        workerNodeId,
-        nodeAddress,
-        enabledRoles: options.ServiceRoles,
-        capabilityProfileChanged: capabilityProvider.MarkDirty,
-        capabilitySnapshotProvider: capabilityProvider.GetCapabilities,
-        resourceAvailability: options.ResourceAvailability,
-        observabilityDefaultHost: options.SettingsHost)),
-    options.RootActorName);
+var workerRoots = new List<WorkerProcessRoot>();
+var settingsReporters = new List<SettingsMonitorReporter>();
+for (var workerIndex = 0; workerIndex < options.WorkerCount; workerIndex++)
+{
+    var rootActorName = options.ResolveRootActorName(workerIndex);
+    var workerNodeId = options.ResolveWorkerNodeId(nodeAddress, workerIndex);
+    if (workerNodeId == Guid.Empty)
+    {
+        throw new InvalidOperationException(
+            $"WorkerNode could not derive a stable worker node id for root actor '{rootActorName}'.");
+    }
 
-var settingsReporter = SettingsMonitorReporter.Start(
-    system,
-    options.SettingsHost,
-    options.SettingsPort,
-    options.SettingsName,
-    nodeAddress,
-    options.LogicalName,
-    options.RootActorName,
-    capabilitiesProvider: capabilityProvider.GetCapabilities);
+    var workerPid = system.Root.SpawnNamed(
+        Props.FromProducer(() => new WorkerNodeActor(
+            workerNodeId,
+            nodeAddress,
+            enabledRoles: options.ServiceRoles,
+            capabilityProfileChanged: capabilityProvider.MarkDirty,
+            capabilitySnapshotProvider: capabilityProvider.GetCapabilities,
+            resourceAvailability: options.ResourceAvailability,
+            observabilityDefaultHost: options.SettingsHost)),
+        rootActorName);
+
+    workerRoots.Add(new WorkerProcessRoot(workerNodeId, rootActorName, workerPid));
+
+    var settingsReporter = SettingsMonitorReporter.Start(
+        system,
+        options.SettingsHost,
+        options.SettingsPort,
+        options.SettingsName,
+        nodeAddress,
+        options.LogicalName,
+        rootActorName,
+        capabilitiesProvider: capabilityProvider.GetCapabilities,
+        nodeId: workerNodeId);
+    if (settingsReporter is not null)
+    {
+        settingsReporters.Add(settingsReporter);
+    }
+}
 
 var publishedWorkerEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsync(
     system,
@@ -63,7 +78,7 @@ var publishedWorkerEndpoint = await ServiceEndpointDiscoveryClient.TryPublishAsy
     options.SettingsPort,
     options.SettingsName,
     ServiceEndpointSettings.WorkerNodeKey,
-    new ServiceEndpoint(nodeAddress, options.RootActorName));
+    new ServiceEndpoint(nodeAddress, workerRoots[0].RootActorName));
 if (!publishedWorkerEndpoint)
 {
     Console.WriteLine($"[WARN] Failed to publish endpoint setting '{ServiceEndpointSettings.WorkerNodeKey}'.");
@@ -83,8 +98,8 @@ try
     if (discoveryClient is null)
     {
         Console.WriteLine("[WARN] WorkerNode endpoint discovery is disabled because SettingsMonitor coordinates were not configured.");
-        WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-            workerNodeId,
+        RecordDiscoveryEndpointObserved(
+            workerRoots,
             target: "discovery",
             outcome: "disabled",
             failureReason: "settings_unconfigured");
@@ -92,11 +107,10 @@ try
     else
     {
         discoveryClient.EndpointObserved += observation =>
-            system.Root.Send(workerPid, new WorkerNodeActor.EndpointStateObserved(observation));
+            SendToWorkerRoots(system, workerRoots, new WorkerNodeActor.EndpointStateObserved(observation));
         discoveryLoopTask = RunDiscoveryBootstrapLoopAsync(
             system,
-            workerPid,
-            workerNodeId,
+            workerRoots,
             discoveryClient,
             discoveryLoopCancellation.Token);
     }
@@ -104,26 +118,30 @@ try
 catch (Exception ex)
 {
     Console.WriteLine($"[WARN] WorkerNode endpoint discovery setup failed: {ex.GetBaseException().Message}");
-    WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-        workerNodeId,
+    RecordDiscoveryEndpointObserved(
+        workerRoots,
         target: "discovery",
         outcome: "bootstrap_failed",
         failureReason: ToDiscoveryFailureReason(ex));
 }
 
-var startupState = await system.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
-    workerPid,
-    new WorkerNodeActor.GetWorkerNodeSnapshot());
-
 Console.WriteLine("NBN WorkerNode online.");
 Console.WriteLine($"Bind: {remoteConfig.Host}:{remoteConfig.Port}");
 Console.WriteLine($"Advertised: {advertisedHost}:{advertisedPort}");
-Console.WriteLine($"WorkerNodeId: {startupState.WorkerNodeId}");
-Console.WriteLine($"RootActor: {PidLabel(workerPid)}");
-Console.WriteLine($"ServiceRoles: {WorkerServiceRoles.ToOptionValue(startupState.EnabledRoles)}");
-Console.WriteLine($"ResourceAvailability: {startupState.ResourceAvailability.ToDisplayString()}");
-Console.WriteLine($"Discovered HiveMind: {FormatEndpoint(startupState.HiveMindEndpoint)}");
-Console.WriteLine($"Discovered IO: {FormatEndpoint(startupState.IoGatewayEndpoint)}");
+Console.WriteLine($"WorkerRoots: {workerRoots.Count}");
+foreach (var workerRoot in workerRoots)
+{
+    var startupState = await system.Root.RequestAsync<WorkerNodeActor.WorkerNodeSnapshot>(
+        workerRoot.Pid,
+        new WorkerNodeActor.GetWorkerNodeSnapshot());
+
+    Console.WriteLine($"WorkerNodeId: {startupState.WorkerNodeId}");
+    Console.WriteLine($"RootActor: {PidLabel(workerRoot.Pid)}");
+    Console.WriteLine($"ServiceRoles: {WorkerServiceRoles.ToOptionValue(startupState.EnabledRoles)}");
+    Console.WriteLine($"ResourceAvailability: {startupState.ResourceAvailability.ToDisplayString()}");
+    Console.WriteLine($"Discovered HiveMind: {FormatEndpoint(startupState.HiveMindEndpoint)}");
+    Console.WriteLine($"Discovered IO: {FormatEndpoint(startupState.IoGatewayEndpoint)}");
+}
 Console.WriteLine("Press Ctrl+C to shut down.");
 
 var shutdown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -152,7 +170,7 @@ if (discoveryClient is not null)
     await discoveryClient.DisposeAsync();
 }
 
-if (settingsReporter is not null)
+foreach (var settingsReporter in settingsReporters)
 {
     await settingsReporter.DisposeAsync();
 }
@@ -176,8 +194,7 @@ static string FormatEndpoint(ServiceEndpointRegistration? registration)
 
 static async Task RunDiscoveryBootstrapLoopAsync(
     ActorSystem system,
-    PID workerPid,
-    Guid workerNodeId,
+    IReadOnlyList<WorkerProcessRoot> workerRoots,
     ServiceEndpointDiscoveryClient discoveryClient,
     CancellationToken cancellationToken)
 {
@@ -198,12 +215,12 @@ static async Task RunDiscoveryBootstrapLoopAsync(
         try
         {
             var known = await discoveryClient.ResolveKnownAsync(cancellationToken).ConfigureAwait(false);
-            system.Root.Send(workerPid, new WorkerNodeActor.DiscoverySnapshotApplied(known));
+            SendToWorkerRoots(system, workerRoots, new WorkerNodeActor.DiscoverySnapshotApplied(known));
 
             await discoveryClient.SubscribeAsync(watchedKeys, cancellationToken).ConfigureAwait(false);
 
-            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-                workerNodeId,
+            RecordDiscoveryEndpointObserved(
+                workerRoots,
                 target: "discovery",
                 outcome: bootstrapped ? "refresh_succeeded" : "bootstrap_succeeded",
                 failureReason: "none");
@@ -222,8 +239,8 @@ static async Task RunDiscoveryBootstrapLoopAsync(
             attempt++;
             var failureReason = ToDiscoveryFailureReason(ex);
             var retryDelay = ComputeDiscoveryRetryDelay(attempt);
-            WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-                workerNodeId,
+            RecordDiscoveryEndpointObserved(
+                workerRoots,
                 target: "discovery",
                 outcome: "retry_scheduled",
                 failureReason: failureReason);
@@ -234,11 +251,35 @@ static async Task RunDiscoveryBootstrapLoopAsync(
         }
     }
 
-    WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
-        workerNodeId,
+    RecordDiscoveryEndpointObserved(
+        workerRoots,
         target: "discovery",
         outcome: "stopped",
         failureReason: "shutdown");
+}
+
+static void SendToWorkerRoots(ActorSystem system, IReadOnlyList<WorkerProcessRoot> workerRoots, object message)
+{
+    foreach (var workerRoot in workerRoots)
+    {
+        system.Root.Send(workerRoot.Pid, message);
+    }
+}
+
+static void RecordDiscoveryEndpointObserved(
+    IReadOnlyList<WorkerProcessRoot> workerRoots,
+    string target,
+    string outcome,
+    string failureReason)
+{
+    foreach (var workerRoot in workerRoots)
+    {
+        WorkerNodeTelemetry.RecordDiscoveryEndpointObserved(
+            workerRoot.WorkerNodeId,
+            target,
+            outcome,
+            failureReason);
+    }
 }
 
 static TimeSpan ComputeDiscoveryRetryDelay(int attempt)
@@ -259,3 +300,5 @@ static string ToDiscoveryFailureReason(Exception exception)
         _ => "settings_request_failed"
     };
 }
+
+internal readonly record struct WorkerProcessRoot(Guid WorkerNodeId, string RootActorName, PID Pid);

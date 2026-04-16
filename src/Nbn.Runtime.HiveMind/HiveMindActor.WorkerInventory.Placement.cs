@@ -268,18 +268,16 @@ public sealed partial class HiveMindActor
             return true;
         }
 
-        if (!string.IsNullOrWhiteSpace(_configuredWorkerRootActorName)
-            && !string.IsNullOrWhiteSpace(rootActorName)
-            && string.Equals(
-                rootActorName.Trim(),
-                _configuredWorkerRootActorName,
-                StringComparison.OrdinalIgnoreCase))
+        if (MatchesConfiguredWorkerRootActor(rootActorName))
         {
             return true;
         }
 
         return MatchesKnownWorkerRootActor(rootActorName);
     }
+
+    private bool MatchesConfiguredWorkerRootActor(string? rootActorName)
+        => MatchesRootActorNameOrGeneratedSibling(rootActorName, _configuredWorkerRootActorName);
 
     private static bool MatchesKnownWorkerRootActor(string? rootActorName)
     {
@@ -299,5 +297,28 @@ public sealed partial class HiveMindActor
                || normalizedRoot.Equals("region-host", StringComparison.OrdinalIgnoreCase)
                || normalizedRoot.StartsWith("region-host-", StringComparison.OrdinalIgnoreCase)
                || normalizedRoot.StartsWith("regionhost-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool MatchesRootActorNameOrGeneratedSibling(string? rootActorName, string? configuredRootActorName)
+    {
+        if (string.IsNullOrWhiteSpace(rootActorName) || string.IsNullOrWhiteSpace(configuredRootActorName))
+        {
+            return false;
+        }
+
+        var root = rootActorName.Trim();
+        var configured = configuredRootActorName.Trim();
+        if (root.Equals(configured, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!root.StartsWith(configured + "-", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var suffix = root[(configured.Length + 1)..];
+        return int.TryParse(suffix, out var index) && index > 1;
     }
 }

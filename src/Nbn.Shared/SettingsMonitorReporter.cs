@@ -54,7 +54,8 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         string rootActorName,
         NodeCapabilities? capabilities = null,
         Func<NodeCapabilities>? capabilitiesProvider = null,
-        TimeSpan? heartbeatInterval = null)
+        TimeSpan? heartbeatInterval = null,
+        Guid? nodeId = null)
     {
         return Start(
             system,
@@ -64,7 +65,8 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
             rootActorName,
             capabilities,
             capabilitiesProvider,
-            heartbeatInterval);
+            heartbeatInterval,
+            nodeId);
     }
 
     /// <summary>
@@ -78,14 +80,15 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         string rootActorName,
         NodeCapabilities? capabilities = null,
         Func<NodeCapabilities>? capabilitiesProvider = null,
-        TimeSpan? heartbeatInterval = null)
+        TimeSpan? heartbeatInterval = null,
+        Guid? nodeId = null)
     {
         if (system is null || settingsPid is null)
         {
             return null;
         }
 
-        if (!TryCreateLifecycleMessages(nodeAddress, logicalName, rootActorName, out var online, out var offline))
+        if (!TryCreateLifecycleMessages(nodeAddress, logicalName, rootActorName, nodeId, out var online, out var offline))
         {
             return null;
         }
@@ -233,28 +236,34 @@ public sealed class SettingsMonitorReporter : IAsyncDisposable
         string? nodeAddress,
         string? logicalName,
         string? rootActorName,
+        Guid? nodeId,
         out NodeOnline online,
         out NodeOffline offline)
     {
         online = new NodeOnline();
         offline = new NodeOffline();
 
-        var nodeId = NodeIdentity.DeriveNodeId(nodeAddress ?? string.Empty);
-        if (nodeId == Guid.Empty)
+        var resolvedNodeId = nodeId.GetValueOrDefault();
+        if (resolvedNodeId == Guid.Empty)
+        {
+            resolvedNodeId = NodeIdentity.DeriveNodeId(nodeAddress ?? string.Empty);
+        }
+
+        if (resolvedNodeId == Guid.Empty)
         {
             return false;
         }
 
         online = new NodeOnline
         {
-            NodeId = nodeId.ToProtoUuid(),
+            NodeId = resolvedNodeId.ToProtoUuid(),
             LogicalName = logicalName ?? string.Empty,
             Address = nodeAddress ?? string.Empty,
             RootActorName = rootActorName ?? string.Empty
         };
         offline = new NodeOffline
         {
-            NodeId = nodeId.ToProtoUuid(),
+            NodeId = resolvedNodeId.ToProtoUuid(),
             LogicalName = logicalName ?? string.Empty
         };
         return true;
