@@ -278,7 +278,28 @@ public sealed partial class BrainSignalRouterActor
             var acks = await Task.WhenAll(
                     targets.Select(target => context.RequestAsync<IoCommandAck>(target, message, RuntimeStateResetTimeout)))
                 .ConfigureAwait(false);
-            var failedAck = acks.FirstOrDefault(ack => ack is null || !ack.Success);
+            IoCommandAck? failedAck = null;
+            foreach (var ack in acks)
+            {
+                if (ack is null)
+                {
+                    failedAck = new IoCommandAck
+                    {
+                        BrainId = _brainIdProto,
+                        Command = "reset_brain_runtime_state",
+                        Success = false,
+                        Message = "reset_ack_missing"
+                    };
+                    break;
+                }
+
+                if (!ack.Success)
+                {
+                    failedAck = ack;
+                    break;
+                }
+            }
+
             if (failedAck is not null)
             {
                 context.Respond(new IoCommandAck
@@ -286,7 +307,9 @@ public sealed partial class BrainSignalRouterActor
                     BrainId = _brainIdProto,
                     Command = "reset_brain_runtime_state",
                     Success = false,
-                    Message = failedAck.Message
+                    Message = string.IsNullOrWhiteSpace(failedAck.Message)
+                        ? "reset_ack_failed"
+                        : failedAck.Message
                 });
                 return;
             }

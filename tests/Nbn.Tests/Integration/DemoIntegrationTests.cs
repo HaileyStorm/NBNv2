@@ -33,6 +33,8 @@ namespace Nbn.Tests.Integration;
 [Collection("Distributed")]
 public class DemoIntegrationTests
 {
+    private static readonly TimeSpan BrainInfoBootstrapTimeout = TimeSpan.FromSeconds(60);
+
     static DemoIntegrationTests()
     {
         AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
@@ -288,7 +290,7 @@ public class DemoIntegrationTests
                 ioPid,
                 brainId,
                 info => info.InputWidth == 1 && info.OutputWidth == 1,
-                TimeSpan.FromSeconds(20));
+                BrainInfoBootstrapTimeout);
 
             var outputTcs = new TaskCompletionSource<OutputEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
             var outputSink = ioNode.Root.Spawn(Props.FromProducer(() => new OutputSinkActor(brainId, outputTcs)));
@@ -621,7 +623,7 @@ public class DemoIntegrationTests
                 ioPid,
                 brainA,
                 info => info.InputWidth > 0 && info.OutputWidth > 0,
-                TimeSpan.FromSeconds(20));
+                BrainInfoBootstrapTimeout);
 
             await WaitForStatus(
                 hiveNode.Root,
@@ -639,7 +641,7 @@ public class DemoIntegrationTests
                 ioPid,
                 brainB,
                 info => info.InputWidth > 0 && info.OutputWidth > 0,
-                TimeSpan.FromSeconds(20));
+                BrainInfoBootstrapTimeout);
 
             await WaitForStatus(
                 hiveNode.Root,

@@ -369,7 +369,7 @@ public sealed partial class HiveMindActor
                         LogError($"TickDeliver timeout detail: {DescribePendingDeliver()}");
                     }
                 }
-                FailPendingRuntimeResets("deliver_timeout");
+                FailPendingRuntimeResetsForBrains(_pendingDeliverSenders.Keys.ToArray(), "deliver_timeout");
                 ClearPendingDeliver();
                 CompleteTick(context);
                 break;
@@ -568,10 +568,15 @@ public sealed partial class HiveMindActor
         _pendingDeliverSenders.Clear();
     }
 
-    private void FailPendingRuntimeResets(string reason)
+    private void FailPendingRuntimeResetsForBrains(IEnumerable<Guid> brainIds, string reason)
     {
-        foreach (var brain in _brains.Values)
+        foreach (var brainId in brainIds)
         {
+            if (!_brains.TryGetValue(brainId, out var brain))
+            {
+                continue;
+            }
+
             if (brain.PendingRuntimeReset is null)
             {
                 continue;
@@ -580,9 +585,8 @@ public sealed partial class HiveMindActor
             brain.PendingRuntimeReset.Completion.TrySetResult(
                 BuildRuntimeResetAck(brain.BrainId, success: false, reason));
             brain.PendingRuntimeReset = null;
+            _pendingBarrierResets.Remove(brain.BrainId);
         }
-
-        _pendingBarrierResets.Clear();
     }
 
     private void RemovePendingComputeForBrain(Guid brainId)

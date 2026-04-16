@@ -379,6 +379,39 @@ public class BrainSignalRouterInputDrainTests
     }
 
     [Fact]
+    public async Task ResetBrainRuntimeState_Fails_When_Shard_Returns_NullAck()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var shardId = ShardId32.From(NbnConstants.InputRegionId, 0);
+        var shardPid = root.Spawn(Props.FromProducer(() => new NullResetAckShardActor(brainId)));
+
+        var router = root.Spawn(Props.FromProducer(() => new BrainSignalRouterActor(brainId)));
+        root.Send(router, new SetRoutingTable(new RoutingTableSnapshot(new[]
+        {
+            new ShardRoute(shardId.Value, shardPid)
+        })));
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var resetAck = await root.RequestAsync<IoCommandAck>(
+                router,
+                new ResetBrainRuntimeState
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    ResetBuffer = true,
+                    ResetAccumulator = true
+                })
+            .WaitAsync(timeoutCts.Token);
+
+        Assert.False(resetAck.Success);
+        Assert.Equal("reset_ack_missing", resetAck.Message);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task BarrierRuntimeReset_ClearsSupersededPendingTickState_And_IgnoresLateOldTickTraffic()
     {
         var system = new ActorSystem();
@@ -1041,6 +1074,28 @@ public class BrainSignalRouterInputDrainTests
 
         private bool Matches(Nbn.Proto.Uuid? brainId)
             => brainId is not null && brainId.TryToGuid(out var guid) && guid == _brainId;
+    }
+
+    private sealed class NullResetAckShardActor : IActor
+    {
+        private readonly Guid _brainId;
+
+        public NullResetAckShardActor(Guid brainId)
+        {
+            _brainId = brainId;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is ResetBrainRuntimeState reset
+                && reset.BrainId.TryToGuid(out var brainId)
+                && brainId == _brainId)
+            {
+                context.Respond(null!);
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class InputShardActor : IActor
