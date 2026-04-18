@@ -31,12 +31,12 @@ public sealed record UnregisterBrain(Guid BrainId);
 /// <summary>
 /// Registers a region shard for a brain.
 /// </summary>
-public sealed record RegisterShard(Guid BrainId, int RegionId, int ShardIndex, PID ShardPid);
+public sealed record RegisterShard(Guid BrainId, int RegionId, int ShardIndex, PID ShardPid, ulong PlacementEpoch = 0);
 
 /// <summary>
 /// Unregisters a region shard for a brain.
 /// </summary>
-public sealed record UnregisterShard(Guid BrainId, int RegionId, int ShardIndex);
+public sealed record UnregisterShard(Guid BrainId, int RegionId, int ShardIndex, ulong PlacementEpoch = 0);
 
 /// <summary>
 /// Requests that a running brain pause execution.

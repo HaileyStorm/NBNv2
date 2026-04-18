@@ -82,7 +82,8 @@ system.Root.Send(shardPid, new ProtoControl.RegisterShard
     ShardIndex = (uint)options.ShardIndex,
     ShardPid = PidLabel(shardRemotePid),
     NeuronStart = (uint)options.NeuronStart,
-    NeuronCount = (uint)options.NeuronCount
+    NeuronCount = (uint)options.NeuronCount,
+    PlacementEpoch = options.PlacementEpoch
 });
 
 PrintStartupSummary(options, remoteConfig, shardPid, load, plan);
@@ -103,7 +104,8 @@ system.Root.Send(shardPid, new ProtoControl.UnregisterShard
 {
     BrainId = options.BrainId.ToProtoUuid(),
     RegionId = (uint)options.RegionId,
-    ShardIndex = (uint)options.ShardIndex
+    ShardIndex = (uint)options.ShardIndex,
+    PlacementEpoch = options.PlacementEpoch
 });
 
 if (settingsReporter is not null)

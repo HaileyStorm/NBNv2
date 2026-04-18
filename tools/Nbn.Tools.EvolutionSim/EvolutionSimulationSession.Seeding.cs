@@ -173,7 +173,7 @@ public sealed partial class EvolutionSimulationSession
 
         var adjustedSimilarity = ApplyRunPressureNudge(assessment.SimilarityScore);
         var runCount = _options.RunPolicy.ResolveRunCount(adjustedSimilarity);
-        var reproduceSeed = NextSeed();
+        var reproduceSeed = assessSeed;
 
         IncrementReproductionCalls();
         var reproduction = await _client.ReproduceAsync(

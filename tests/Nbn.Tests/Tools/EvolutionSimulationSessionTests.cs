@@ -109,6 +109,22 @@ public sealed class EvolutionSimulationSessionTests
     }
 
     [Fact]
+    public async Task RunAsync_ReusesAssessmentSeedForReproductionGate()
+    {
+        var parents = CreateParentPool();
+        var options = CreateOptions(seed: 556UL, maxIterations: 3, commitToSpeciation: false);
+        var client = new DeterministicFakeClient(similarities: new[] { 0.85f, 0.80f, 0.75f });
+        var session = new EvolutionSimulationSession(options, parents, client);
+
+        var status = await session.RunAsync(CancellationToken.None);
+
+        Assert.Equal((ulong)3, status.CompatibilityChecks);
+        Assert.Equal((ulong)3, status.ReproductionCalls);
+        Assert.Equal(client.AssessedSeeds, client.ReproductionSeeds);
+        Assert.Equal(client.AssessedParentPairs, client.ReproductionParentPairs);
+    }
+
+    [Fact]
     public async Task RunAsync_BrainIdParentMode_UsesBrainIds_AndCommitsWithoutSpawn()
     {
         var parents = CreateBrainParentPool();
@@ -1664,8 +1680,11 @@ public sealed class EvolutionSimulationSessionTests
         public List<string> Events { get; } = new();
         public List<SpeciationCommitCandidate> CommittedCandidates { get; } = new();
         public List<uint> RequestedRunCounts { get; } = new();
+        public List<ulong> AssessedSeeds { get; } = new();
+        public List<ulong> ReproductionSeeds { get; } = new();
         public List<Guid> ObservedBrainSelections { get; } = new();
         public List<(string ParentAKey, string ParentBKey)> AssessedParentPairs { get; } = new();
+        public List<(string ParentAKey, string ParentBKey)> ReproductionParentPairs { get; } = new();
         public List<(string ParentAKey, string ParentBKey)> CommittedParentPairs { get; } = new();
         public Queue<string?> CommitOutcomeSpeciesIds { get; } = new();
         public Queue<string?> CommitOutcomeSourceSpeciesIds { get; } = new();
@@ -1703,6 +1722,7 @@ public sealed class EvolutionSimulationSessionTests
             }
 
             ObserveParentKinds(parentA, parentB);
+            AssessedSeeds.Add(seed);
             AssessedParentPairs.Add((BuildParentSelectionKey(parentA), BuildParentSelectionKey(parentB)));
             if (parentA.BrainId is Guid parentABrainId && parentABrainId != Guid.Empty)
             {
@@ -1733,7 +1753,9 @@ public sealed class EvolutionSimulationSessionTests
             CancellationToken cancellationToken)
         {
             RequestedRunCounts.Add(runCount);
+            ReproductionSeeds.Add(seed);
             ObserveParentKinds(parentA, parentB);
+            ReproductionParentPairs.Add((BuildParentSelectionKey(parentA), BuildParentSelectionKey(parentB)));
             Events.Add($"repro:{seed}:{runCount}:{Short(parentA)}:{Short(parentB)}");
             var child = BuildArtifact(
                 $"child:{seed}:{runCount}:{Short(parentA)}:{Short(parentB)}",

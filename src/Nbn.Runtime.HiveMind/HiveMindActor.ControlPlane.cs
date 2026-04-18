@@ -234,7 +234,15 @@ public sealed partial class HiveMindActor
         }
     }
 
-    private void RegisterShardInternal(IContext context, Guid brainId, int regionId, int shardIndex, PID shardPid, int neuronStart, int neuronCount)
+    private void RegisterShardInternal(
+        IContext context,
+        Guid brainId,
+        int regionId,
+        int shardIndex,
+        PID shardPid,
+        ulong placementEpoch,
+        int neuronStart,
+        int neuronCount)
     {
         if (!_brains.TryGetValue(brainId, out var brain))
         {
@@ -261,7 +269,7 @@ public sealed partial class HiveMindActor
         brain.Shards.TryGetValue(shardId, out var previousShardPid);
         var normalized = NormalizePid(context, shardPid) ?? shardPid;
         brain.Shards[shardId] = normalized;
-        brain.ShardRegistrationEpochs[shardId] = brain.PlacementEpoch;
+        brain.ShardRegistrationEpochs[shardId] = placementEpoch;
         SendShardVisualizationUpdate(
             context,
             brainId,
@@ -504,12 +512,33 @@ public sealed partial class HiveMindActor
             return;
         }
 
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            EmitControlPlaneMutationIgnored(context, "control.register_shard", brainId, "brain_not_registered", shardId);
+            return;
+        }
+
+        var placementEpoch = message.PlacementEpoch;
+        if (brain.PlacementEpoch > 0)
+        {
+            if (placementEpoch != brain.PlacementEpoch)
+            {
+                EmitControlPlaneMutationIgnored(context, "control.register_shard", brainId, "placement_epoch_mismatch", shardId);
+                return;
+            }
+        }
+        else
+        {
+            placementEpoch = 0;
+        }
+
         RegisterShardInternal(
             context,
             brainId,
             regionId,
             shardIndex,
             normalizedShardPid,
+            placementEpoch,
             (int)message.NeuronStart,
             (int)message.NeuronCount);
     }
@@ -532,6 +561,18 @@ public sealed partial class HiveMindActor
         if (!IsUnregisterShardAuthorized(context, brainId, shardId, out var reason))
         {
             EmitControlPlaneMutationIgnored(context, "control.unregister_shard", brainId, reason, shardId);
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            EmitControlPlaneMutationIgnored(context, "control.unregister_shard", brainId, "brain_not_registered", shardId);
+            return;
+        }
+
+        if (brain.PlacementEpoch > 0 && message.PlacementEpoch != brain.PlacementEpoch)
+        {
+            EmitControlPlaneMutationIgnored(context, "control.unregister_shard", brainId, "placement_epoch_mismatch", shardId);
             return;
         }
 

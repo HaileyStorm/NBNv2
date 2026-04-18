@@ -85,7 +85,8 @@ public class HiveMindLiveSnapshotTests
                 ShardIndex = 0,
                 ShardPid = PidLabel(region0Shard),
                 NeuronStart = 0,
-                NeuronCount = 3
+                NeuronCount = 3,
+                PlacementEpoch = placement.PlacementEpoch
             }));
             await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
             {
@@ -94,7 +95,8 @@ public class HiveMindLiveSnapshotTests
                 ShardIndex = 0,
                 ShardPid = PidLabel(region1Shard),
                 NeuronStart = 0,
-                NeuronCount = 4
+                NeuronCount = 4,
+                PlacementEpoch = placement.PlacementEpoch
             }));
             await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
             {
@@ -103,7 +105,8 @@ public class HiveMindLiveSnapshotTests
                 ShardIndex = 0,
                 ShardPid = PidLabel(region31Shard),
                 NeuronStart = 0,
-                NeuronCount = 2
+                NeuronCount = 2,
+                PlacementEpoch = placement.PlacementEpoch
             }));
 
             root.Send(hiveMind, new ProtoSettings.SettingChanged
@@ -273,7 +276,8 @@ public class HiveMindLiveSnapshotTests
                     ShardIndex = 0,
                     ShardPid = PidLabel(region0Shard),
                     NeuronStart = 0,
-                    NeuronCount = 3
+                    NeuronCount = 3,
+                    PlacementEpoch = placement.PlacementEpoch
                 }));
                 await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
                 {
@@ -282,7 +286,8 @@ public class HiveMindLiveSnapshotTests
                     ShardIndex = 0,
                     ShardPid = PidLabel(region1Shard),
                     NeuronStart = 0,
-                    NeuronCount = 4
+                    NeuronCount = 4,
+                    PlacementEpoch = placement.PlacementEpoch
                 }));
                 await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
                 {
@@ -291,7 +296,8 @@ public class HiveMindLiveSnapshotTests
                     ShardIndex = 0,
                     ShardPid = PidLabel(region31Shard),
                     NeuronStart = 0,
-                    NeuronCount = 2
+                    NeuronCount = 2,
+                    PlacementEpoch = placement.PlacementEpoch
                 }));
 
                 _ = await WaitForBrainInfoAsync(
@@ -578,7 +584,8 @@ public class HiveMindLiveSnapshotTests
             ShardIndex = 0,
             ShardPid = PidLabel(region0Shard),
             NeuronStart = 0,
-            NeuronCount = 3
+            NeuronCount = 3,
+            PlacementEpoch = placement.PlacementEpoch
         }));
         await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
         {
@@ -587,7 +594,8 @@ public class HiveMindLiveSnapshotTests
             ShardIndex = 0,
             ShardPid = PidLabel(region1Shard),
             NeuronStart = 0,
-            NeuronCount = 4
+            NeuronCount = 4,
+            PlacementEpoch = placement.PlacementEpoch
         }));
         await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
         {
@@ -596,7 +604,8 @@ public class HiveMindLiveSnapshotTests
             ShardIndex = 0,
             ShardPid = PidLabel(region31Shard),
             NeuronStart = 0,
-            NeuronCount = 2
+            NeuronCount = 2,
+            PlacementEpoch = placement.PlacementEpoch
         }));
 
         var ready = await root.RequestAsync<SnapshotReady>(
@@ -687,7 +696,8 @@ public class HiveMindLiveSnapshotTests
             ShardIndex = 0,
             ShardPid = PidLabel(region0Shard),
             NeuronStart = 0,
-            NeuronCount = 3
+            NeuronCount = 3,
+            PlacementEpoch = placement.PlacementEpoch
         }));
         await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
         {
@@ -696,7 +706,8 @@ public class HiveMindLiveSnapshotTests
             ShardIndex = 0,
             ShardPid = PidLabel(region1Shard),
             NeuronStart = 0,
-            NeuronCount = 4
+            NeuronCount = 4,
+            PlacementEpoch = placement.PlacementEpoch
         }));
         await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
         {
@@ -705,7 +716,8 @@ public class HiveMindLiveSnapshotTests
             ShardIndex = 0,
             ShardPid = PidLabel(region31Shard),
             NeuronStart = 0,
-            NeuronCount = 2
+            NeuronCount = 2,
+            PlacementEpoch = placement.PlacementEpoch
         }));
 
         var ready = await root.RequestAsync<SnapshotReady>(
@@ -802,7 +814,8 @@ public class HiveMindLiveSnapshotTests
                 ShardIndex = 0,
                 ShardPid = PidLabel(region0Shard),
                 NeuronStart = 0,
-                NeuronCount = 3
+                NeuronCount = 3,
+                PlacementEpoch = placement.PlacementEpoch
             }));
             await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
             {
@@ -811,7 +824,8 @@ public class HiveMindLiveSnapshotTests
                 ShardIndex = 0,
                 ShardPid = PidLabel(region1Shard),
                 NeuronStart = 0,
-                NeuronCount = 4
+                NeuronCount = 4,
+                PlacementEpoch = placement.PlacementEpoch
             }));
             await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
             {
@@ -820,7 +834,8 @@ public class HiveMindLiveSnapshotTests
                 ShardIndex = 0,
                 ShardPid = PidLabel(region31Shard),
                 NeuronStart = 0,
-                NeuronCount = 2
+                NeuronCount = 2,
+                PlacementEpoch = placement.PlacementEpoch
             }));
 
             var rebasedReady = await root.RequestAsync<BrainDefinitionReady>(

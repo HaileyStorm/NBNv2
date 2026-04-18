@@ -17,6 +17,7 @@ public sealed record RegionHostOptions(
     int SettingsPort,
     string SettingsName,
     Guid BrainId,
+    ulong PlacementEpoch,
     int RegionId,
     int NeuronStart,
     int NeuronCount,
@@ -53,6 +54,7 @@ public sealed record RegionHostOptions(
         var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
         var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
         var brainId = GetEnvGuid("NBN_REGIONHOST_BRAIN_ID") ?? Guid.Empty;
+        var placementEpoch = GetEnvULong("NBN_REGIONHOST_PLACEMENT_EPOCH") ?? 0UL;
         var regionId = GetEnvInt("NBN_REGIONHOST_REGION") ?? -1;
         var neuronStart = GetEnvInt("NBN_REGIONHOST_NEURON_START") ?? 0;
         var neuronCount = GetEnvInt("NBN_REGIONHOST_NEURON_COUNT") ?? 0;
@@ -138,6 +140,12 @@ public sealed record RegionHostOptions(
                     if (i + 1 < args.Length && Guid.TryParse(args[++i], out var brainValue))
                     {
                         brainId = brainValue;
+                    }
+                    continue;
+                case "--placement-epoch":
+                    if (i + 1 < args.Length && ulong.TryParse(args[++i], out var placementEpochValue))
+                    {
+                        placementEpoch = placementEpochValue;
                     }
                     continue;
                 case "--region":
@@ -328,6 +336,13 @@ public sealed record RegionHostOptions(
                 continue;
             }
 
+            if (arg.StartsWith("--placement-epoch=", StringComparison.OrdinalIgnoreCase)
+                && ulong.TryParse(arg.Substring("--placement-epoch=".Length), out var placementEpochInline))
+            {
+                placementEpoch = placementEpochInline;
+                continue;
+            }
+
             if (arg.StartsWith("--region=", StringComparison.OrdinalIgnoreCase)
                 && int.TryParse(arg.Substring("--region=".Length), out var regionInline))
             {
@@ -477,6 +492,7 @@ public sealed record RegionHostOptions(
             settingsPort,
             settingsName,
             brainId,
+            placementEpoch,
             regionId,
             neuronStart,
             neuronCount,
@@ -510,6 +526,12 @@ public sealed record RegionHostOptions(
     {
         var value = GetEnv(key);
         return long.TryParse(value, out var parsed) ? parsed : null;
+    }
+
+    private static ulong? GetEnvULong(string key)
+    {
+        var value = GetEnv(key);
+        return ulong.TryParse(value, out var parsed) ? parsed : null;
     }
 
     private static Guid? GetEnvGuid(string key)
@@ -555,6 +577,7 @@ public sealed record RegionHostOptions(
         Console.WriteLine("  --settings-port <port>           SettingsMonitor port (default 12010)");
         Console.WriteLine("  --settings-name <name>           SettingsMonitor actor name (default SettingsMonitor)");
         Console.WriteLine("  --brain-id <guid>                BrainId for shard messages");
+        Console.WriteLine("  --placement-epoch <epoch>        Placement epoch for HiveMind shard registration/unregistration");
         Console.WriteLine("  --region <id>                    Region id (0-31)");
         Console.WriteLine("  --neuron-start <index>           Neuron start offset within region");
         Console.WriteLine("  --neuron-count <count>           Neuron count (0 = to end)");

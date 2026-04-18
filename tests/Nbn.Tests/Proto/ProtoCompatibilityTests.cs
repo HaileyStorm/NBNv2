@@ -397,6 +397,21 @@ public class ProtoCompatibilityTests
         AssertField(capabilityRefreshAck, "requested_ms", 2, FieldType.Fixed64);
         AssertField(capabilityRefreshAck, "message", 3, FieldType.String);
 
+        var registerShard = descriptor.MessageTypes.Single(message => message.Name == "RegisterShard");
+        AssertField(registerShard, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(registerShard, "region_id", 2, FieldType.UInt32);
+        AssertField(registerShard, "shard_index", 3, FieldType.UInt32);
+        AssertField(registerShard, "shard_pid", 4, FieldType.String);
+        AssertField(registerShard, "neuron_start", 5, FieldType.UInt32);
+        AssertField(registerShard, "neuron_count", 6, FieldType.UInt32);
+        AssertField(registerShard, "placement_epoch", 7, FieldType.Fixed64);
+
+        var unregisterShard = descriptor.MessageTypes.Single(message => message.Name == "UnregisterShard");
+        AssertField(unregisterShard, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(unregisterShard, "region_id", 2, FieldType.UInt32);
+        AssertField(unregisterShard, "shard_index", 3, FieldType.UInt32);
+        AssertField(unregisterShard, "placement_epoch", 4, FieldType.Fixed64);
+
         var assignment = descriptor.MessageTypes.Single(message => message.Name == "PlacementAssignment");
         AssertField(assignment, "assignment_id", 1, FieldType.String);
         AssertField(assignment, "brain_id", 2, FieldType.Message, "nbn.Uuid");

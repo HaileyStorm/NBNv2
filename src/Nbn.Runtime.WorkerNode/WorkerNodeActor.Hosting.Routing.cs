@@ -34,7 +34,8 @@ public sealed partial class WorkerNodeActor
             ShardIndex = (uint)shardId.ShardIndex,
             ShardPid = PidLabel(remoteShardPid),
             NeuronStart = (uint)Math.Max(0, neuronStart),
-            NeuronCount = (uint)Math.Max(0, neuronCount)
+            NeuronCount = (uint)Math.Max(0, neuronCount),
+            PlacementEpoch = brain.PlacementEpoch
         });
     }
 
@@ -100,7 +101,8 @@ public sealed partial class WorkerNodeActor
         {
             BrainId = brain.BrainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
-            ShardIndex = (uint)shardId.ShardIndex
+            ShardIndex = (uint)shardId.ShardIndex,
+            PlacementEpoch = brain.PlacementEpoch
         });
     }
 

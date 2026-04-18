@@ -97,7 +97,8 @@ public class HiveMindPlacementLifecycleTests
             ShardIndex = 0,
             ShardPid = PidLabel(shardSender),
             NeuronStart = 0,
-            NeuronCount = 8
+            NeuronCount = 8,
+            PlacementEpoch = placement.PlacementEpoch
         }));
 
         var running = await root.RequestAsync<PlacementLifecycleInfo>(
@@ -109,6 +110,196 @@ public class HiveMindPlacementLifecycleTests
         Assert.Equal((int)PlacementLifecycleState.PlacementLifecycleAssigned, (int)running.LifecycleState);
         Assert.Equal((int)PlacementReconcileState.PlacementReconcileUnknown, (int)running.ReconcileState);
         Assert.Equal(1u, running.RegisteredShards);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task RegisterShard_Rejects_Missing_And_Stale_PlacementEpoch()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+        PrimeEligibleWorker(root, hiveMind);
+
+        var brainId = Guid.NewGuid();
+        var firstPlacement = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 1,
+                OutputWidth = 1
+            });
+        Assert.True(firstPlacement.Accepted);
+
+        var replacement = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 1,
+                OutputWidth = 1
+            });
+        Assert.True(replacement.Accepted);
+        Assert.True(replacement.PlacementEpoch > firstPlacement.PlacementEpoch);
+
+        var shardSender = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+        await root.RequestAsync<SendMessageAck>(shardSender, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = 1,
+            ShardIndex = 0,
+            ShardPid = PidLabel(shardSender),
+            NeuronStart = 0,
+            NeuronCount = 8
+        }));
+
+        var missingEpoch = await root.RequestAsync<PlacementLifecycleInfo>(
+            hiveMind,
+            new GetPlacementLifecycle
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+        Assert.Equal(0u, missingEpoch.RegisteredShards);
+
+        await root.RequestAsync<SendMessageAck>(shardSender, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = 1,
+            ShardIndex = 0,
+            ShardPid = PidLabel(shardSender),
+            NeuronStart = 0,
+            NeuronCount = 8,
+            PlacementEpoch = firstPlacement.PlacementEpoch
+        }));
+
+        var rejected = await root.RequestAsync<PlacementLifecycleInfo>(
+            hiveMind,
+            new GetPlacementLifecycle
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+        Assert.Equal(0u, rejected.RegisteredShards);
+
+        await root.RequestAsync<SendMessageAck>(shardSender, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = 1,
+            ShardIndex = 0,
+            ShardPid = PidLabel(shardSender),
+            NeuronStart = 0,
+            NeuronCount = 8,
+            PlacementEpoch = replacement.PlacementEpoch
+        }));
+
+        var accepted = await root.RequestAsync<PlacementLifecycleInfo>(
+            hiveMind,
+            new GetPlacementLifecycle
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+        Assert.Equal(1u, accepted.RegisteredShards);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task UnregisterShard_Rejects_Missing_And_Stale_PlacementEpoch()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+        PrimeEligibleWorker(root, hiveMind);
+
+        var brainId = Guid.NewGuid();
+        var firstPlacement = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 1,
+                OutputWidth = 1
+            });
+        Assert.True(firstPlacement.Accepted);
+
+        var replacement = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 1,
+                OutputWidth = 1
+            });
+        Assert.True(replacement.Accepted);
+        Assert.True(replacement.PlacementEpoch > firstPlacement.PlacementEpoch);
+
+        var shardSender = root.Spawn(Props.FromProducer(() => new ManualSenderActor()));
+        await root.RequestAsync<SendMessageAck>(shardSender, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = 1,
+            ShardIndex = 0,
+            ShardPid = PidLabel(shardSender),
+            NeuronStart = 0,
+            NeuronCount = 8,
+            PlacementEpoch = replacement.PlacementEpoch
+        }));
+
+        var registered = await root.RequestAsync<PlacementLifecycleInfo>(
+            hiveMind,
+            new GetPlacementLifecycle
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+        Assert.Equal(1u, registered.RegisteredShards);
+
+        await root.RequestAsync<SendMessageAck>(shardSender, new SendMessage(hiveMind, new UnregisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = 1,
+            ShardIndex = 0
+        }));
+
+        var afterMissingEpoch = await root.RequestAsync<PlacementLifecycleInfo>(
+            hiveMind,
+            new GetPlacementLifecycle
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+        Assert.Equal(1u, afterMissingEpoch.RegisteredShards);
+
+        await root.RequestAsync<SendMessageAck>(shardSender, new SendMessage(hiveMind, new UnregisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = 1,
+            ShardIndex = 0,
+            PlacementEpoch = firstPlacement.PlacementEpoch
+        }));
+
+        var afterStaleEpoch = await root.RequestAsync<PlacementLifecycleInfo>(
+            hiveMind,
+            new GetPlacementLifecycle
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+        Assert.Equal(1u, afterStaleEpoch.RegisteredShards);
+
+        await root.RequestAsync<SendMessageAck>(shardSender, new SendMessage(hiveMind, new UnregisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = 1,
+            ShardIndex = 0,
+            PlacementEpoch = replacement.PlacementEpoch
+        }));
+
+        var afterCurrentEpoch = await root.RequestAsync<PlacementLifecycleInfo>(
+            hiveMind,
+            new GetPlacementLifecycle
+            {
+                BrainId = brainId.ToProtoUuid()
+            });
+        Assert.Equal(0u, afterCurrentEpoch.RegisteredShards);
 
         await system.ShutdownAsync();
     }
@@ -192,7 +383,8 @@ public class HiveMindPlacementLifecycleTests
             ShardIndex = 0,
             ShardPid = PidLabel(controller),
             NeuronStart = 0,
-            NeuronCount = 8
+            NeuronCount = 8,
+            PlacementEpoch = placement.PlacementEpoch
         }));
 
         root.Send(hiveMind, new Nbn.Shared.HiveMind.StartTickLoop());
@@ -241,7 +433,8 @@ public class HiveMindPlacementLifecycleTests
             ShardIndex = 0,
             ShardPid = PidLabel(controller),
             NeuronStart = 0,
-            NeuronCount = 8
+            NeuronCount = 8,
+            PlacementEpoch = firstPlacement.PlacementEpoch
         }));
 
         var replacement = await root.RequestAsync<PlacementAck>(

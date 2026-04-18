@@ -305,7 +305,8 @@ public sealed class HiveMindPlacementOrchestrationTests
                 ShardIndex = 0,
                 ShardPid = PidLabel(region0Shard),
                 NeuronStart = 0,
-                NeuronCount = 3
+                NeuronCount = 3,
+                PlacementEpoch = firstAck.PlacementEpoch
             }));
             await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
             {
@@ -314,7 +315,8 @@ public sealed class HiveMindPlacementOrchestrationTests
                 ShardIndex = 0,
                 ShardPid = PidLabel(region1Shard),
                 NeuronStart = 0,
-                NeuronCount = 4
+                NeuronCount = 4,
+                PlacementEpoch = firstAck.PlacementEpoch
             }));
             await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
             {
@@ -323,7 +325,8 @@ public sealed class HiveMindPlacementOrchestrationTests
                 ShardIndex = 0,
                 ShardPid = PidLabel(region31Shard),
                 NeuronStart = 0,
-                NeuronCount = 2
+                NeuronCount = 2,
+                PlacementEpoch = firstAck.PlacementEpoch
             }));
             await WaitForAsync(
                 async () =>
@@ -399,9 +402,9 @@ public sealed class HiveMindPlacementOrchestrationTests
             Assert.NotNull(pendingBeforeRegisters);
             Assert.Equal(0, workerB.OutputSinkUpdateCount);
 
-            root.Send(workerBPid, new RegisterHostedShard(hiveMind, brainId, 0, 0, 0, 3));
-            root.Send(workerBPid, new RegisterHostedShard(hiveMind, brainId, 1, 0, 0, 4));
-            root.Send(workerBPid, new RegisterHostedShard(hiveMind, brainId, 31, 0, 0, 2));
+            root.Send(workerBPid, new RegisterHostedShard(hiveMind, brainId, 0, 0, 0, 3, secondAck.PlacementEpoch));
+            root.Send(workerBPid, new RegisterHostedShard(hiveMind, brainId, 1, 0, 0, 4, secondAck.PlacementEpoch));
+            root.Send(workerBPid, new RegisterHostedShard(hiveMind, brainId, 31, 0, 0, 2, secondAck.PlacementEpoch));
 
             await WaitForAsync(
                 () => Task.FromResult(GetPendingRescheduleBrainCount(actor) == 0),
@@ -507,9 +510,9 @@ public sealed class HiveMindPlacementOrchestrationTests
             Assert.Equal(PlacementLifecycleState.PlacementLifecycleFailed, lifecycle.LifecycleState);
             Assert.Equal(PlacementReconcileState.PlacementReconcileFailed, lifecycle.ReconcileState);
 
-            root.Send(workerPid, new RegisterHostedShard(hiveMind, brainId, 0, 0, 0, 3));
-            root.Send(workerPid, new RegisterHostedShard(hiveMind, brainId, 1, 0, 0, 4));
-            root.Send(workerPid, new RegisterHostedShard(hiveMind, brainId, 31, 0, 0, 2));
+            root.Send(workerPid, new RegisterHostedShard(hiveMind, brainId, 0, 0, 0, 3, lifecycle.PlacementEpoch));
+            root.Send(workerPid, new RegisterHostedShard(hiveMind, brainId, 1, 0, 0, 4, lifecycle.PlacementEpoch));
+            root.Send(workerPid, new RegisterHostedShard(hiveMind, brainId, 31, 0, 0, 2, lifecycle.PlacementEpoch));
             root.Send(hiveMind, new Nbn.Shared.HiveMind.ResumeBrainRequest(brainId));
             await Task.Delay(100);
 
@@ -1363,7 +1366,7 @@ public sealed class HiveMindPlacementOrchestrationTests
             BrainRootPid = PidLabel(controller),
             SignalRouterPid = PidLabel(controller)
         }));
-        root.Send(workerPid, new RegisterHostedShard(hiveMind, brainId, 1, 0, 0, 1));
+        root.Send(workerPid, new RegisterHostedShard(hiveMind, brainId, 1, 0, 0, 1, placementAck.PlacementEpoch));
 
         await WaitForAsync(
             async () =>
@@ -2838,7 +2841,8 @@ public sealed class HiveMindPlacementOrchestrationTests
                     {
                         BrainId = brainId.ToProtoUuid(),
                         RegionId = (uint)lostShard.RegionId,
-                        ShardIndex = (uint)lostShard.ShardIndex
+                        ShardIndex = (uint)lostShard.ShardIndex,
+                        PlacementEpoch = placement.PlacementEpoch
                     }));
             root.Stop(lostShard.Pid);
 
@@ -3104,7 +3108,8 @@ public sealed class HiveMindPlacementOrchestrationTests
                         ShardIndex = assignment.ShardIndex,
                         ShardPid = PidLabel(pid),
                         NeuronStart = assignment.NeuronStart,
-                        NeuronCount = assignment.NeuronCount
+                        NeuronCount = assignment.NeuronCount,
+                        PlacementEpoch = assignment.PlacementEpoch
                     }));
 
             probes.Add(new RegisteredShardProbe(
@@ -3140,7 +3145,8 @@ public sealed class HiveMindPlacementOrchestrationTests
                     assignment.RegionId,
                     assignment.ShardIndex,
                     assignment.NeuronStart,
-                    assignment.NeuronCount));
+                    assignment.NeuronCount,
+                    assignment.PlacementEpoch));
         }
 
         await WaitForRegisteredShardCountAsync(root, hiveMind, brainId, assignments.Count, timeoutMs: 5_000);
@@ -3284,7 +3290,14 @@ public sealed class HiveMindPlacementOrchestrationTests
         IReadOnlyList<DeferredAssignmentAckEntry> Entries);
     private sealed record ReleaseDeferredAssignmentAcks;
     private sealed record ReleaseDeferredReconcileReports;
-    private sealed record RegisterHostedShard(PID HiveMind, Guid BrainId, uint RegionId, uint ShardIndex, uint NeuronStart, uint NeuronCount);
+    private sealed record RegisterHostedShard(
+        PID HiveMind,
+        Guid BrainId,
+        uint RegionId,
+        uint ShardIndex,
+        uint NeuronStart,
+        uint NeuronCount,
+        ulong PlacementEpoch);
     private sealed record RegisterOutputSinkForBrain(PID HiveMind, Guid BrainId, PID OutputSinkPid);
     private sealed record GetTickCountingControllerSnapshot;
     private sealed record TickCountingControllerSnapshot(int TickComputeCount);
@@ -3581,7 +3594,8 @@ public sealed class HiveMindPlacementOrchestrationTests
                         ShardIndex = register.ShardIndex,
                         ShardPid = PidLabel(context.Self),
                         NeuronStart = register.NeuronStart,
-                        NeuronCount = register.NeuronCount
+                        NeuronCount = register.NeuronCount,
+                        PlacementEpoch = register.PlacementEpoch
                     });
                     break;
                 case RegisterOutputSinkForBrain register:
