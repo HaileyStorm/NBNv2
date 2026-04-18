@@ -2961,7 +2961,6 @@ public class OrchestratorPanelViewModelTests
             IoPortText = "bad"
         };
         var spawnedBrainId = Guid.NewGuid();
-        var registrationPolls = 0;
         var lifecyclePolls = 0;
         var client = new FakeWorkbenchClient
         {
@@ -2971,13 +2970,6 @@ public class OrchestratorPanelViewModelTests
                 BrainId = brainId.ToProtoUuid(),
                 AcceptedForPlacement = true,
                 PlacementReady = true
-            },
-            BrainListFactory = () =>
-            {
-                registrationPolls++;
-                return registrationPolls < 2
-                    ? BuildBrainList(spawnedBrainId, "Active", includeAliveController: false)
-                    : BuildBrainList(spawnedBrainId, "Active");
             },
             PlacementLifecycleFactory = requestedBrainId =>
             {
@@ -3004,7 +2996,7 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(1, client.AwaitSpawnPlacementViaIoCallCount);
         Assert.Equal(5_000UL, client.LastAwaitSpawnPlacementViaIoTimeoutMs);
         Assert.Equal(0, client.RequestPlacementCallCount);
-        Assert.True(client.ListBrainsCallCount >= 2);
+        Assert.Equal(0, client.ListBrainsCallCount);
         Assert.True(client.GetPlacementLifecycleCallCount >= 2);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.NotNull(client.LastSpawnRequest);
@@ -3461,6 +3453,48 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal(1, client.KillBrainCallCount);
         Assert.Equal(spawnedBrainId, client.LastKillBrainId);
         Assert.Equal("designer_managed_spawn_registration_timeout", client.LastKillReason);
+    }
+
+    [Fact]
+    public async Task DesignerSpawn_Succeeds_WhenPlacementLifecycleReady_BeforeSettingsBrainList()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsConnected = true,
+            HiveMindConnected = true,
+            IoConnected = true,
+            SettingsPortText = "bad",
+            HiveMindPortText = "bad",
+            IoPortText = "bad"
+        };
+        var spawnedBrainId = Guid.NewGuid();
+        var client = new FakeWorkbenchClient
+        {
+            SpawnBrainAck = new SpawnBrainAck { BrainId = spawnedBrainId.ToProtoUuid() },
+            AwaitSpawnPlacementViaIoFactory = (brainId, timeoutMs) => new SpawnBrainAck
+            {
+                BrainId = brainId.ToProtoUuid(),
+                AcceptedForPlacement = true,
+                PlacementReady = true
+            },
+            BrainListFactory = static () => new BrainListResponse(),
+            PlacementLifecycleFactory = requestedBrainId => requestedBrainId == spawnedBrainId
+                ? BuildPlacementLifecycle(requestedBrainId, PlacementLifecycleState.PlacementLifecycleAssigned, registeredShards: 9)
+                : null
+        };
+        var vm = CreateDesignerViewModel(connections, client);
+        vm.NewBrainCommand.Execute(null);
+        vm.SpawnArtifactRoot = Path.Combine(Path.GetTempPath(), "nbn-tests", Guid.NewGuid().ToString("N"));
+
+        vm.SpawnBrainCommand.Execute(null);
+        await WaitForAsync(() => vm.Status.Contains("Brain spawned", StringComparison.Ordinal), timeoutMs: 5000);
+
+        Assert.Equal(1, client.SpawnViaIoCallCount);
+        Assert.Equal(1, client.AwaitSpawnPlacementViaIoCallCount);
+        Assert.Equal(0, client.ListBrainsCallCount);
+        Assert.True(client.GetPlacementLifecycleCallCount >= 1);
+        Assert.Equal(0, client.KillBrainCallCount);
+        Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

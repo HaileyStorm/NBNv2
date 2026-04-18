@@ -508,7 +508,7 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
-    public async Task AwaitSpawnPlacementViaIO_MetadataVisibilityTimeout_EmitsFailureTelemetry()
+    public async Task AwaitSpawnPlacementViaIO_MetadataVisibilityTimeout_PreservesPlacementReady()
     {
         using var metrics = new MeterCollector(IoTelemetry.MeterNameValue);
         var system = new ActorSystem();
@@ -531,20 +531,20 @@ public class IoGatewayArtifactReferenceTests
 
         Assert.NotNull(response.Ack);
         Assert.True(response.Ack.AcceptedForPlacement);
-        Assert.False(response.Ack.PlacementReady);
-        Assert.Equal("spawn_brain_info_timeout", response.Ack.FailureReasonCode);
+        Assert.True(response.Ack.PlacementReady);
+        Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureReasonCode));
         Assert.Equal(
             1,
             metrics.SumLong(
-                "nbn.io.await_spawn_placement.failed",
-                ("outcome", "spawn_brain_info_timeout"),
-                ("placement_ready", bool.FalseString),
+                "nbn.io.await_spawn_placement.completed",
+                ("outcome", "ready"),
+                ("placement_ready", bool.TrueString),
                 ("brain_id", brainId.ToString("D"))));
         Assert.True(
             metrics.CountDouble(
                 "nbn.io.await_spawn_placement.metadata.ms",
-                ("outcome", "spawn_brain_info_timeout"),
-                ("placement_ready", bool.FalseString),
+                ("outcome", "ready"),
+                ("placement_ready", bool.TrueString),
                 ("brain_id", brainId.ToString("D"))) >= 1);
 
         await system.ShutdownAsync();

@@ -49,17 +49,78 @@ public sealed class BrainRootActorTests
         await system.ShutdownAsync();
     }
 
+    [Fact]
+    public async Task RequestStyleInputVector_ForwardsThroughAttachedSignalRouter_AndReturnsAck()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var inputTcs = new TaskCompletionSource<InputVector>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var routerPid = root.Spawn(Props.FromProducer(() => new RouterProbeActor(inputVectorTcs: inputTcs)));
+        var brainRootPid = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, autoSpawnSignalRouter: false)));
+        root.Send(brainRootPid, new SetSignalRouter(routerPid));
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var ack = await root.RequestAsync<IoCommandAck>(
+                brainRootPid,
+                new InputVector
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    Values = { 0.25f, 0.75f }
+                },
+                TimeSpan.FromSeconds(2))
+            .WaitAsync(timeoutCts.Token);
+        var forwarded = await inputTcs.Task.WaitAsync(timeoutCts.Token);
+
+        Assert.True(ack.Success, ack.Message);
+        Assert.Equal("input_vector", ack.Command);
+        Assert.True(forwarded.BrainId.TryToGuid(out var forwardedBrainId));
+        Assert.Equal(brainId, forwardedBrainId);
+        Assert.Equal(new[] { 0.25f, 0.75f }, forwarded.Values.ToArray());
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task RequestStyleInputVector_ReturnsFailure_WhenSignalRouterUnavailable()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+
+        var brainRootPid = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, autoSpawnSignalRouter: false)));
+
+        var ack = await root.RequestAsync<IoCommandAck>(
+            brainRootPid,
+            new InputVector
+            {
+                BrainId = brainId.ToProtoUuid(),
+                Values = { 1f }
+            },
+            TimeSpan.FromSeconds(2));
+
+        Assert.False(ack.Success);
+        Assert.Equal("input_vector", ack.Command);
+        Assert.Equal("signal_router_unavailable", ack.Message);
+
+        await system.ShutdownAsync();
+    }
+
     private sealed class RouterProbeActor : IActor
     {
-        private readonly TaskCompletionSource<SetRoutingTable> _routingTcs;
-        private readonly TaskCompletionSource<RegisterIoGateway> _ioGatewayTcs;
+        private readonly TaskCompletionSource<SetRoutingTable>? _routingTcs;
+        private readonly TaskCompletionSource<RegisterIoGateway>? _ioGatewayTcs;
+        private readonly TaskCompletionSource<InputVector>? _inputVectorTcs;
 
         public RouterProbeActor(
-            TaskCompletionSource<SetRoutingTable> routingTcs,
-            TaskCompletionSource<RegisterIoGateway> ioGatewayTcs)
+            TaskCompletionSource<SetRoutingTable>? routingTcs = null,
+            TaskCompletionSource<RegisterIoGateway>? ioGatewayTcs = null,
+            TaskCompletionSource<InputVector>? inputVectorTcs = null)
         {
             _routingTcs = routingTcs;
             _ioGatewayTcs = ioGatewayTcs;
+            _inputVectorTcs = inputVectorTcs;
         }
 
         public Task ReceiveAsync(IContext context)
@@ -67,10 +128,20 @@ public sealed class BrainRootActorTests
             switch (context.Message)
             {
                 case SetRoutingTable setRouting:
-                    _routingTcs.TrySetResult(setRouting);
+                    _routingTcs?.TrySetResult(setRouting);
                     break;
                 case RegisterIoGateway registerIoGateway:
-                    _ioGatewayTcs.TrySetResult(registerIoGateway);
+                    _ioGatewayTcs?.TrySetResult(registerIoGateway);
+                    break;
+                case InputVector inputVector:
+                    _inputVectorTcs?.TrySetResult(inputVector);
+                    context.Respond(new IoCommandAck
+                    {
+                        BrainId = inputVector.BrainId,
+                        Command = "input_vector",
+                        Success = true,
+                        Message = "accepted"
+                    });
                     break;
             }
 

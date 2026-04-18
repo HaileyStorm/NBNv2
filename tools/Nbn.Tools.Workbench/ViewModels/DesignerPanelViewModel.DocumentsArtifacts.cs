@@ -1170,9 +1170,8 @@ public sealed partial class DesignerPanelViewModel
         var deadline = DateTime.UtcNow + SpawnRegistrationTimeout;
         while (DateTime.UtcNow <= deadline)
         {
-            var response = await _client.ListBrainsAsync().ConfigureAwait(false);
             var lifecycle = await _client.GetPlacementLifecycleAsync(brainId).ConfigureAwait(false);
-            if (IsBrainRegistered(response, brainId) && IsPlacementVisualizationReady(lifecycle, brainId))
+            if (IsPlacementVisualizationReady(lifecycle, brainId))
             {
                 return true;
             }
@@ -1190,7 +1189,6 @@ public sealed partial class DesignerPanelViewModel
             return false;
         }
 
-        var brainPresentAndActive = false;
         foreach (var entry in response.Brains)
         {
             if (entry.BrainId is null || !entry.BrainId.TryToGuid(out var candidate) || candidate != brainId)
@@ -1198,21 +1196,10 @@ public sealed partial class DesignerPanelViewModel
                 continue;
             }
 
-            if (string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            brainPresentAndActive = true;
-            break;
+            return !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase);
         }
 
-        if (!brainPresentAndActive)
-        {
-            return false;
-        }
-        
-        return true;
+        return false;
     }
 
     private static bool IsPlacementVisualizationReady(ProtoControl.PlacementLifecycleInfo? lifecycle, Guid brainId)

@@ -104,6 +104,7 @@ public sealed partial class IoGatewayActor
 
             _ = CompleteAwaitSpawnPlacementAsync(
                 system,
+                context.Self,
                 replyTo,
                 brainId,
                 requestedTimeoutMs,
@@ -128,6 +129,7 @@ public sealed partial class IoGatewayActor
 
     private async Task CompleteAwaitSpawnPlacementAsync(
         ActorSystem system,
+        PID self,
         PID? replyTo,
         Guid brainId,
         ulong requestedTimeoutMs,
@@ -164,17 +166,15 @@ public sealed partial class IoGatewayActor
                 {
                     var register = await TryBuildBootstrapRegisterBrainRegistrationAsync(system, awaitedBrainId, visibilityTimeout)
                         .ConfigureAwait(false);
-                    metadataVisibilityWait = Stopwatch.GetElapsedTime(hiveMindCompletedAtTimestamp) ;
+                    metadataVisibilityWait = Stopwatch.GetElapsedTime(hiveMindCompletedAtTimestamp);
                     if (register is null)
                     {
-                        ack.FailureReasonCode = "spawn_brain_info_timeout";
-                        ack.FailureMessage =
-                            $"Spawn wait failed: brain {awaitedBrainId} became placed but IO metadata was not visible within {FormatElapsed(visibilityTimeout)} after total={FormatElapsed(Stopwatch.GetElapsedTime(startedAtTimestamp))}, hivemind={FormatElapsed(hiveMindWait)}, metadata={FormatElapsed(metadataVisibilityWait)}.";
-                        ack.AcceptedForPlacement = true;
-                        ack.PlacementReady = false;
+                        Console.WriteLine(
+                            $"AwaitSpawnPlacementViaIO metadata not visible after placement: brain={awaitedBrainId:N} visibility={FormatElapsed(visibilityTimeout)} total={FormatElapsed(Stopwatch.GetElapsedTime(startedAtTimestamp))} hivemind={FormatElapsed(hiveMindWait)} metadata={FormatElapsed(metadataVisibilityWait)}");
                     }
                     else
                     {
+                        system.Root.Send(self, register);
                         MaybeLogSlowPlacementVisibility(
                             awaitedBrainId,
                             Stopwatch.GetElapsedTime(startedAtTimestamp),
@@ -187,11 +187,6 @@ public sealed partial class IoGatewayActor
                 {
                     Console.WriteLine($"AwaitSpawnPlacementViaIO metadata resolve failed: {registerEx.GetBaseException().Message}");
                     metadataVisibilityWait = Stopwatch.GetElapsedTime(hiveMindCompletedAtTimestamp);
-                    ack.FailureReasonCode = "spawn_brain_info_timeout";
-                    ack.FailureMessage =
-                        $"Spawn wait failed: brain {awaitedBrainId} became placed but IO metadata lookup failed within {FormatElapsed(visibilityTimeout)} after total={FormatElapsed(Stopwatch.GetElapsedTime(startedAtTimestamp))}, hivemind={FormatElapsed(hiveMindWait)}, metadata={FormatElapsed(metadataVisibilityWait)}.";
-                    ack.AcceptedForPlacement = true;
-                    ack.PlacementReady = false;
                 }
             }
         }

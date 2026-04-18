@@ -11,6 +11,7 @@ namespace Nbn.Runtime.Brain;
 /// </summary>
 public sealed class BrainRootActor : IActor
 {
+    private static readonly TimeSpan RouterRequestTimeout = TimeSpan.FromSeconds(5);
     private readonly Guid _brainId;
     private readonly Props? _signalRouterProps;
     private readonly PID? _hiveMindPid;
@@ -76,6 +77,28 @@ public sealed class BrainRootActor : IActor
                 break;
             case RegisterIoGateway registerIoGateway:
                 HandleRegisterIoGateway(context, registerIoGateway);
+                break;
+            case InputWrite inputWrite:
+                ForwardIoCommandToSignalRouter(context, inputWrite, inputWrite.BrainId, "input_write");
+                break;
+            case InputVector inputVector:
+                ForwardIoCommandToSignalRouter(context, inputVector, inputVector.BrainId, "input_vector");
+                break;
+            case ResetBrainRuntimeState reset:
+                ForwardIoCommandToSignalRouter(context, reset, reset.BrainId, "reset_brain_runtime_state");
+                break;
+            case ApplyBrainRuntimeResetAtBarrier resetAtBarrier:
+                ForwardIoCommandToSignalRouter(
+                    context,
+                    resetAtBarrier,
+                    resetAtBarrier.BrainId.ToProtoUuid(),
+                    "reset_brain_runtime_state");
+                break;
+            case RuntimeNeuronPulse pulse:
+                ForwardRuntimeCommandToSignalRouter(context, pulse);
+                break;
+            case RuntimeNeuronStateWrite stateWrite:
+                ForwardRuntimeCommandToSignalRouter(context, stateWrite);
                 break;
             case Terminated terminated:
                 HandleTerminated(terminated);
@@ -215,6 +238,52 @@ public sealed class BrainRootActor : IActor
 
         // Use Request so remoting populates Sender for replies (TickDeliverDone, etc.).
         context.Request(_signalRouterPid, message);
+    }
+
+    private void ForwardIoCommandToSignalRouter(IContext context, object message, Nbn.Proto.Uuid? brainId, string command)
+    {
+        if (_signalRouterPid is null)
+        {
+            context.Respond(new IoCommandAck
+            {
+                BrainId = brainId?.Clone(),
+                Command = command,
+                Success = false,
+                Message = "signal_router_unavailable"
+            });
+            return;
+        }
+
+        context.ReenterAfter(
+            context.RequestAsync<IoCommandAck>(_signalRouterPid, message, RouterRequestTimeout),
+            task =>
+            {
+                if (task.IsCompletedSuccessfully && task.Result is not null)
+                {
+                    context.Respond(task.Result);
+                    return Task.CompletedTask;
+                }
+
+                var detail = task.Exception?.GetBaseException().Message ?? "empty_response";
+                context.Respond(new IoCommandAck
+                {
+                    BrainId = brainId?.Clone(),
+                    Command = command,
+                    Success = false,
+                    Message = $"signal_router_request_failed:{detail}"
+                });
+                return Task.CompletedTask;
+            });
+    }
+
+    private void ForwardRuntimeCommandToSignalRouter(IContext context, object message)
+    {
+        if (_signalRouterPid is null)
+        {
+            return;
+        }
+
+        context.Send(_signalRouterPid, message);
     }
 
     private void ForwardToHiveMind(IContext context, object message)
