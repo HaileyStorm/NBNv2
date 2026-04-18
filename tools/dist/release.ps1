@@ -1,5 +1,6 @@
 param(
     [switch]$Confirm,
+    [switch]$ConfirmRelease,
     [string]$PushRemote = "origin"
 )
 
@@ -23,9 +24,10 @@ powershell -NoProfile -File tools/docs/render-nbnv2-docs.ps1 -Check
 dotnet build NBNv2.sln -c Release --disable-build-servers
 dotnet test NBNv2.sln -c Release --disable-build-servers
 
-if (-not $Confirm)
+$confirmed = $Confirm -or $ConfirmRelease
+if (-not $confirmed)
 {
-    Write-Host "Validation succeeded. Re-run with -Confirm to create and push $tag."
+    Write-Host "Validation succeeded. Re-run with -ConfirmRelease to create and push $tag."
     exit 0
 }
 
