@@ -248,6 +248,16 @@ public sealed partial class HiveMindActor
             return;
         }
 
+        if (brain.PlacementEpoch > 0
+            && (brain.PlacementExecution is null || brain.PlacementExecution.Completed)
+            && brain.PlacementLifecycleState is
+                ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed
+                or ProtoControl.PlacementLifecycleState.PlacementLifecycleTerminated)
+        {
+            Log($"RegisterShard ignored for failed placement: brain {brainId} region {regionId} shardIndex {shardIndex}.");
+            return;
+        }
+
         brain.Shards.TryGetValue(shardId, out var previousShardPid);
         var normalized = NormalizePid(context, shardPid) ?? shardPid;
         brain.Shards[shardId] = normalized;

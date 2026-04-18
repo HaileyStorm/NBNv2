@@ -106,6 +106,7 @@ When a reschedule/recovery is initiated:
 * HiveMind waits a small stabilization interval (`reschedule_quiet_ms`) after the tick completion decision.
 * HiveMind performs real rescheduling and/or recovery work: assignment/unassignment, routing snapshot refresh, and placement reconciliation.
 * For shard moves, HiveMind updates shard output sinks and waits for the moved shards to re-register for the new placement epoch before considering the reschedule complete.
+* If non-recovery reschedule cannot prepare or complete a replacement plan for a brain, HiveMind marks that brain's placement failed and pauses it so stale shards cannot continue poisoning global tick barriers.
 * HiveMind resumes tick dispatch only after the new routing/output-sink state is active for the current placement epoch.
 
 ---

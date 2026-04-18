@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Diagnostics;
 using System.Reflection;
+using Microsoft.Data.Sqlite;
 using Nbn.Proto.Control;
 using Nbn.Proto.Debug;
 using Nbn.Runtime.Artifacts;
@@ -414,6 +415,190 @@ public sealed class HiveMindPlacementOrchestrationTests
             Assert.True(workerB.OutputSinkUpdateCount >= 1);
             Assert.Equal(workerBPid.Id, GetRegisteredShardPid(actor, brainId, 31, 0).Id);
 
+        }
+        finally
+        {
+            if (system is not null)
+            {
+                await system.ShutdownAsync();
+            }
+            artifactRoot.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task Failed_Reschedule_Pauses_Affected_Brain_To_Unblock_Tick_Barriers()
+    {
+        var artifactRoot = TempDirectoryScope.Create("nbn-hivemind-reschedule-failure-pause", clearSqlitePools: true);
+        ActorSystem? system = null;
+
+        try
+        {
+            var baseRef = await StoreRichBaseDefinitionAsync(artifactRoot);
+            system = new ActorSystem();
+            var root = system.Root;
+            var settingsProbePid = root.Spawn(Props.FromProducer(static () => new BrainStateProbeActor()));
+
+            var workerId = Guid.NewGuid();
+            var worker = new PlacementWorkerProbe(workerId, dropAcks: false, failFirstRetryable: false);
+            var workerPid = root.Spawn(Props.FromProducer(() => worker));
+            var actor = new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 250,
+                    retryBackoffMs: 10,
+                    maxRetries: 0,
+                    reconcileTimeoutMs: 250,
+                    rescheduleMinMinutes: 0,
+                    rescheduleQuietMs: 10),
+                settingsPid: settingsProbePid);
+            var hiveMind = root.Spawn(Props.FromProducer(() => actor));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var brainId = Guid.NewGuid();
+            var placement = await root.RequestAsync<PlacementAck>(
+                hiveMind,
+                new RequestPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    BaseDef = baseRef,
+                    InputWidth = 3,
+                    OutputWidth = 2
+                });
+            Assert.True(placement.Accepted);
+            await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 5_000);
+            await RegisterHostedShardsFromCurrentAssignmentsAsync(
+                root,
+                hiveMind,
+                actor,
+                brainId,
+                new Dictionary<Guid, PID> { [workerId] = workerPid });
+            await WaitForAsync(
+                async () =>
+                {
+                    var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
+                    return status.RegisteredShards >= 3;
+                },
+                timeoutMs: 2_000);
+
+            if (Directory.Exists(artifactRoot))
+            {
+                SqliteConnection.ClearAllPools();
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+
+            SetPrivateField(actor, "_rescheduleInProgress", true);
+            SetPrivateField(actor, "_activeRescheduleAllBrains", false);
+            GetPrivateField<HashSet<Guid>>(actor, "_activeRescheduleBrains").Add(brainId);
+            root.Send(hiveMind, CreateHiveMindPrivateMessage("RescheduleNow", "test_reschedule_failure"));
+
+            var pauseObserved = await WaitForBrainStateOrTimeoutAsync(root, settingsProbePid, brainId, "Paused", timeoutMs: 5_000);
+            var brainStates = await GetBrainStateSnapshotAsync(root, settingsProbePid, brainId);
+            Assert.True(
+                pauseObserved,
+                $"Expected failed reschedule to pause brain. Observed states: {string.Join(", ", brainStates.Events.Select(static entry => $"{entry.State}:{entry.Notes}"))}; pendingReschedule={GetPendingRescheduleBrainCount(actor)}");
+            Assert.Contains(
+                brainStates.Events,
+                entry => string.Equals(entry.State, "Paused", StringComparison.Ordinal)
+                         && entry.Notes.Contains("reschedule_failed", StringComparison.OrdinalIgnoreCase));
+            var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
+            Assert.False(status.RescheduleInProgress);
+            var lifecycle = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+            Assert.Equal(PlacementLifecycleState.PlacementLifecycleFailed, lifecycle.LifecycleState);
+            Assert.Equal(PlacementReconcileState.PlacementReconcileFailed, lifecycle.ReconcileState);
+
+            root.Send(workerPid, new RegisterHostedShard(hiveMind, brainId, 0, 0, 0, 3));
+            root.Send(workerPid, new RegisterHostedShard(hiveMind, brainId, 1, 0, 0, 4));
+            root.Send(workerPid, new RegisterHostedShard(hiveMind, brainId, 31, 0, 0, 2));
+            root.Send(hiveMind, new Nbn.Shared.HiveMind.ResumeBrainRequest(brainId));
+            await Task.Delay(100);
+
+            var afterLateShard = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+            Assert.Equal(PlacementLifecycleState.PlacementLifecycleFailed, afterLateShard.LifecycleState);
+            Assert.Equal(PlacementReconcileState.PlacementReconcileFailed, afterLateShard.ReconcileState);
+        }
+        finally
+        {
+            if (system is not null)
+            {
+                await system.ShutdownAsync();
+            }
+            artifactRoot.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task Stale_PendingReschedule_Epoch_Does_Not_Pause_Newer_Placement()
+    {
+        var artifactRoot = TempDirectoryScope.Create("nbn-hivemind-stale-reschedule", clearSqlitePools: true);
+        ActorSystem? system = null;
+
+        try
+        {
+            var baseRef = await StoreRichBaseDefinitionAsync(artifactRoot);
+            system = new ActorSystem();
+            var root = system.Root;
+            var settingsProbePid = root.Spawn(Props.FromProducer(static () => new BrainStateProbeActor()));
+
+            var workerId = Guid.NewGuid();
+            var worker = new PlacementWorkerProbe(workerId, dropAcks: false, failFirstRetryable: false);
+            var workerPid = root.Spawn(Props.FromProducer(() => worker));
+            var actor = new HiveMindActor(
+                CreateOptions(
+                    assignmentTimeoutMs: 250,
+                    retryBackoffMs: 10,
+                    maxRetries: 0,
+                    reconcileTimeoutMs: 250,
+                    rescheduleMinMinutes: 0,
+                    rescheduleQuietMs: 10),
+                settingsPid: settingsProbePid);
+            var hiveMind = root.Spawn(Props.FromProducer(() => actor));
+
+            PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+            var brainId = Guid.NewGuid();
+            var firstAck = await root.RequestAsync<PlacementAck>(
+                hiveMind,
+                new RequestPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    BaseDef = baseRef,
+                    InputWidth = 3,
+                    OutputWidth = 2
+                });
+            Assert.True(firstAck.Accepted);
+            await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 5_000);
+
+            var stalePending = CreateHiveMindPrivateObject("PendingRescheduleState", "stale-reschedule");
+            var pendingBrains = stalePending.GetType().GetProperty("PendingBrains", BindingFlags.Instance | BindingFlags.Public);
+            Assert.NotNull(pendingBrains);
+            var pendingBrainMap = pendingBrains!.GetValue(stalePending);
+            Assert.NotNull(pendingBrainMap);
+            pendingBrainMap!.GetType().GetMethod("Add")!.Invoke(pendingBrainMap, new object?[] { brainId, firstAck.PlacementEpoch });
+            SetPrivateField(actor, "_rescheduleInProgress", true);
+            SetPrivateField(actor, "_pendingReschedule", stalePending);
+
+            var secondAck = await root.RequestAsync<PlacementAck>(
+                hiveMind,
+                new RequestPlacement
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    BaseDef = baseRef,
+                    InputWidth = 3,
+                    OutputWidth = 2
+                });
+            Assert.True(secondAck.Accepted);
+            Assert.True(secondAck.PlacementEpoch > firstAck.PlacementEpoch);
+
+            await WaitForPlacementMatchedAsync(root, hiveMind, brainId, timeoutMs: 5_000);
+            await WaitForAsync(
+                () => Task.FromResult(GetPendingRescheduleBrainCount(actor) == 0),
+                timeoutMs: 5_000);
+
+            var finalStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+            AssertPlacementStable(finalStatus);
+            var states = await GetBrainStateSnapshotAsync(root, settingsProbePid, brainId);
+            Assert.DoesNotContain(states.Events, entry => string.Equals(entry.State, "Paused", StringComparison.Ordinal));
         }
         finally
         {
@@ -3001,7 +3186,29 @@ public sealed class HiveMindPlacementOrchestrationTests
                 var snapshot = await GetBrainStateSnapshotAsync(root, settingsProbePid, brainId);
                 return snapshot.ContainsState(state);
             },
-            timeoutMs: timeoutMs);
+                timeoutMs: timeoutMs);
+    }
+
+    private static async Task<bool> WaitForBrainStateOrTimeoutAsync(
+        IRootContext root,
+        PID settingsProbePid,
+        Guid brainId,
+        string state,
+        int timeoutMs)
+    {
+        var deadline = Stopwatch.StartNew();
+        while (deadline.ElapsedMilliseconds < timeoutMs)
+        {
+            var snapshot = await GetBrainStateSnapshotAsync(root, settingsProbePid, brainId);
+            if (snapshot.ContainsState(state))
+            {
+                return true;
+            }
+
+            await Task.Delay(20);
+        }
+
+        return false;
     }
 
     private static async Task<BrainStateEventSnapshot> GetBrainStateSnapshotAsync(

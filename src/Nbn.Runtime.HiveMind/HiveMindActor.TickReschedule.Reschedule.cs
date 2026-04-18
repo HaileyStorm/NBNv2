@@ -592,6 +592,10 @@ public sealed partial class HiveMindActor
                     failureReason: "recovery_prepare_failed",
                     detail: failure.Value);
             }
+            else
+            {
+                PauseBrainAfterRescheduleFailure(context, failure.Key, failure.Value);
+            }
         }
 
         foreach (var request in prepared.Requests)
@@ -615,6 +619,10 @@ public sealed partial class HiveMindActor
                         brain,
                         failureReason: "placement_request_rejected",
                         detail: ack.Message);
+                }
+                else
+                {
+                    PauseBrainAfterRescheduleFailure(context, brain.BrainId, _pendingReschedule.Failures[request.BrainId]);
                 }
 
                 continue;
@@ -700,6 +708,13 @@ public sealed partial class HiveMindActor
                 FailBrainRecovery(context, brain, failureReason ?? "recovery_failed");
             }
         }
+        else if (completed && !succeeded)
+        {
+            if (!string.Equals(failureReason, "placement_epoch_changed", StringComparison.Ordinal))
+            {
+                PauseBrainAfterRescheduleFailure(context, brain.BrainId, failureReason ?? "reschedule_failed");
+            }
+        }
 
         if (_pendingReschedule.PendingBrains.Count == 0)
         {
@@ -710,6 +725,39 @@ public sealed partial class HiveMindActor
                     _pendingReschedule.Reason,
                     _pendingReschedule.Failures.Count == 0));
         }
+    }
+
+    private void PauseBrainAfterRescheduleFailure(IContext context, Guid brainId, string? failureReason)
+    {
+        if (!_brains.TryGetValue(brainId, out var brain) || brain.RecoveryInProgress)
+        {
+            return;
+        }
+
+        var normalizedReason = string.IsNullOrWhiteSpace(failureReason)
+            ? "reschedule_failed"
+            : failureReason.Trim();
+        if (brain.PlacementFailureReason == ProtoControl.PlacementFailureReason.PlacementFailureNone)
+        {
+            UpdatePlacementLifecycle(
+                brain,
+                ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
+                ProtoControl.PlacementFailureReason.PlacementFailureInternalError);
+        }
+        else
+        {
+            UpdatePlacementLifecycle(
+                brain,
+                ProtoControl.PlacementLifecycleState.PlacementLifecycleFailed,
+                brain.PlacementFailureReason);
+        }
+
+        brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileFailed;
+        SetSpawnFailureDetails(
+            brain,
+            "reschedule_failed",
+            $"Reschedule failed: {normalizedReason}");
+        PauseBrain(context, brainId, $"reschedule_failed:{normalizedReason}");
     }
 
     private static bool AreObservedShardAssignmentsRegistered(BrainState brain, PlacementExecutionState execution)
