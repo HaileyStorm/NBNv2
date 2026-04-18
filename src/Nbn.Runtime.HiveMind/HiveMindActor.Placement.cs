@@ -127,8 +127,7 @@ public sealed partial class HiveMindActor
             }
 
             var spawnCompletionTimeoutMs = ComputeSpawnCompletionTimeoutMs(brain);
-            var awaitSpawnIdleTimeoutMs = ComputeSpawnAwaitIdleTimeoutMs();
-            var pending = new PendingSpawnState(brain.BrainId, brain.PlacementEpoch, awaitSpawnIdleTimeoutMs);
+            var pending = new PendingSpawnState(brain.BrainId, brain.PlacementEpoch, spawnCompletionTimeoutMs);
             _pendingSpawns[brain.BrainId] = pending;
 
             ScheduleSelf(

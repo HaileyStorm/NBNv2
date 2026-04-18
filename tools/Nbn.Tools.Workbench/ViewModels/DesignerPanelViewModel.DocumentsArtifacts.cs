@@ -545,7 +545,7 @@ public sealed partial class DesignerPanelViewModel
 
             Status = "Waiting for HiveMind placement readiness after artifact restore...";
             var awaitedPlacementAck = await _client
-                .AwaitSpawnPlacementAsync(brainId, PlacementWaitTimeoutMs)
+                .AwaitSpawnPlacementAsync(brainId, RuntimeDefaultPlacementWaitTimeoutMs)
                 .ConfigureAwait(false);
             if (awaitedPlacementAck?.PlacementReady != true)
             {
@@ -723,7 +723,7 @@ public sealed partial class DesignerPanelViewModel
 
             Status = "Waiting for IO/HiveMind placement readiness...";
             var awaitedPlacementAck = await _client
-                .AwaitSpawnPlacementViaIoAsync(spawnedBrainId, PlacementWaitTimeoutMs)
+                .AwaitSpawnPlacementViaIoAsync(spawnedBrainId, RuntimeDefaultPlacementWaitTimeoutMs)
                 .ConfigureAwait(false);
             if (awaitedPlacementAck?.PlacementReady != true)
             {

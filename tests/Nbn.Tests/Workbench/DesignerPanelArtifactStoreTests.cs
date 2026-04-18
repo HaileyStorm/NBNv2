@@ -416,7 +416,7 @@ public sealed class DesignerPanelArtifactStoreTests
         Assert.StartsWith("http://", client.LastPlacementRequest.BaseDef.StoreUri, StringComparison.OrdinalIgnoreCase);
         Assert.StartsWith("http://", client.LastPlacementRequest.LastSnapshot.StoreUri, StringComparison.OrdinalIgnoreCase);
         Assert.True(client.LastPlacementRequest.IsRecovery);
-        Assert.Equal(5_000UL, client.LastAwaitSpawnPlacementTimeoutMs);
+        Assert.Equal(0UL, client.LastAwaitSpawnPlacementTimeoutMs);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.Contains("Brain restored from artifact refs", vm.Status, StringComparison.Ordinal);
     }

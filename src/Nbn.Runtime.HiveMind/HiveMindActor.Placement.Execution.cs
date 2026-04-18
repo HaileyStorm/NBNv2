@@ -1368,14 +1368,6 @@ public sealed partial class HiveMindActor
         return (int)Math.Min(int.MaxValue, Math.Max(50UL, requestedTimeoutMs));
     }
 
-    private int ComputeSpawnAwaitIdleTimeoutMs()
-    {
-        var assignmentTimeoutMs = ComputePlacementAssignmentAttemptTimeoutMs();
-        var retryBackoffMs = Math.Max(0, _options.PlacementAssignmentRetryBackoffMs);
-        var timeoutMs = assignmentTimeoutMs + retryBackoffMs;
-        return (int)Math.Min(10_000, Math.Max(500, timeoutMs));
-    }
-
     private void NotePendingSpawnProgress(Guid brainId, ulong placementEpoch)
     {
         if (_pendingSpawns.TryGetValue(brainId, out var pending)

@@ -3006,7 +3006,7 @@ public class OrchestratorPanelViewModelTests
 
         Assert.Equal(1, client.SpawnViaIoCallCount);
         Assert.Equal(1, client.AwaitSpawnPlacementViaIoCallCount);
-        Assert.Equal(5_000UL, client.LastAwaitSpawnPlacementViaIoTimeoutMs);
+        Assert.Equal(0UL, client.LastAwaitSpawnPlacementViaIoTimeoutMs);
         Assert.Equal(0, client.RequestPlacementCallCount);
         Assert.Equal(0, client.ListBrainsCallCount);
         Assert.True(client.GetPlacementLifecycleCallCount >= 2);
@@ -3298,7 +3298,7 @@ public class OrchestratorPanelViewModelTests
 
         Assert.Equal(1, client.SpawnViaIoCallCount);
         Assert.Equal(1, client.AwaitSpawnPlacementViaIoCallCount);
-        Assert.Equal(5_000UL, client.LastAwaitSpawnPlacementViaIoTimeoutMs);
+        Assert.Equal(0UL, client.LastAwaitSpawnPlacementViaIoTimeoutMs);
         Assert.Equal(0, client.RequestPlacementCallCount);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
@@ -3562,7 +3562,7 @@ public class OrchestratorPanelViewModelTests
 
         Assert.Equal(2, client.SpawnViaIoCallCount);
         Assert.Equal(2, client.AwaitSpawnPlacementViaIoCallCount);
-        Assert.Equal(5_000UL, client.LastAwaitSpawnPlacementViaIoTimeoutMs);
+        Assert.Equal(0UL, client.LastAwaitSpawnPlacementViaIoTimeoutMs);
         Assert.Equal(1, client.KillBrainCallCount);
         Assert.Equal(firstBrainId, client.LastKillBrainId);
         Assert.Equal("designer_managed_spawn_placement_timeout", client.LastKillReason);
@@ -3622,7 +3622,7 @@ public class OrchestratorPanelViewModelTests
 
         Assert.Equal(1, client.SpawnViaIoCallCount);
         Assert.Equal(1, client.AwaitSpawnPlacementViaIoCallCount);
-        Assert.Equal(5_000UL, client.LastAwaitSpawnPlacementViaIoTimeoutMs);
+        Assert.Equal(0UL, client.LastAwaitSpawnPlacementViaIoTimeoutMs);
         Assert.Equal(0, client.KillBrainCallCount);
         Assert.Contains(spawnedBrainId.ToString("D"), vm.Status, StringComparison.OrdinalIgnoreCase);
     }

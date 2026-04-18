@@ -664,7 +664,7 @@ public sealed class HiveMindSpawnBrainTests
     }
 
     [Fact]
-    public async Task AwaitSpawnPlacement_DefaultRuntimeWait_DoesNotExtend_On_RetryOnlyPlacementChurn()
+    public async Task AwaitSpawnPlacement_DefaultRuntimeWait_Covers_RetryOnlyPlacementBudget()
     {
         var (artifactRoot, brainDef) = await StoreBrainDefinitionAsync();
         try
@@ -709,18 +709,18 @@ public sealed class HiveMindSpawnBrainTests
 
             Assert.True(waitAck.AcceptedForPlacement);
             Assert.False(waitAck.PlacementReady);
-            Assert.Equal("spawn_wait_timeout", waitAck.FailureReasonCode);
+            Assert.Equal("spawn_assignment_timeout", waitAck.FailureReasonCode);
             Assert.True(
-                started.Elapsed < TimeSpan.FromMilliseconds(600),
-                $"Expected retry-only placement churn not to extend the default wait budget, but waited {started.Elapsed}.");
+                started.Elapsed < TimeSpan.FromSeconds(2),
+                $"Expected retry-only placement wait to remain bounded by the retry budget, but waited {started.Elapsed}.");
 
             var assignmentRequestCount = await root.RequestAsync<int>(
                 workerPid,
                 new GetSpawnPlacementAssignmentRequestCount(),
                 TimeSpan.FromSeconds(5));
             Assert.True(
-                assignmentRequestCount >= 2,
-                $"Expected at least one retry dispatch before the wait returned, but observed only {assignmentRequestCount} assignment request(s).");
+                assignmentRequestCount >= 4,
+                $"Expected the retry budget to be exhausted before the wait returned, but observed only {assignmentRequestCount} assignment request(s).");
 
             await system.ShutdownAsync();
         }
