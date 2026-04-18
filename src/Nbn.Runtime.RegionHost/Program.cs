@@ -83,7 +83,8 @@ system.Root.Send(shardPid, new ProtoControl.RegisterShard
     ShardPid = PidLabel(shardRemotePid),
     NeuronStart = (uint)options.NeuronStart,
     NeuronCount = (uint)options.NeuronCount,
-    PlacementEpoch = options.PlacementEpoch
+    PlacementEpoch = options.PlacementEpoch,
+    AssignmentId = options.AssignmentId
 });
 
 PrintStartupSummary(options, remoteConfig, shardPid, load, plan);
@@ -105,7 +106,8 @@ system.Root.Send(shardPid, new ProtoControl.UnregisterShard
     BrainId = options.BrainId.ToProtoUuid(),
     RegionId = (uint)options.RegionId,
     ShardIndex = (uint)options.ShardIndex,
-    PlacementEpoch = options.PlacementEpoch
+    PlacementEpoch = options.PlacementEpoch,
+    AssignmentId = options.AssignmentId
 });
 
 if (settingsReporter is not null)
@@ -278,6 +280,11 @@ static void ValidateOptions(RegionHostOptions options)
     if (options.BrainId == Guid.Empty)
     {
         throw new InvalidOperationException("BrainId is required (--brain-id or NBN_REGIONHOST_BRAIN_ID).");
+    }
+
+    if (options.PlacementEpoch > 0 && string.IsNullOrWhiteSpace(options.AssignmentId))
+    {
+        throw new InvalidOperationException("Assignment id is required with placement epoch (--assignment-id or NBN_REGIONHOST_ASSIGNMENT_ID).");
     }
 
     if (!NbnInvariants.IsValidRegionId(options.RegionId))

@@ -18,6 +18,7 @@ public sealed record RegionHostOptions(
     string SettingsName,
     Guid BrainId,
     ulong PlacementEpoch,
+    string AssignmentId,
     int RegionId,
     int NeuronStart,
     int NeuronCount,
@@ -55,6 +56,7 @@ public sealed record RegionHostOptions(
         var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
         var brainId = GetEnvGuid("NBN_REGIONHOST_BRAIN_ID") ?? Guid.Empty;
         var placementEpoch = GetEnvULong("NBN_REGIONHOST_PLACEMENT_EPOCH") ?? 0UL;
+        var assignmentId = GetEnv("NBN_REGIONHOST_ASSIGNMENT_ID") ?? string.Empty;
         var regionId = GetEnvInt("NBN_REGIONHOST_REGION") ?? -1;
         var neuronStart = GetEnvInt("NBN_REGIONHOST_NEURON_START") ?? 0;
         var neuronCount = GetEnvInt("NBN_REGIONHOST_NEURON_COUNT") ?? 0;
@@ -146,6 +148,12 @@ public sealed record RegionHostOptions(
                     if (i + 1 < args.Length && ulong.TryParse(args[++i], out var placementEpochValue))
                     {
                         placementEpoch = placementEpochValue;
+                    }
+                    continue;
+                case "--assignment-id":
+                    if (i + 1 < args.Length)
+                    {
+                        assignmentId = args[++i];
                     }
                     continue;
                 case "--region":
@@ -343,6 +351,12 @@ public sealed record RegionHostOptions(
                 continue;
             }
 
+            if (arg.StartsWith("--assignment-id=", StringComparison.OrdinalIgnoreCase))
+            {
+                assignmentId = arg.Substring("--assignment-id=".Length);
+                continue;
+            }
+
             if (arg.StartsWith("--region=", StringComparison.OrdinalIgnoreCase)
                 && int.TryParse(arg.Substring("--region=".Length), out var regionInline))
             {
@@ -493,6 +507,7 @@ public sealed record RegionHostOptions(
             settingsName,
             brainId,
             placementEpoch,
+            string.IsNullOrWhiteSpace(assignmentId) ? string.Empty : assignmentId.Trim(),
             regionId,
             neuronStart,
             neuronCount,
@@ -578,6 +593,7 @@ public sealed record RegionHostOptions(
         Console.WriteLine("  --settings-name <name>           SettingsMonitor actor name (default SettingsMonitor)");
         Console.WriteLine("  --brain-id <guid>                BrainId for shard messages");
         Console.WriteLine("  --placement-epoch <epoch>        Placement epoch for HiveMind shard registration/unregistration");
+        Console.WriteLine("  --assignment-id <id>             Placement assignment id for HiveMind shard registration/unregistration");
         Console.WriteLine("  --region <id>                    Region id (0-31)");
         Console.WriteLine("  --neuron-start <index>           Neuron start offset within region");
         Console.WriteLine("  --neuron-count <count>           Neuron count (0 = to end)");

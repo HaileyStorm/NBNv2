@@ -241,6 +241,7 @@ public sealed partial class HiveMindActor
         int shardIndex,
         PID shardPid,
         ulong placementEpoch,
+        string assignmentId,
         int neuronStart,
         int neuronCount)
     {
@@ -270,6 +271,14 @@ public sealed partial class HiveMindActor
         var normalized = NormalizePid(context, shardPid) ?? shardPid;
         brain.Shards[shardId] = normalized;
         brain.ShardRegistrationEpochs[shardId] = placementEpoch;
+        if (placementEpoch > 0)
+        {
+            brain.ShardRegistrationAssignmentIds[shardId] = assignmentId;
+        }
+        else
+        {
+            brain.ShardRegistrationAssignmentIds.Remove(shardId);
+        }
         SendShardVisualizationUpdate(
             context,
             brainId,
@@ -368,6 +377,7 @@ public sealed partial class HiveMindActor
                     || brain.PlacementLifecycleState == ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning);
             var removed = brain.Shards.Remove(shardId);
             brain.ShardRegistrationEpochs.Remove(shardId);
+            brain.ShardRegistrationAssignmentIds.Remove(shardId);
             UpdateRoutingTable(context, brain);
             if (!removed)
             {
@@ -519,6 +529,7 @@ public sealed partial class HiveMindActor
         }
 
         var placementEpoch = message.PlacementEpoch;
+        var assignmentId = string.IsNullOrWhiteSpace(message.AssignmentId) ? string.Empty : message.AssignmentId.Trim();
         if (brain.PlacementEpoch > 0)
         {
             if (placementEpoch != brain.PlacementEpoch)
@@ -526,10 +537,24 @@ public sealed partial class HiveMindActor
                 EmitControlPlaneMutationIgnored(context, "control.register_shard", brainId, "placement_epoch_mismatch", shardId);
                 return;
             }
+
+            if (!TryValidateShardLifecycleAssignment(
+                    context,
+                    brain,
+                    shardId,
+                    assignmentId,
+                    normalizedShardPid,
+                    allowShardSender: true,
+                    out var assignmentReason))
+            {
+                EmitControlPlaneMutationIgnored(context, "control.register_shard", brainId, assignmentReason, shardId);
+                return;
+            }
         }
         else
         {
             placementEpoch = 0;
+            assignmentId = string.Empty;
         }
 
         RegisterShardInternal(
@@ -539,6 +564,7 @@ public sealed partial class HiveMindActor
             shardIndex,
             normalizedShardPid,
             placementEpoch,
+            assignmentId,
             (int)message.NeuronStart,
             (int)message.NeuronCount);
     }
@@ -570,12 +596,143 @@ public sealed partial class HiveMindActor
             return;
         }
 
+        var assignmentId = string.IsNullOrWhiteSpace(message.AssignmentId) ? string.Empty : message.AssignmentId.Trim();
         if (brain.PlacementEpoch > 0 && message.PlacementEpoch != brain.PlacementEpoch)
         {
             EmitControlPlaneMutationIgnored(context, "control.unregister_shard", brainId, "placement_epoch_mismatch", shardId);
             return;
         }
 
+        if (brain.PlacementEpoch > 0)
+        {
+            var existingShardPid = brain.Shards.TryGetValue(shardId, out var trackedShardPid) ? trackedShardPid : null;
+            if (!TryValidateShardLifecycleAssignment(
+                    context,
+                    brain,
+                    shardId,
+                    assignmentId,
+                    existingShardPid,
+                    allowShardSender: true,
+                    out var assignmentReason))
+            {
+                EmitControlPlaneMutationIgnored(context, "control.unregister_shard", brainId, assignmentReason, shardId);
+                return;
+            }
+
+            if (brain.ShardRegistrationAssignmentIds.TryGetValue(shardId, out var registeredAssignmentId)
+                && !string.Equals(registeredAssignmentId, assignmentId, StringComparison.Ordinal))
+            {
+                EmitControlPlaneMutationIgnored(context, "control.unregister_shard", brainId, "registered_assignment_mismatch", shardId);
+                return;
+            }
+        }
+
         UnregisterShardInternal(context, brainId, regionId, shardIndex);
+    }
+
+    private bool TryValidateShardLifecycleAssignment(
+        IContext context,
+        BrainState brain,
+        ShardId32 shardId,
+        string assignmentId,
+        PID? shardPid,
+        bool allowShardSender,
+        out string reason)
+    {
+        if (brain.PlacementEpoch == 0)
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(assignmentId))
+        {
+            reason = "assignment_id_missing";
+            return false;
+        }
+
+        if (!TryResolveExpectedShardAssignment(brain, shardId, out var expectedAssignment))
+        {
+            reason = "assignment_not_tracked";
+            return false;
+        }
+
+        if (!string.Equals(assignmentId, expectedAssignment.AssignmentId, StringComparison.Ordinal))
+        {
+            reason = "assignment_id_mismatch";
+            return false;
+        }
+
+        if (IsTrustedControllerSender(context.Sender, brain))
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        if (TryGetGuid(expectedAssignment.WorkerNodeId, out var workerNodeId)
+            && brain.PlacementExecution is not null
+            && brain.PlacementExecution.WorkerTargets.TryGetValue(workerNodeId, out var workerPid)
+            && SenderMatchesPid(context.Sender, workerPid))
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        if (allowShardSender
+            && shardPid is not null
+            && SenderMatchesPid(context.Sender, shardPid)
+            && !IsPlacementAuthorizedWorkerSender(context.Sender, brain))
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        reason = "assignment_sender_mismatch";
+        return false;
+    }
+
+    private static bool TryResolveExpectedShardAssignment(
+        BrainState brain,
+        ShardId32 shardId,
+        out ProtoControl.PlacementAssignment resolved)
+    {
+        resolved = null!;
+        var execution = brain.PlacementExecution;
+        if (execution is null || execution.PlacementEpoch != brain.PlacementEpoch)
+        {
+            return false;
+        }
+
+        foreach (var tracked in execution.Assignments.Values)
+        {
+            var assignment = tracked.Assignment;
+            if (assignment.Target != ProtoControl.PlacementAssignmentTarget.PlacementTargetRegionShard
+                || assignment.RegionId != (uint)shardId.RegionId
+                || assignment.ShardIndex != (uint)shardId.ShardIndex
+                || string.IsNullOrWhiteSpace(assignment.AssignmentId))
+            {
+                continue;
+            }
+
+            resolved = assignment;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryResolveExpectedShardAssignmentId(
+        BrainState brain,
+        ShardId32 shardId,
+        out string assignmentId)
+    {
+        if (TryResolveExpectedShardAssignment(brain, shardId, out var assignment))
+        {
+            assignmentId = assignment.AssignmentId;
+            return true;
+        }
+
+        assignmentId = string.Empty;
+        return false;
     }
 }

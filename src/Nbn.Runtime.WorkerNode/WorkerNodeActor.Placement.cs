@@ -299,7 +299,7 @@ public sealed partial class WorkerNodeActor
 
             if (notifyHiveMind)
             {
-                UnregisterShard(context, brain, shardId);
+                UnregisterShard(context, brain, shardId, assignment.AssignmentId);
             }
         }
 

@@ -772,7 +772,9 @@ public sealed partial class HiveMindActor
             if (!ShardId32.TryFrom((int)observed.RegionId, (int)observed.ShardIndex, out var shardId)
                 || !brain.Shards.ContainsKey(shardId)
                 || !brain.ShardRegistrationEpochs.TryGetValue(shardId, out var registrationEpoch)
-                || registrationEpoch != execution.PlacementEpoch)
+                || registrationEpoch != execution.PlacementEpoch
+                || !brain.ShardRegistrationAssignmentIds.TryGetValue(shardId, out var assignmentId)
+                || !string.Equals(assignmentId, observed.AssignmentId, StringComparison.Ordinal))
             {
                 return false;
             }

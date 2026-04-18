@@ -405,12 +405,14 @@ public class ProtoCompatibilityTests
         AssertField(registerShard, "neuron_start", 5, FieldType.UInt32);
         AssertField(registerShard, "neuron_count", 6, FieldType.UInt32);
         AssertField(registerShard, "placement_epoch", 7, FieldType.Fixed64);
+        AssertField(registerShard, "assignment_id", 8, FieldType.String);
 
         var unregisterShard = descriptor.MessageTypes.Single(message => message.Name == "UnregisterShard");
         AssertField(unregisterShard, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(unregisterShard, "region_id", 2, FieldType.UInt32);
         AssertField(unregisterShard, "shard_index", 3, FieldType.UInt32);
         AssertField(unregisterShard, "placement_epoch", 4, FieldType.Fixed64);
+        AssertField(unregisterShard, "assignment_id", 5, FieldType.String);
 
         var assignment = descriptor.MessageTypes.Single(message => message.Name == "PlacementAssignment");
         AssertField(assignment, "assignment_id", 1, FieldType.String);

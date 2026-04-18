@@ -214,6 +214,7 @@ public sealed partial class HiveMindActor
             = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown;
         public Dictionary<ShardId32, PID> Shards { get; } = new();
         public Dictionary<ShardId32, ulong> ShardRegistrationEpochs { get; } = new();
+        public Dictionary<ShardId32, string> ShardRegistrationAssignmentIds { get; } = new();
         public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
         public PendingRuntimeResetState? PendingRuntimeReset { get; set; }
     }

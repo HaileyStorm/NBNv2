@@ -35,6 +35,7 @@ public class HiveMindLiveSnapshotTests
             var root = system.Root;
             var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
             PrimeEligibleWorker(root, hiveMind);
+            var workerSender = root.SpawnNamed(Props.FromProducer(() => new ManualSenderActor()), "region-host");
 
             var brainId = Guid.NewGuid();
             var placement = await root.RequestAsync<PlacementAck>(
@@ -78,7 +79,7 @@ public class HiveMindLiveSnapshotTests
                 enabledBitset: new byte[] { 0b0000_0001 },
                 overlays: Array.Empty<SnapshotOverlayRecord>())));
 
-            await root.RequestAsync<SendMessageAck>(region0Shard, new SendMessage(hiveMind, new RegisterShard
+            await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 0,
@@ -86,9 +87,10 @@ public class HiveMindLiveSnapshotTests
                 ShardPid = PidLabel(region0Shard),
                 NeuronStart = 0,
                 NeuronCount = 3,
-                PlacementEpoch = placement.PlacementEpoch
+                PlacementEpoch = placement.PlacementEpoch,
+                AssignmentId = ShardAssignmentId(placement, 0)
             }));
-            await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
+            await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 1,
@@ -96,9 +98,10 @@ public class HiveMindLiveSnapshotTests
                 ShardPid = PidLabel(region1Shard),
                 NeuronStart = 0,
                 NeuronCount = 4,
-                PlacementEpoch = placement.PlacementEpoch
+                PlacementEpoch = placement.PlacementEpoch,
+                AssignmentId = ShardAssignmentId(placement, 1)
             }));
-            await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
+            await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 31,
@@ -106,7 +109,8 @@ public class HiveMindLiveSnapshotTests
                 ShardPid = PidLabel(region31Shard),
                 NeuronStart = 0,
                 NeuronCount = 2,
-                PlacementEpoch = placement.PlacementEpoch
+                PlacementEpoch = placement.PlacementEpoch,
+                AssignmentId = ShardAssignmentId(placement, 31)
             }));
 
             root.Send(hiveMind, new ProtoSettings.SettingChanged
@@ -227,6 +231,7 @@ public class HiveMindLiveSnapshotTests
                     Props.FromProducer(() => new IoGatewayActor(CreateIoOptions(ioName), hiveMindPid: hiveMind)),
                     ioName);
                 PrimeEligibleWorker(root, hiveMind);
+            var workerSender = root.SpawnNamed(Props.FromProducer(() => new ManualSenderActor()), "region-host");
 
                 var placement = await root.RequestAsync<PlacementAck>(
                     hiveMind,
@@ -269,7 +274,7 @@ public class HiveMindLiveSnapshotTests
                     enabledBitset: new byte[] { 0b0000_0001 },
                     overlays: Array.Empty<SnapshotOverlayRecord>())));
 
-                await root.RequestAsync<SendMessageAck>(region0Shard, new SendMessage(hiveMind, new RegisterShard
+                await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
                 {
                     BrainId = brainId.ToProtoUuid(),
                     RegionId = 0,
@@ -277,9 +282,10 @@ public class HiveMindLiveSnapshotTests
                     ShardPid = PidLabel(region0Shard),
                     NeuronStart = 0,
                     NeuronCount = 3,
-                    PlacementEpoch = placement.PlacementEpoch
+                    PlacementEpoch = placement.PlacementEpoch,
+                    AssignmentId = ShardAssignmentId(placement, 0)
                 }));
-                await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
+                await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
                 {
                     BrainId = brainId.ToProtoUuid(),
                     RegionId = 1,
@@ -287,9 +293,10 @@ public class HiveMindLiveSnapshotTests
                     ShardPid = PidLabel(region1Shard),
                     NeuronStart = 0,
                     NeuronCount = 4,
-                    PlacementEpoch = placement.PlacementEpoch
+                    PlacementEpoch = placement.PlacementEpoch,
+                    AssignmentId = ShardAssignmentId(placement, 1)
                 }));
-                await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
+                await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
                 {
                     BrainId = brainId.ToProtoUuid(),
                     RegionId = 31,
@@ -297,7 +304,8 @@ public class HiveMindLiveSnapshotTests
                     ShardPid = PidLabel(region31Shard),
                     NeuronStart = 0,
                     NeuronCount = 2,
-                    PlacementEpoch = placement.PlacementEpoch
+                    PlacementEpoch = placement.PlacementEpoch,
+                    AssignmentId = ShardAssignmentId(placement, 31)
                 }));
 
                 _ = await WaitForBrainInfoAsync(
@@ -375,6 +383,7 @@ public class HiveMindLiveSnapshotTests
                     Props.FromProducer(() => new IoGatewayActor(CreateIoOptions(ioName), hiveMindPid: hiveMind)),
                     ioName);
                 PrimeEligibleWorker(root, hiveMind);
+            var workerSender = root.SpawnNamed(Props.FromProducer(() => new ManualSenderActor()), "region-host");
 
                 var placement = await root.RequestAsync<PlacementAck>(
                     hiveMind,
@@ -534,6 +543,7 @@ public class HiveMindLiveSnapshotTests
         var root = system.Root;
         var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
         PrimeEligibleWorker(root, hiveMind);
+            var workerSender = root.SpawnNamed(Props.FromProducer(() => new ManualSenderActor()), "region-host");
 
         var brainId = Guid.NewGuid();
         var placement = await root.RequestAsync<PlacementAck>(
@@ -577,7 +587,7 @@ public class HiveMindLiveSnapshotTests
             enabledBitset: new byte[] { 0b0000_0001 },
             overlays: Array.Empty<SnapshotOverlayRecord>())));
 
-        await root.RequestAsync<SendMessageAck>(region0Shard, new SendMessage(hiveMind, new RegisterShard
+        await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
             RegionId = 0,
@@ -585,9 +595,10 @@ public class HiveMindLiveSnapshotTests
             ShardPid = PidLabel(region0Shard),
             NeuronStart = 0,
             NeuronCount = 3,
-            PlacementEpoch = placement.PlacementEpoch
+            PlacementEpoch = placement.PlacementEpoch,
+            AssignmentId = ShardAssignmentId(placement, 0)
         }));
-        await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
+        await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
             RegionId = 1,
@@ -595,9 +606,10 @@ public class HiveMindLiveSnapshotTests
             ShardPid = PidLabel(region1Shard),
             NeuronStart = 0,
             NeuronCount = 4,
-            PlacementEpoch = placement.PlacementEpoch
+            PlacementEpoch = placement.PlacementEpoch,
+            AssignmentId = ShardAssignmentId(placement, 1)
         }));
-        await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
+        await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
             RegionId = 31,
@@ -605,7 +617,8 @@ public class HiveMindLiveSnapshotTests
             ShardPid = PidLabel(region31Shard),
             NeuronStart = 0,
             NeuronCount = 2,
-            PlacementEpoch = placement.PlacementEpoch
+            PlacementEpoch = placement.PlacementEpoch,
+            AssignmentId = ShardAssignmentId(placement, 31)
         }));
 
         var ready = await root.RequestAsync<SnapshotReady>(
@@ -646,6 +659,7 @@ public class HiveMindLiveSnapshotTests
         var root = system.Root;
         var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
         PrimeEligibleWorker(root, hiveMind);
+            var workerSender = root.SpawnNamed(Props.FromProducer(() => new ManualSenderActor()), "region-host");
 
         var brainId = Guid.NewGuid();
         var placement = await root.RequestAsync<PlacementAck>(
@@ -689,7 +703,7 @@ public class HiveMindLiveSnapshotTests
             enabledBitset: new byte[] { 0b0000_0001 },
             overlays: Array.Empty<SnapshotOverlayRecord>())));
 
-        await root.RequestAsync<SendMessageAck>(region0Shard, new SendMessage(hiveMind, new RegisterShard
+        await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
             RegionId = 0,
@@ -697,9 +711,10 @@ public class HiveMindLiveSnapshotTests
             ShardPid = PidLabel(region0Shard),
             NeuronStart = 0,
             NeuronCount = 3,
-            PlacementEpoch = placement.PlacementEpoch
+            PlacementEpoch = placement.PlacementEpoch,
+            AssignmentId = ShardAssignmentId(placement, 0)
         }));
-        await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
+        await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
             RegionId = 1,
@@ -707,9 +722,10 @@ public class HiveMindLiveSnapshotTests
             ShardPid = PidLabel(region1Shard),
             NeuronStart = 0,
             NeuronCount = 4,
-            PlacementEpoch = placement.PlacementEpoch
+            PlacementEpoch = placement.PlacementEpoch,
+            AssignmentId = ShardAssignmentId(placement, 1)
         }));
-        await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
+        await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
             RegionId = 31,
@@ -717,7 +733,8 @@ public class HiveMindLiveSnapshotTests
             ShardPid = PidLabel(region31Shard),
             NeuronStart = 0,
             NeuronCount = 2,
-            PlacementEpoch = placement.PlacementEpoch
+            PlacementEpoch = placement.PlacementEpoch,
+            AssignmentId = ShardAssignmentId(placement, 31)
         }));
 
         var ready = await root.RequestAsync<SnapshotReady>(
@@ -764,6 +781,7 @@ public class HiveMindLiveSnapshotTests
             var root = system.Root;
             var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
             PrimeEligibleWorker(root, hiveMind);
+            var workerSender = root.SpawnNamed(Props.FromProducer(() => new ManualSenderActor()), "region-host");
 
             var brainId = Guid.NewGuid();
             var placement = await root.RequestAsync<PlacementAck>(
@@ -807,7 +825,7 @@ public class HiveMindLiveSnapshotTests
                 enabledBitset: new byte[] { 0b0000_0011 },
                 overlays: Array.Empty<SnapshotOverlayRecord>())));
 
-            await root.RequestAsync<SendMessageAck>(region0Shard, new SendMessage(hiveMind, new RegisterShard
+            await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 0,
@@ -815,9 +833,10 @@ public class HiveMindLiveSnapshotTests
                 ShardPid = PidLabel(region0Shard),
                 NeuronStart = 0,
                 NeuronCount = 3,
-                PlacementEpoch = placement.PlacementEpoch
+                PlacementEpoch = placement.PlacementEpoch,
+                AssignmentId = ShardAssignmentId(placement, 0)
             }));
-            await root.RequestAsync<SendMessageAck>(region1Shard, new SendMessage(hiveMind, new RegisterShard
+            await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 1,
@@ -825,9 +844,10 @@ public class HiveMindLiveSnapshotTests
                 ShardPid = PidLabel(region1Shard),
                 NeuronStart = 0,
                 NeuronCount = 4,
-                PlacementEpoch = placement.PlacementEpoch
+                PlacementEpoch = placement.PlacementEpoch,
+                AssignmentId = ShardAssignmentId(placement, 1)
             }));
-            await root.RequestAsync<SendMessageAck>(region31Shard, new SendMessage(hiveMind, new RegisterShard
+            await root.RequestAsync<SendMessageAck>(workerSender, new SendMessage(hiveMind, new RegisterShard
             {
                 BrainId = brainId.ToProtoUuid(),
                 RegionId = 31,
@@ -835,7 +855,8 @@ public class HiveMindLiveSnapshotTests
                 ShardPid = PidLabel(region31Shard),
                 NeuronStart = 0,
                 NeuronCount = 2,
-                PlacementEpoch = placement.PlacementEpoch
+                PlacementEpoch = placement.PlacementEpoch,
+                AssignmentId = ShardAssignmentId(placement, 31)
             }));
 
             var rebasedReady = await root.RequestAsync<BrainDefinitionReady>(
@@ -964,6 +985,21 @@ public class HiveMindLiveSnapshotTests
     private sealed record SendMessage(PID Target, object Message);
     private sealed record SendMessageAck;
 
+    private sealed class ManualSenderActor : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is not SendMessage send)
+            {
+                return Task.CompletedTask;
+            }
+
+            context.Request(send.Target, send.Message);
+            context.Respond(new SendMessageAck());
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class SnapshotShardProbe : IActor
     {
         private readonly Guid _brainId;
@@ -1073,6 +1109,9 @@ public class HiveMindLiveSnapshotTests
 
     private static string PidLabel(PID pid)
         => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
+
+    private static string ShardAssignmentId(PlacementAck placement, int regionId, int shardIndex = 0)
+        => $"{placement.RequestId}:{placement.PlacementEpoch}:region-{regionId}-shard-{shardIndex}";
 
     private static IoOptions CreateIoOptions(string gatewayName)
     {

@@ -412,6 +412,7 @@ message RegisterShard {
   uint32 neuron_start = 5;
   uint32 neuron_count = 6;
   fixed64 placement_epoch = 7;
+  string assignment_id = 8;
 }
 
 message UnregisterShard {
@@ -419,6 +420,7 @@ message UnregisterShard {
   uint32 region_id = 2;
   uint32 shard_index = 3;
   fixed64 placement_epoch = 4;
+  string assignment_id = 5;
 }
 
 message RegisterOutputSink {

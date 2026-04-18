@@ -18,7 +18,8 @@ public sealed partial class WorkerNodeActor
         SharedShardId32 shardId,
         int neuronStart,
         int neuronCount,
-        PID shardPid)
+        PID shardPid,
+        string assignmentId)
     {
         var hiveMindPid = ResolveHiveMindPid(context);
         if (hiveMindPid is null)
@@ -35,7 +36,8 @@ public sealed partial class WorkerNodeActor
             ShardPid = PidLabel(remoteShardPid),
             NeuronStart = (uint)Math.Max(0, neuronStart),
             NeuronCount = (uint)Math.Max(0, neuronCount),
-            PlacementEpoch = brain.PlacementEpoch
+            PlacementEpoch = brain.PlacementEpoch,
+            AssignmentId = assignmentId ?? string.Empty
         });
     }
 
@@ -89,7 +91,8 @@ public sealed partial class WorkerNodeActor
     private void UnregisterShard(
         IContext context,
         BrainHostingState brain,
-        SharedShardId32 shardId)
+        SharedShardId32 shardId,
+        string assignmentId)
     {
         var hiveMindPid = ResolveHiveMindPid(context);
         if (hiveMindPid is null)
@@ -102,7 +105,8 @@ public sealed partial class WorkerNodeActor
             BrainId = brain.BrainId.ToProtoUuid(),
             RegionId = (uint)shardId.RegionId,
             ShardIndex = (uint)shardId.ShardIndex,
-            PlacementEpoch = brain.PlacementEpoch
+            PlacementEpoch = brain.PlacementEpoch,
+            AssignmentId = assignmentId ?? string.Empty
         });
     }
 

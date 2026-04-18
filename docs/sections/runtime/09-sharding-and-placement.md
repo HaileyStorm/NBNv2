@@ -46,7 +46,7 @@ HiveMind runs a `ShardPlacementManager` Actor which:
 * updates all routing tables (BrainSignalRouter and coordinators)
 * refreshes inter-worker peer latency telemetry before latency-sensitive placement/reschedule decisions
 * executes real placement plan changes rather than a simulated reschedule delay
-* resumes tick dispatch only after moved shards have registered with the current placement epoch and their output sinks/routing state have been refreshed; missing or previous-epoch shard registration/unregistration messages are ignored for placement-managed brains
+* resumes tick dispatch only after moved shards have registered with the current placement epoch and assignment id and their output sinks/routing state have been refreshed; missing, previous-epoch, or wrong-assignment shard registration/unregistration messages are ignored for placement-managed brains
 * respects rescheduling rate limits (Section 6.6)
 
 Placement heuristics:

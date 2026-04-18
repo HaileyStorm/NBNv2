@@ -115,7 +115,9 @@ public sealed partial class HiveMindActor
                 return true;
             }
 
-            if (senderIsTrustedController || senderIsAuthorizedWorker)
+            if (senderIsTrustedController
+                || senderIsAuthorizedWorker
+                || (brain.PlacementEpoch > 0 && senderMatchesShardPid))
             {
                 reason = string.Empty;
                 return true;

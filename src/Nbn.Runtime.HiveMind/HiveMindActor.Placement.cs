@@ -93,7 +93,7 @@ public sealed partial class HiveMindActor
                     LastSnapshot = HasArtifactRef(message.LastSnapshot) ? message.LastSnapshot.Clone() : null,
                     InputWidth = message.InputWidth,
                     OutputWidth = message.OutputWidth,
-                    RequestId = $"spawn:{brainId:N}",
+                    RequestId = $"spawn:{brainId:N}:{Guid.NewGuid():N}",
                     RequestedMs = (ulong)NowMs()
                 });
 
@@ -250,7 +250,7 @@ public sealed partial class HiveMindActor
         brain.PlacementEpoch = brain.PlacementEpoch >= ulong.MaxValue ? 1UL : brain.PlacementEpoch + 1UL;
         brain.PlacementRequestedMs = nowMs;
         brain.PlacementRequestId = string.IsNullOrWhiteSpace(message.RequestId)
-            ? $"{brainId:N}:{brain.PlacementEpoch}"
+            ? $"{brainId:N}:{brain.PlacementEpoch}:{Guid.NewGuid():N}"
             : message.RequestId;
         brain.PlacementReconcileState = ProtoControl.PlacementReconcileState.PlacementReconcileUnknown;
         brain.SpawnFailureReasonCode = string.Empty;

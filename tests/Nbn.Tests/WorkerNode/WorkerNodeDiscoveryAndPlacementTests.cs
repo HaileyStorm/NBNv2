@@ -614,6 +614,89 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     }
 
     [Fact]
+    public async Task PlacementAssignmentRequest_RegionShard_ForwardsShardLifecycleAssignmentId()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-worker-shard-lifecycle-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            await using var harness = await WorkerHarness.CreateAsync();
+
+            var store = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var minimalNbn = NbnTestVectors.CreateMinimalNbn();
+            var manifest = await store.StoreAsync(new MemoryStream(minimalNbn), "application/x-nbn");
+            var brainDef = manifest.ArtifactId.Bytes.ToArray().ToArtifactRef((ulong)manifest.ByteLength, "application/x-nbn", artifactRoot);
+            var workerNodeId = Guid.NewGuid();
+            var workerPid = harness.Root.Spawn(
+                Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+
+            var brainId = Guid.NewGuid();
+            var assignment = BuildAssignment(
+                assignmentId: "assign-epoch-forward",
+                brainId: brainId,
+                workerNodeId: workerNodeId,
+                placementEpoch: 7,
+                regionId: NbnConstants.InputRegionId,
+                shardIndex: 0,
+                neuronStart: 0,
+                neuronCount: 1,
+                baseDefinition: brainDef);
+            var request = new PlacementAssignmentRequest
+            {
+                Assignment = assignment
+            };
+
+            var assignmentAck = new TaskCompletionSource<PlacementAssignmentAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var unassignmentAck = new TaskCompletionSource<PlacementUnassignmentAck>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var registerShard = new TaskCompletionSource<RegisterShard>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var unregisterShard = new TaskCompletionSource<UnregisterShard>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var probe = harness.Root.SpawnNamed(
+                Props.FromProducer(
+                    () => new HiveMindShardLifecycleProbeActor(
+                        workerPid,
+                        request,
+                        assignmentAck,
+                        unassignmentAck,
+                        registerShard,
+                        unregisterShard)),
+                $"worker-test-hivemind-shard-lifecycle-{Guid.NewGuid():N}");
+
+            var ready = await assignmentAck.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(ready.Accepted, ready.Message);
+            Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, ready.State);
+
+            var registered = await registerShard.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(brainId.ToProtoUuid().Value, registered.BrainId.Value);
+            Assert.Equal(assignment.AssignmentId, registered.AssignmentId);
+            Assert.Equal(assignment.PlacementEpoch, registered.PlacementEpoch);
+            Assert.Equal(assignment.RegionId, registered.RegionId);
+            Assert.Equal(assignment.ShardIndex, registered.ShardIndex);
+
+            harness.Root.Send(probe, new RequestProbeUnassignment());
+
+            var unassigned = await unassignmentAck.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(unassigned.Accepted, unassigned.Message);
+            Assert.Equal(PlacementFailureReason.PlacementFailureNone, unassigned.FailureReason);
+
+            var unregistered = await unregisterShard.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(brainId.ToProtoUuid().Value, unregistered.BrainId.Value);
+            Assert.Equal(assignment.AssignmentId, unregistered.AssignmentId);
+            Assert.Equal(assignment.PlacementEpoch, unregistered.PlacementEpoch);
+            Assert.Equal(assignment.RegionId, unregistered.RegionId);
+            Assert.Equal(assignment.ShardIndex, unregistered.ShardIndex);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(artifactRoot))
+            {
+                Directory.Delete(artifactRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task PlacementAssignmentRequest_TargetingOtherWorker_ReturnsFailedAck_And_EmitsFailedTelemetry()
     {
         using var metrics = new MeterCollector(WorkerNodeTelemetry.MeterNameValue);
@@ -2967,6 +3050,66 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
                     {
                         context.Stop(context.Self);
                     }
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed record RequestProbeUnassignment;
+
+    private sealed class HiveMindShardLifecycleProbeActor : IActor
+    {
+        private readonly PID _workerPid;
+        private readonly PlacementAssignmentRequest _assignmentRequest;
+        private readonly TaskCompletionSource<PlacementAssignmentAck> _assignmentAck;
+        private readonly TaskCompletionSource<PlacementUnassignmentAck> _unassignmentAck;
+        private readonly TaskCompletionSource<RegisterShard> _registerShard;
+        private readonly TaskCompletionSource<UnregisterShard> _unregisterShard;
+
+        public HiveMindShardLifecycleProbeActor(
+            PID workerPid,
+            PlacementAssignmentRequest assignmentRequest,
+            TaskCompletionSource<PlacementAssignmentAck> assignmentAck,
+            TaskCompletionSource<PlacementUnassignmentAck> unassignmentAck,
+            TaskCompletionSource<RegisterShard> registerShard,
+            TaskCompletionSource<UnregisterShard> unregisterShard)
+        {
+            _workerPid = workerPid;
+            _assignmentRequest = assignmentRequest;
+            _assignmentAck = assignmentAck;
+            _unassignmentAck = unassignmentAck;
+            _registerShard = registerShard;
+            _unregisterShard = unregisterShard;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case Started:
+                    context.Request(_workerPid, _assignmentRequest);
+                    break;
+                case RequestProbeUnassignment:
+                    context.Request(_workerPid, new PlacementUnassignmentRequest
+                    {
+                        Assignment = _assignmentRequest.Assignment?.Clone()
+                    });
+                    break;
+                case PlacementAssignmentAck ack
+                    when ack.State is PlacementAssignmentState.PlacementAssignmentReady
+                        or PlacementAssignmentState.PlacementAssignmentFailed:
+                    _assignmentAck.TrySetResult(ack);
+                    break;
+                case PlacementUnassignmentAck ack:
+                    _unassignmentAck.TrySetResult(ack);
+                    break;
+                case RegisterShard register:
+                    _registerShard.TrySetResult(register);
+                    break;
+                case UnregisterShard unregister:
+                    _unregisterShard.TrySetResult(unregister);
                     break;
             }
 

@@ -121,7 +121,14 @@ public sealed partial class WorkerNodeActor
             pid,
             prepared.Assignment.AssignmentId);
         context.Watch(pid);
-        RegisterShard(context, brain, prepared.ShardId, prepared.NeuronStart, prepared.NeuronCount, pid);
+        RegisterShard(
+            context,
+            brain,
+            prepared.ShardId,
+            prepared.NeuronStart,
+            prepared.NeuronCount,
+            pid,
+            prepared.Assignment.AssignmentId);
 
         return HostingResult.Succeeded(prepared.Assignment, pid);
     }
