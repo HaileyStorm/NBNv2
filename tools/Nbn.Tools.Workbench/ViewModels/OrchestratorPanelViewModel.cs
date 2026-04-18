@@ -41,14 +41,14 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private readonly WorkbenchClient _client;
     private readonly ILocalProjectLaunchPreparer _launchPreparer;
     private readonly ILocalFirewallManager _firewallManager;
-    private readonly LocalServiceRunner _settingsRunner = new();
-    private readonly LocalServiceRunner _hiveMindRunner = new();
-    private readonly LocalServiceRunner _ioRunner = new();
-    private readonly LocalServiceRunner _reproRunner = new();
-    private readonly LocalServiceRunner _speciationRunner = new();
-    private readonly LocalServiceRunner _workerRunner = new();
-    private readonly LocalServiceRunner _obsRunner = new();
-    private readonly LocalServiceRunner _profileCurrentSystemRunner = new();
+    private readonly ILocalServiceRunner _settingsRunner;
+    private readonly ILocalServiceRunner _hiveMindRunner;
+    private readonly ILocalServiceRunner _ioRunner;
+    private readonly ILocalServiceRunner _reproRunner;
+    private readonly ILocalServiceRunner _speciationRunner;
+    private readonly ILocalServiceRunner _workerRunner;
+    private readonly ILocalServiceRunner _obsRunner;
+    private readonly ILocalServiceRunner _profileCurrentSystemRunner;
     private readonly Action<Guid>? _brainDiscovered;
     private readonly Action<IReadOnlyList<BrainListItem>>? _brainsUpdated;
     private readonly Func<Task>? _connectAll;
@@ -145,13 +145,23 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
         Func<Task>? connectAll = null,
         Action? disconnectAll = null,
         ILocalProjectLaunchPreparer? launchPreparer = null,
-        ILocalFirewallManager? firewallManager = null)
+        ILocalFirewallManager? firewallManager = null,
+        Func<ILocalServiceRunner>? localServiceRunnerFactory = null)
     {
         _dispatcher = dispatcher;
         _connections = connections;
         _client = client;
         _launchPreparer = launchPreparer ?? new LocalProjectLaunchPreparer();
         _firewallManager = firewallManager ?? new LocalFirewallManager();
+        var createRunner = localServiceRunnerFactory ?? (() => new LocalServiceRunner());
+        _settingsRunner = createRunner();
+        _hiveMindRunner = createRunner();
+        _ioRunner = createRunner();
+        _reproRunner = createRunner();
+        _speciationRunner = createRunner();
+        _workerRunner = createRunner();
+        _obsRunner = createRunner();
+        _profileCurrentSystemRunner = createRunner();
         _brainDiscovered = brainDiscovered;
         _brainsUpdated = brainsUpdated;
         _connectAll = connectAll;

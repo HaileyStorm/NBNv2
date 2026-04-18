@@ -275,7 +275,7 @@ public sealed partial class OrchestratorPanelViewModel
         string runtimeArgs,
         string launchLabel,
         int port,
-        LocalServiceRunner runner,
+        ILocalServiceRunner runner,
         bool includeRuntimeDiagnostics = false,
         bool includeObservabilityEnvironment = false)
     {
@@ -379,7 +379,7 @@ public sealed partial class OrchestratorPanelViewModel
             : launchMessage;
     }
 
-    private static async Task StopRunnerAsync(LocalServiceRunner runner, Action<string> setStatus)
+    private static async Task StopRunnerAsync(ILocalServiceRunner runner, Action<string> setStatus)
     {
         setStatus(await runner.StopAsync().ConfigureAwait(false));
     }
@@ -690,7 +690,7 @@ public sealed partial class OrchestratorPanelViewModel
 
     private async Task<bool> StartAllStepAsync(
         Func<Task> startAsync,
-        LocalServiceRunner runner,
+        ILocalServiceRunner runner,
         Func<string> statusAccessor,
         Action<string> statusSetter,
         string serviceLabel,

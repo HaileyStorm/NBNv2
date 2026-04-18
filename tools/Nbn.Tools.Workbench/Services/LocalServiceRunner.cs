@@ -9,7 +9,19 @@ namespace Nbn.Tools.Workbench.Services;
 /// <summary>
 /// Starts and stops locally launched runtime or tooling processes for the Workbench orchestrator.
 /// </summary>
-public sealed class LocalServiceRunner
+public interface ILocalServiceRunner
+{
+    bool IsRunning { get; }
+
+    Task<ServiceStartResult> StartAsync(ProcessStartInfo startInfo, bool waitForExit, string? label = null);
+
+    Task<string> StopAsync();
+}
+
+/// <summary>
+/// Starts and stops locally launched runtime or tooling processes for the Workbench orchestrator.
+/// </summary>
+public sealed class LocalServiceRunner : ILocalServiceRunner
 {
     private const int StartupProbeDelayMs = 400;
     private const int StartupStabilityDelayMs = 250;

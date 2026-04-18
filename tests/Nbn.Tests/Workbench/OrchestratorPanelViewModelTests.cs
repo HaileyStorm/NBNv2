@@ -50,11 +50,16 @@ public class OrchestratorPanelViewModelTests
     [Fact]
     public async Task StartAllCommand_WhenLaunchFails_RollsBackEarlierStarts_AndStopsLaterAttempts()
     {
+        var settingsRunner = new FakeLocalServiceRunner();
         var launchPreparer = new SequencedLocalProjectLaunchPreparer(
             new LocalProjectLaunchPreparation(true, CreateLongRunningProcessStartInfo(), "Prepared."),
             new LocalProjectLaunchPreparation(false, null, "HiveMind installed command not found."));
 
-        var vm = CreateViewModel(new ConnectionViewModel(), new FakeWorkbenchClient(), launchPreparer);
+        var vm = CreateViewModel(
+            new ConnectionViewModel(),
+            new FakeWorkbenchClient(),
+            launchPreparer,
+            localServiceRunnerFactory: CreateRunnerFactory(settingsRunner));
 
         try
         {
@@ -73,6 +78,8 @@ public class OrchestratorPanelViewModelTests
                 launchPreparer.ExecutableNames,
                 name => Assert.Equal("Nbn.Runtime.SettingsMonitor", name),
                 name => Assert.Equal("Nbn.Runtime.HiveMind", name));
+            Assert.Equal(1, settingsRunner.StartCallCount);
+            Assert.Equal(1, settingsRunner.StopCallCount);
             Assert.Equal("Start All failed while starting HiveMind: HiveMind installed command not found.", vm.StatusMessage);
             Assert.Equal("Stopped. Rolled back after Start All failure.", vm.SettingsLaunchStatus);
         }
@@ -3667,7 +3674,8 @@ public class OrchestratorPanelViewModelTests
         ILocalProjectLaunchPreparer? launchPreparer = null,
         ILocalFirewallManager? firewallManager = null,
         Func<Task>? connectAll = null,
-        Action<IReadOnlyList<BrainListItem>>? brainsUpdated = null)
+        Action<IReadOnlyList<BrainListItem>>? brainsUpdated = null,
+        Func<ILocalServiceRunner>? localServiceRunnerFactory = null)
     {
         return new OrchestratorPanelViewModel(
             new UiDispatcher(),
@@ -3677,7 +3685,14 @@ public class OrchestratorPanelViewModelTests
             connectAll: connectAll ?? (() => Task.CompletedTask),
             disconnectAll: () => { },
             launchPreparer: launchPreparer,
-            firewallManager: firewallManager ?? new FakeLocalFirewallManager());
+            firewallManager: firewallManager ?? new FakeLocalFirewallManager(),
+            localServiceRunnerFactory: localServiceRunnerFactory);
+    }
+
+    private static Func<ILocalServiceRunner> CreateRunnerFactory(params FakeLocalServiceRunner[] runners)
+    {
+        var queued = new Queue<ILocalServiceRunner>(runners);
+        return () => queued.Count == 0 ? new FakeLocalServiceRunner() : queued.Dequeue();
     }
 
     private static NodeStatus BuildNodeStatus(
@@ -4107,6 +4122,33 @@ public class OrchestratorPanelViewModelTests
         public Task<LocalProjectLaunchPreparation> PrepareAsync(string? projectPath, string exeName, string runtimeArgs, string label)
         {
             return Task.FromResult(new LocalProjectLaunchPreparation(true, startInfo, "Prepared."));
+        }
+    }
+
+    private sealed class FakeLocalServiceRunner : ILocalServiceRunner
+    {
+        public bool IsRunning { get; private set; }
+
+        public ServiceStartResult StartResult { get; init; } = new(true, "Running (test).");
+
+        public string StopResult { get; init; } = "Stopped.";
+
+        public int StartCallCount { get; private set; }
+
+        public int StopCallCount { get; private set; }
+
+        public Task<ServiceStartResult> StartAsync(ProcessStartInfo startInfo, bool waitForExit, string? label = null)
+        {
+            StartCallCount++;
+            IsRunning = StartResult.Success;
+            return Task.FromResult(StartResult);
+        }
+
+        public Task<string> StopAsync()
+        {
+            StopCallCount++;
+            IsRunning = false;
+            return Task.FromResult(StopResult);
         }
     }
 
