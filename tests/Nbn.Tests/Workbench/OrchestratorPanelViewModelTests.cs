@@ -61,7 +61,12 @@ public class OrchestratorPanelViewModelTests
             vm.StartAllCommand.Execute(null);
 
             await WaitForAsync(() => string.Equals(vm.HiveMindLaunchStatus, "HiveMind installed command not found.", StringComparison.Ordinal));
-            await WaitForAsync(() => string.Equals(vm.SettingsLaunchStatus, "Stopped. Rolled back after Start All failure.", StringComparison.Ordinal));
+            await WaitForAsync(
+                () => string.Equals(
+                    vm.SettingsLaunchStatus,
+                    "Stopped. Rolled back after Start All failure.",
+                    StringComparison.Ordinal),
+                timeoutMs: 5000);
 
             Assert.Equal(2, launchPreparer.CallCount);
             Assert.Collection(
