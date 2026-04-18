@@ -1128,6 +1128,95 @@ public sealed class HiveMindPlacementOrchestrationTests
     }
 
     [Fact]
+    public async Task InFlight_Placement_WithRegisteredShard_DoesNotEnterTickCompute()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+
+        var workerId = Guid.NewGuid();
+        var workerProbe = new PlacementWorkerProbe(
+            workerId,
+            dropAcks: false,
+            failFirstRetryable: false,
+            autoRespondAssignments: false,
+            autoRespondReconcile: false);
+        var workerPid = root.Spawn(Props.FromProducer(() => workerProbe));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(
+                assignmentTimeoutMs: 2_000,
+                retryBackoffMs: 50,
+                maxRetries: 1,
+                reconcileTimeoutMs: 2_000))));
+
+        PrimeWorkers(root, hiveMind, workerPid, workerId);
+
+        var brainId = Guid.NewGuid();
+        var placementAck = await root.RequestAsync<PlacementAck>(
+            hiveMind,
+            new RequestPlacement
+            {
+                BrainId = brainId.ToProtoUuid(),
+                InputWidth = 2,
+                OutputWidth = 3
+            });
+        Assert.True(placementAck.Accepted);
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                return workerProbe.AssignmentRequestCount > 0
+                       && status.PlacementEpoch == placementAck.PlacementEpoch
+                       && status.LifecycleState == PlacementLifecycleState.PlacementLifecycleAssigning;
+            },
+            timeoutMs: 4_000);
+
+        var controller = root.Spawn(Props.FromProducer(static () => new TickCountingControllerActor()));
+        root.Send(controller, new ForwardControlPlaneMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(controller),
+            SignalRouterPid = PidLabel(controller)
+        }));
+        root.Send(workerPid, new RegisterHostedShard(hiveMind, brainId, 1, 0, 0, 1));
+
+        await WaitForAsync(
+            async () =>
+            {
+                var lifecycle = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+                var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
+                return lifecycle.PlacementEpoch == placementAck.PlacementEpoch
+                       && lifecycle.LifecycleState is PlacementLifecycleState.PlacementLifecycleAssigned
+                           or PlacementLifecycleState.PlacementLifecycleAssigning
+                       && status.RegisteredShards >= 1;
+            },
+            timeoutMs: 2_000);
+
+        root.Send(hiveMind, new Nbn.Shared.HiveMind.StartTickLoop());
+
+        await WaitForAsync(
+            async () =>
+            {
+                var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
+                return status.LastCompletedTickId >= 1 && status.PendingCompute == 0 && status.PendingDeliver == 0;
+            },
+            timeoutMs: 1_000);
+        var tickStatus = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
+        var controllerSnapshot = await root.RequestAsync<TickCountingControllerSnapshot>(
+            controller,
+            new GetTickCountingControllerSnapshot());
+
+        root.Send(hiveMind, new Nbn.Shared.HiveMind.StopTickLoop());
+
+        Assert.True(tickStatus.LastCompletedTickId >= 1);
+        Assert.Equal(0, controllerSnapshot.TickComputeCount);
+        var inFlightStatus = await GetPlacementLifecycleAsync(root, hiveMind, brainId);
+        Assert.NotEqual(PlacementLifecycleState.PlacementLifecycleFailed, inFlightStatus.LifecycleState);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task InFlight_Assigning_Ignores_Duplicate_Failed_Ack_For_Ready_Assignment_And_Completes_Reconcile()
     {
         using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
@@ -2990,6 +3079,8 @@ public sealed class HiveMindPlacementOrchestrationTests
     private sealed record ReleaseDeferredReconcileReports;
     private sealed record RegisterHostedShard(PID HiveMind, Guid BrainId, uint RegionId, uint ShardIndex, uint NeuronStart, uint NeuronCount);
     private sealed record RegisterOutputSinkForBrain(PID HiveMind, Guid BrainId, PID OutputSinkPid);
+    private sealed record GetTickCountingControllerSnapshot;
+    private sealed record TickCountingControllerSnapshot(int TickComputeCount);
 
     private sealed record DebugProbeSnapshot(IReadOnlyDictionary<string, int> Counts, IReadOnlyList<DebugProbeEvent> Events)
     {
@@ -3087,6 +3178,29 @@ public sealed class HiveMindPlacementOrchestrationTests
             if (context.Message is ForwardControlPlaneMessage forward)
             {
                 context.Request(forward.Target, forward.Message);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class TickCountingControllerActor : IActor
+    {
+        private int _tickComputeCount;
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ForwardControlPlaneMessage forward:
+                    context.Request(forward.Target, forward.Message);
+                    break;
+                case TickCompute:
+                    _tickComputeCount++;
+                    break;
+                case GetTickCountingControllerSnapshot:
+                    context.Respond(new TickCountingControllerSnapshot(_tickComputeCount));
+                    break;
             }
 
             return Task.CompletedTask;

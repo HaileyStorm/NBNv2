@@ -1363,7 +1363,7 @@ public class HiveMindTickBarrierTests
     }
 
     [Fact]
-    public async Task TickBarrier_ComputeDone_AfterAuthorizedShardPidUpdate_IsAccepted()
+    public async Task TickBarrier_ComputeDone_FromOriginalShard_IsAccepted_AfterAuthorizedShardPidUpdate()
     {
         var system = new ActorSystem();
         var options = CreateOptions(computeTimeoutMs: 2000, deliverTimeoutMs: 2000);
@@ -1413,7 +1413,7 @@ public class HiveMindTickBarrierTests
             NeuronCount = 1
         }));
 
-        await root.RequestAsync<SendMessageAck>(replacementShardSender, new SendMessage(hiveMind, new TickComputeDone
+        await root.RequestAsync<SendMessageAck>(originalShardSender, new SendMessage(hiveMind, new TickComputeDone
         {
             TickId = 1,
             BrainId = brainId.ToProtoUuid(),

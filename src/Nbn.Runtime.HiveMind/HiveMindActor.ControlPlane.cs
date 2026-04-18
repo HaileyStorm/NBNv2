@@ -312,9 +312,6 @@ public sealed partial class HiveMindActor
                 {
                     previousPendingSenderLabel = PidLabel(existingPendingSender);
                 }
-
-                _pendingComputeSenders[key] = normalized;
-                pendingSenderUpdated = true;
             }
 
             Log($"Shard registered mid-compute for brain {brainId}; will start next tick.");

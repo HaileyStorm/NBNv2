@@ -531,7 +531,21 @@ public sealed partial class HiveMindActor
 
     private static bool CanDispatchTickToBrain(BrainState brain)
     {
-        return !brain.Paused && brain.Shards.Count > 0;
+        if (brain.Paused || brain.Shards.Count == 0)
+        {
+            return false;
+        }
+
+        if (brain.PlacementEpoch == 0)
+        {
+            return true;
+        }
+
+        var placementStable = brain.PlacementLifecycleState is
+            ProtoControl.PlacementLifecycleState.PlacementLifecycleAssigned or
+            ProtoControl.PlacementLifecycleState.PlacementLifecycleRunning;
+        var executionComplete = brain.PlacementExecution is null || brain.PlacementExecution.Completed;
+        return placementStable && executionComplete;
     }
 
     private void SchedulePhaseTimeout(IContext context, TickPhase phase, ulong tickId, int timeoutMs)

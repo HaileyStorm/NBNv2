@@ -158,7 +158,7 @@ public class HiveMindPlacementLifecycleTests
     }
 
     [Fact]
-    public async Task TickDispatch_UsesRegisteredShards_Even_When_PlacementExecution_IsInFlight()
+    public async Task TickDispatch_SkipsRegisteredShards_While_PlacementExecution_IsInFlight()
     {
         var system = new ActorSystem();
         var root = system.Root;
@@ -196,10 +196,14 @@ public class HiveMindPlacementLifecycleTests
         }));
 
         root.Send(hiveMind, new Nbn.Shared.HiveMind.StartTickLoop());
-        var dispatchedTick = await computeSeen.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(300);
+        var status = await root.RequestAsync<HiveMindStatus>(hiveMind, new GetHiveMindStatus());
         root.Send(hiveMind, new Nbn.Shared.HiveMind.StopTickLoop());
 
-        Assert.True(dispatchedTick > 0);
+        Assert.False(computeSeen.Task.IsCompleted);
+        Assert.True(status.LastCompletedTickId > 0);
+        Assert.Equal(0u, status.PendingCompute);
+        Assert.Equal(0u, status.PendingDeliver);
         await system.ShutdownAsync();
     }
 
