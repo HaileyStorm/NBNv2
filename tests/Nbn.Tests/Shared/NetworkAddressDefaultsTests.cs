@@ -1,3 +1,4 @@
+using System.Net;
 using Nbn.Shared;
 
 namespace Nbn.Tests.Shared;
@@ -38,6 +39,41 @@ public sealed class NetworkAddressDefaultsTests
 
         Assert.True(NetworkAddressDefaults.IsLocalHost("10.9.8.7"));
         Assert.False(NetworkAddressDefaults.IsLocalHost("10.9.8.8"));
+    }
+
+    [Theory]
+    [InlineData("10.1.2.3")]
+    [InlineData("172.16.1.2")]
+    [InlineData("172.31.255.254")]
+    [InlineData("192.168.1.42")]
+    public void TryChooseDefaultAdvertisedHost_PrefersLanIpv4OverTailscaleCgnatIpv4(string lanHost)
+    {
+        var addresses = new[]
+        {
+            IPAddress.Parse("100.86.45.90"),
+            IPAddress.Parse(lanHost)
+        };
+
+        var found = NetworkAddressDefaults.TryChooseDefaultAdvertisedHost(addresses, out var host);
+
+        Assert.True(found);
+        Assert.Equal(lanHost, host);
+    }
+
+    [Fact]
+    public void TryChooseDefaultAdvertisedHost_FallsBackToTailscaleCgnatIpv4_WhenNoLanIpv4Exists()
+    {
+        var addresses = new[]
+        {
+            IPAddress.Parse("169.254.10.20"),
+            IPAddress.Parse("100.86.45.90"),
+            IPAddress.Parse("2001:db8::1")
+        };
+
+        var found = NetworkAddressDefaults.TryChooseDefaultAdvertisedHost(addresses, out var host);
+
+        Assert.True(found);
+        Assert.Equal("100.86.45.90", host);
     }
 
     private sealed class EnvironmentVariableScope : IDisposable

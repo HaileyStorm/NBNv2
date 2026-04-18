@@ -121,28 +121,51 @@ public static class NetworkAddressDefaults
             return true;
         }
 
-        foreach (var address in EnumerateCandidateAddresses())
+        return TryChooseDefaultAdvertisedHost(EnumerateCandidateAddresses(), out host);
+    }
+
+    internal static bool TryChooseDefaultAdvertisedHost(IEnumerable<IPAddress> addresses, out string host)
+    {
+        var candidates = addresses.ToArray();
+        if (TryChooseAddress(
+                candidates,
+                address => IsUsableIpv4Address(address) && IsPrivateLanIpv4Address(address),
+                out host))
         {
-            if (address.AddressFamily == AddressFamily.InterNetwork
-                && !IPAddress.IsLoopback(address)
-                && !IsAutomaticPrivateAddress(address))
+            return true;
+        }
+
+        if (TryChooseAddress(
+                candidates,
+                address => IsUsableIpv4Address(address) && !IsCarrierGradeNatIpv4Address(address),
+                out host))
+        {
+            return true;
+        }
+
+        if (TryChooseAddress(candidates, IsUsableIpv4Address, out host))
+        {
+            return true;
+        }
+
+        return TryChooseAddress(candidates, IsUsableIpv6Address, out host);
+    }
+
+    private static bool TryChooseAddress(
+        IEnumerable<IPAddress> addresses,
+        Func<IPAddress, bool> predicate,
+        out string host)
+    {
+        foreach (var address in addresses)
+        {
+            if (predicate(address))
             {
                 host = address.ToString();
                 return true;
             }
         }
 
-        foreach (var address in EnumerateCandidateAddresses())
-        {
-            if (address.AddressFamily == AddressFamily.InterNetworkV6
-                && !IPAddress.IsLoopback(address)
-                && !address.IsIPv6LinkLocal)
-            {
-                host = address.ToString();
-                return true;
-            }
-        }
-
+        host = string.Empty;
         return false;
     }
 
@@ -260,5 +283,39 @@ public static class NetworkAddressDefaults
 
         var bytes = address.GetAddressBytes();
         return bytes[0] == 169 && bytes[1] == 254;
+    }
+
+    private static bool IsUsableIpv4Address(IPAddress address)
+        => address.AddressFamily == AddressFamily.InterNetwork
+           && !IPAddress.IsLoopback(address)
+           && !IsAutomaticPrivateAddress(address);
+
+    private static bool IsUsableIpv6Address(IPAddress address)
+        => address.AddressFamily == AddressFamily.InterNetworkV6
+           && !IPAddress.IsLoopback(address)
+           && !address.IsIPv6LinkLocal;
+
+    private static bool IsPrivateLanIpv4Address(IPAddress address)
+    {
+        if (address.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return false;
+        }
+
+        var bytes = address.GetAddressBytes();
+        return bytes[0] == 10
+               || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+               || (bytes[0] == 192 && bytes[1] == 168);
+    }
+
+    private static bool IsCarrierGradeNatIpv4Address(IPAddress address)
+    {
+        if (address.AddressFamily != AddressFamily.InterNetwork)
+        {
+            return false;
+        }
+
+        var bytes = address.GetAddressBytes();
+        return bytes[0] == 100 && bytes[1] >= 64 && bytes[1] <= 127;
     }
 }
