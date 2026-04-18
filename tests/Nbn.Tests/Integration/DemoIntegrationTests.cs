@@ -34,6 +34,7 @@ namespace Nbn.Tests.Integration;
 public class DemoIntegrationTests
 {
     private static readonly TimeSpan BrainInfoBootstrapTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan BrainInfoRequestTimeout = TimeSpan.FromSeconds(5);
 
     static DemoIntegrationTests()
     {
@@ -184,6 +185,25 @@ public class DemoIntegrationTests
                 Props.FromProducer(() => new HiveMindActor(options)),
                 HiveMindNames.HiveMind);
             var hiveMindRemote = new PID(hiveNode.Address, hiveMindLocal.Id);
+            var ioOptions = new IoOptions(
+                BindHost: "127.0.0.1",
+                Port: ioNode.Port,
+                AdvertisedHost: null,
+                AdvertisedPort: null,
+                GatewayName: IoNames.Gateway,
+                ServerName: "nbn.io.tests",
+                SettingsHost: null,
+                SettingsPort: 0,
+                SettingsName: "SettingsMonitor",
+                HiveMindAddress: hiveNode.Address,
+                HiveMindName: HiveMindNames.HiveMind,
+                ReproAddress: null,
+                ReproName: null);
+
+            var ioGateway = ioNode.Root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(ioOptions)),
+                IoNames.Gateway);
+            var ioPid = new PID(ioNode.Address, ioGateway.Id);
 
             var brainId = Guid.NewGuid();
             var routerPid = brainNode.Root.SpawnNamed(
@@ -264,26 +284,6 @@ public class DemoIntegrationTests
                 TimeSpan.FromSeconds(5));
 
             await WaitForRoutingTable(brainNode.Root, router, table => table.Count >= 3, TimeSpan.FromSeconds(5));
-
-            var ioOptions = new IoOptions(
-                BindHost: "127.0.0.1",
-                Port: ioNode.Port,
-                AdvertisedHost: null,
-                AdvertisedPort: null,
-                GatewayName: IoNames.Gateway,
-                ServerName: "nbn.io.tests",
-                SettingsHost: null,
-                SettingsPort: 0,
-                SettingsName: "SettingsMonitor",
-                HiveMindAddress: hiveNode.Address,
-                HiveMindName: HiveMindNames.HiveMind,
-                ReproAddress: null,
-                ReproName: null);
-
-            var ioGateway = ioNode.Root.SpawnNamed(
-                Props.FromProducer(() => new IoGatewayActor(ioOptions)),
-                IoNames.Gateway);
-            var ioPid = new PID(ioNode.Address, ioGateway.Id);
 
             await WaitForBrainInfo(
                 ioNode.Root,
@@ -365,6 +365,25 @@ public class DemoIntegrationTests
                 Props.FromProducer(() => new HiveMindActor(options, vizHubPid: vizHubRemote)),
                 HiveMindNames.HiveMind);
             var hiveMindRemote = new PID(hiveNode.Address, hiveMindLocal.Id);
+            var ioOptions = new IoOptions(
+                BindHost: "127.0.0.1",
+                Port: ioNode.Port,
+                AdvertisedHost: null,
+                AdvertisedPort: null,
+                GatewayName: IoNames.Gateway,
+                ServerName: "nbn.io.tests",
+                SettingsHost: null,
+                SettingsPort: 0,
+                SettingsName: "SettingsMonitor",
+                HiveMindAddress: hiveNode.Address,
+                HiveMindName: HiveMindNames.HiveMind,
+                ReproAddress: null,
+                ReproName: null);
+
+            var ioGateway = ioNode.Root.SpawnNamed(
+                Props.FromProducer(() => new IoGatewayActor(ioOptions)),
+                IoNames.Gateway);
+            var ioPid = new PID(ioNode.Address, ioGateway.Id);
 
             var brainId = Guid.NewGuid();
             var routerPid = brainNode.Root.SpawnNamed(
@@ -448,26 +467,6 @@ public class DemoIntegrationTests
                 TimeSpan.FromSeconds(5));
 
             await WaitForRoutingTable(brainNode.Root, router, table => table.Count >= 3, TimeSpan.FromSeconds(5));
-
-            var ioOptions = new IoOptions(
-                BindHost: "127.0.0.1",
-                Port: ioNode.Port,
-                AdvertisedHost: null,
-                AdvertisedPort: null,
-                GatewayName: IoNames.Gateway,
-                ServerName: "nbn.io.tests",
-                SettingsHost: null,
-                SettingsPort: 0,
-                SettingsName: "SettingsMonitor",
-                HiveMindAddress: hiveNode.Address,
-                HiveMindName: HiveMindNames.HiveMind,
-                ReproAddress: null,
-                ReproName: null);
-
-            var ioGateway = ioNode.Root.SpawnNamed(
-                Props.FromProducer(() => new IoGatewayActor(ioOptions)),
-                IoNames.Gateway);
-            var ioPid = new PID(ioNode.Address, ioGateway.Id);
 
             var vizTcs = new TaskCompletionSource<VisualizationEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
             var tickTcs = new TaskCompletionSource<VisualizationEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1094,9 +1093,9 @@ public class DemoIntegrationTests
         while (sw.Elapsed < timeout)
         {
             var remaining = timeout - sw.Elapsed;
-            var requestTimeout = remaining < TimeSpan.FromSeconds(1)
+            var requestTimeout = remaining < BrainInfoRequestTimeout
                 ? remaining
-                : TimeSpan.FromSeconds(1);
+                : BrainInfoRequestTimeout;
 
             try
             {
