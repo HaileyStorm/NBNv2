@@ -32,4 +32,4 @@ jobs:
       - name: Validate docs render freshness (Linux)
         if: runner.os != 'Windows'
         shell: bash
-        run: ./tools/docs/render-nbnv2-docs.sh --check
+        run: bash tools/docs/render-nbnv2-docs.sh --check
