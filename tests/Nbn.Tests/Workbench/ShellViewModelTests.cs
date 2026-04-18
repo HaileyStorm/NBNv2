@@ -255,7 +255,10 @@ public sealed class ShellViewModelTests
     public async Task ConnectAllAsync_WhenReceiverStartFails_PreservesExistingConnectionLoop()
     {
         var client = new FakeWorkbenchClient();
-        await using var shell = new ShellViewModel(client, autoConnect: false);
+        await using var shell = new ShellViewModel(
+            client,
+            autoConnect: false,
+            firewallManager: new FakeLocalFirewallManager(new FirewallAccessResult(FirewallAccessStatus.NotNeeded, string.Empty)));
 
         var method = typeof(ShellViewModel).GetMethod(
             "ConnectAllAsync",
@@ -277,6 +280,34 @@ public sealed class ShellViewModelTests
         Assert.Same(firstCts, ctsField.GetValue(shell));
         Assert.False(firstCts.IsCancellationRequested);
         Assert.Equal("Connect failed: receiver restart failed", shell.Connections.IoStatus);
+    }
+
+    [Fact]
+    public async Task ConnectAllAsync_WhenReceiverFirewallNeedsAttention_SurfacesReceiverPort()
+    {
+        var client = new FakeWorkbenchClient();
+        var firewall = new FakeLocalFirewallManager(new FirewallAccessResult(
+            FirewallAccessStatus.PermissionRequired,
+            "Windows Firewall was not updated for TCP 12555."));
+        await using var shell = new ShellViewModel(
+            client,
+            autoConnect: false,
+            firewallManager: firewall);
+        shell.Connections.LocalBindHost = NetworkAddressDefaults.DefaultBindHost;
+        shell.Connections.LocalPortText = "12555";
+
+        var method = typeof(ShellViewModel).GetMethod(
+            "ConnectAllAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        await (Task)method!.Invoke(shell, Array.Empty<object>())!;
+
+        var call = Assert.Single(firewall.Calls);
+        Assert.Equal("WorkbenchReceiver", call.Label);
+        Assert.Equal(NetworkAddressDefaults.DefaultBindHost, call.BindHost);
+        Assert.Equal(12555, call.Port);
+        Assert.Contains("firewall attention: TCP 12555", shell.ReceiverLabel, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -412,5 +443,16 @@ public sealed class ShellViewModelTests
         public void OnSettingsStatus(string status, bool connected) { }
         public void OnHiveMindStatus(string status, bool connected) { }
         public void OnSettingChanged(SettingItem item) { }
+    }
+
+    private sealed class FakeLocalFirewallManager(FirewallAccessResult result) : ILocalFirewallManager
+    {
+        public List<(string Label, string BindHost, int Port)> Calls { get; } = new();
+
+        public Task<FirewallAccessResult> EnsureInboundTcpAccessAsync(string label, string bindHost, int port)
+        {
+            Calls.Add((label, bindHost, port));
+            return Task.FromResult(result);
+        }
     }
 }

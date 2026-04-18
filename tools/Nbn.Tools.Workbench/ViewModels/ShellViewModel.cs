@@ -21,6 +21,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private readonly UiDispatcher _dispatcher = new();
     private readonly WorkbenchClient _client;
     private readonly IWorkbenchArtifactPublisher _artifactPublisher;
+    private readonly ILocalFirewallManager _firewallManager;
     private readonly SemaphoreSlim _connectGate = new(1, 1);
     private NavItemViewModel? _selectedNav;
     private string _receiverLabel = "offline";
@@ -33,13 +34,18 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     {
     }
 
-    internal ShellViewModel(WorkbenchClient? client, bool autoConnect, IWorkbenchArtifactPublisher? artifactPublisher = null)
+    internal ShellViewModel(
+        WorkbenchClient? client,
+        bool autoConnect,
+        IWorkbenchArtifactPublisher? artifactPublisher = null,
+        ILocalFirewallManager? firewallManager = null)
     {
         WorkbenchProcessRegistry.Default.CleanupStale();
 
         Connections = new ConnectionViewModel();
         _client = client ?? new WorkbenchClient(this);
         _artifactPublisher = artifactPublisher ?? new WorkbenchArtifactPublisher(logInfo: WorkbenchLog.Info, logWarn: WorkbenchLog.Warn);
+        _firewallManager = firewallManager ?? new LocalFirewallManager();
 
         Io = new IoPanelViewModel(_client, _dispatcher);
         Viz = new VizPanelViewModel(_dispatcher, Io);
@@ -161,6 +167,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 localPort,
                 Connections.ResolveExplicitLocalAdvertiseHost());
             ReceiverLabel = _client.ReceiverLabel;
+            await EnsureReceiverFirewallAccessAsync(Connections.LocalBindHost, localPort);
 
             _connectCts?.Cancel();
             _connectCts = new CancellationTokenSource();
@@ -182,6 +189,35 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         finally
         {
             _connectGate.Release();
+        }
+    }
+
+    private async Task EnsureReceiverFirewallAccessAsync(string bindHost, int port)
+    {
+        try
+        {
+            var firewall = await _firewallManager
+                .EnsureInboundTcpAccessAsync("WorkbenchReceiver", bindHost, port);
+            if (string.IsNullOrWhiteSpace(firewall.Message))
+            {
+                return;
+            }
+
+            var logMessage = $"Workbench receiver firewall: {firewall.Message}";
+            if (firewall.RequiresAttention)
+            {
+                WorkbenchLog.Warn(logMessage);
+                ReceiverLabel = $"{_client.ReceiverLabel} (firewall attention: TCP {port})";
+            }
+            else
+            {
+                WorkbenchLog.Info(logMessage);
+            }
+        }
+        catch (Exception ex)
+        {
+            WorkbenchLog.Warn($"Workbench receiver firewall check failed for TCP {port}: {ex.Message}");
+            ReceiverLabel = $"{_client.ReceiverLabel} (firewall check failed: TCP {port})";
         }
     }
 
