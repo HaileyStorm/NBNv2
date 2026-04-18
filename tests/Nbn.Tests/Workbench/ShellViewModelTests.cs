@@ -252,6 +252,34 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task ConnectAllAsync_WhenReceiverStartFails_PreservesExistingConnectionLoop()
+    {
+        var client = new FakeWorkbenchClient();
+        await using var shell = new ShellViewModel(client, autoConnect: false);
+
+        var method = typeof(ShellViewModel).GetMethod(
+            "ConnectAllAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        await (Task)method!.Invoke(shell, Array.Empty<object>())!;
+
+        var ctsField = typeof(ShellViewModel).GetField(
+            "_connectCts",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(ctsField);
+        var firstCts = Assert.IsType<CancellationTokenSource>(ctsField!.GetValue(shell));
+
+        client.EnsureStartedException = new InvalidOperationException("receiver restart failed");
+
+        await (Task)method.Invoke(shell, Array.Empty<object>())!;
+
+        Assert.Same(firstCts, ctsField.GetValue(shell));
+        Assert.False(firstCts.IsCancellationRequested);
+        Assert.Equal("Connect failed: receiver restart failed", shell.Connections.IoStatus);
+    }
+
+    [Fact]
     public async Task OnSettingChanged_PreservesDirtyOrchestratorSettingEdits()
     {
         var client = new FakeWorkbenchClient();
@@ -323,11 +351,24 @@ public sealed class ShellViewModelTests
         public Queue<Task<HiveMindStatus?>> PendingHiveMindStatusResponses { get; } = new();
         public Queue<Task<HiveMindStatus?>> PendingConnectHiveMindResponses { get; } = new();
         public int ConnectHiveMindCallCount { get; private set; }
+        public int EnsureStartedCallCount { get; private set; }
+        public Exception? EnsureStartedException { get; set; }
         public HiveMindStatus? HiveMindStatusResponse { get; set; }
 
         public FakeWorkbenchClient()
             : base(new NullWorkbenchEventSink())
         {
+        }
+
+        public override Task EnsureStartedAsync(string bindHost, int port, string? advertisedHost = null, int? advertisedPort = null)
+        {
+            EnsureStartedCallCount++;
+            if (EnsureStartedException is not null)
+            {
+                throw EnsureStartedException;
+            }
+
+            return Task.CompletedTask;
         }
 
         public override Task<BrainInfo?> RequestBrainInfoAsync(Guid brainId)

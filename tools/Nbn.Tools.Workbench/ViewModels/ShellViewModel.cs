@@ -21,6 +21,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     private readonly UiDispatcher _dispatcher = new();
     private readonly WorkbenchClient _client;
     private readonly IWorkbenchArtifactPublisher _artifactPublisher;
+    private readonly SemaphoreSlim _connectGate = new(1, 1);
     private NavItemViewModel? _selectedNav;
     private string _receiverLabel = "offline";
     private CancellationTokenSource? _connectCts;
@@ -133,6 +134,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
 
     private async Task ConnectAllAsync()
     {
+        await _connectGate.WaitAsync();
         try
         {
             WorkbenchLog.Info("ConnectAll started.");
@@ -154,16 +156,16 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
                 return;
             }
 
-            _connectCts?.Cancel();
-            _connectCts = new CancellationTokenSource();
-            Interlocked.Increment(ref _tickCadenceRefreshVersion);
-            var token = _connectCts.Token;
-
             await _client.EnsureStartedAsync(
                 Connections.LocalBindHost,
                 localPort,
                 Connections.ResolveExplicitLocalAdvertiseHost());
             ReceiverLabel = _client.ReceiverLabel;
+
+            _connectCts?.Cancel();
+            _connectCts = new CancellationTokenSource();
+            Interlocked.Increment(ref _tickCadenceRefreshVersion);
+            var token = _connectCts.Token;
 
             Connections.SettingsStatus = "Connecting...";
             Connections.IoStatus = "Connecting...";
@@ -176,6 +178,10 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         {
             Connections.IoStatus = $"Connect failed: {ex.Message}";
             WorkbenchLog.Warn($"ConnectAll failed: {ex.Message}");
+        }
+        finally
+        {
+            _connectGate.Release();
         }
     }
 

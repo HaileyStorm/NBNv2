@@ -21,11 +21,13 @@ public partial class WorkbenchClient
 {
     private static readonly TimeSpan RemoteShutdownTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan ActorSystemShutdownTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan RemoteStartRetryWindow = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan RemoteStartRetryDelay = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
     /// Starts or restarts the local receiver actor system when the bind or advertised endpoint changes.
     /// </summary>
-    public async Task EnsureStartedAsync(string bindHost, int port, string? advertisedHost = null, int? advertisedPort = null)
+    public virtual async Task EnsureStartedAsync(string bindHost, int port, string? advertisedHost = null, int? advertisedPort = null)
     {
         await _gate.WaitAsync().ConfigureAwait(false);
         try
@@ -49,14 +51,12 @@ public partial class WorkbenchClient
             _advertisedHost = normalizedAdvertisedHost;
             _advertisedPort = advertisedPort;
 
-            var system = new ActorSystem();
-            var remoteConfig = WorkbenchRemote.BuildConfig(bindHost, port, normalizedAdvertisedHost, advertisedPort);
-            system.WithRemote(remoteConfig);
-            await system.Remote().StartAsync().ConfigureAwait(false);
-
-            var receiverPid = system.Root.SpawnNamed(
-                Props.FromProducer(() => new WorkbenchReceiverActor(_sink)),
-                "workbench-receiver");
+            var (system, receiverPid) = await StartReceiverSystemAsync(
+                    bindHost,
+                    port,
+                    normalizedAdvertisedHost,
+                    advertisedPort)
+                .ConfigureAwait(false);
 
             _system = system;
             _root = system.Root;
@@ -66,6 +66,87 @@ public partial class WorkbenchClient
         {
             _gate.Release();
         }
+    }
+
+    private async Task<(ActorSystem System, PID ReceiverPid)> StartReceiverSystemAsync(
+        string bindHost,
+        int port,
+        string? advertisedHost,
+        int? advertisedPort)
+    {
+        var deadline = DateTimeOffset.UtcNow + RemoteStartRetryWindow;
+        var attempt = 0;
+        while (true)
+        {
+            attempt++;
+            var system = new ActorSystem();
+            try
+            {
+                var remoteConfig = WorkbenchRemote.BuildConfig(bindHost, port, advertisedHost, advertisedPort);
+                system.WithRemote(remoteConfig);
+                await system.Remote().StartAsync().ConfigureAwait(false);
+
+                var receiverPid = system.Root.SpawnNamed(
+                    Props.FromProducer(() => new WorkbenchReceiverActor(_sink)),
+                    "workbench-receiver");
+                return (system, receiverPid);
+            }
+            catch (Exception ex) when (IsAddressInUse(ex) && DateTimeOffset.UtcNow < deadline)
+            {
+                WorkbenchLog.Warn(
+                    $"Workbench client receiver port {port} is still busy after restart; retrying start attempt {attempt}.");
+                await ShutdownFailedReceiverSystemAsync(system).ConfigureAwait(false);
+                await Task.Delay(RemoteStartRetryDelay).ConfigureAwait(false);
+            }
+            catch
+            {
+                await ShutdownFailedReceiverSystemAsync(system).ConfigureAwait(false);
+                throw;
+            }
+        }
+    }
+
+    private static async Task ShutdownFailedReceiverSystemAsync(ActorSystem system)
+    {
+        try
+        {
+            if (system.Remote() is not null)
+            {
+                await system.Remote().ShutdownAsync(true).WaitAsync(RemoteShutdownTimeout).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            await system.ShutdownAsync().WaitAsync(ActorSystemShutdownTimeout).ConfigureAwait(false);
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool IsAddressInUse(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse })
+            {
+                return true;
+            }
+
+            var message = current.Message;
+            if (!string.IsNullOrWhiteSpace(message)
+                && (message.Contains("address already in use", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("Only one usage of each socket address", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

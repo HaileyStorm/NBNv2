@@ -77,6 +77,27 @@ public sealed class WorkbenchClientObservabilityTests
     }
 
     [Fact]
+    public async Task EnsureStartedAsync_Retries_WhenAllInterfaceReceiverPortIsTemporarilyBusy()
+    {
+        var sink = new RecordingSink();
+        using var listener = new TcpListener(IPAddress.Any, 0);
+        listener.Start();
+        var clientPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var releaseTask = Task.Run(async () =>
+        {
+            await Task.Delay(500);
+            listener.Stop();
+        });
+
+        await using var client = new WorkbenchClient(sink);
+        await client.EnsureStartedAsync("0.0.0.0", clientPort, "127.0.0.1");
+        await releaseTask;
+
+        Assert.True(client.IsRunning);
+        Assert.Contains($":{clientPort}/", client.ReceiverLabel, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SetDebugSubscription_DoesNotResubscribe_WhenFilterIsUnchanged()
     {
         var sink = new RecordingSink();
