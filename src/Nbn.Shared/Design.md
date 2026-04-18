@@ -6,7 +6,7 @@ Owns the stable shared contracts and helper layer consumed by runtime services, 
 
 - Shared identifiers and addressing helpers such as `Address32`, `ShardId32`, UUID/SHA-256 encoding, and canonical settings keys.
 - Canonical binary format readers, writers, and validators for `.nbn` and `.nbs` artifacts.
-- Service endpoint discovery contracts and settings helpers used to locate core runtime services.
+- Service endpoint discovery contracts and settings helpers used to locate core runtime services; subscriptions replay current watched endpoint values after registration so startup does not depend on a later settings change.
 - Protobuf schemas, generated models, and shared conversion helpers that bridge protobuf wrappers to shared value objects.
 
 ## Stable invariants

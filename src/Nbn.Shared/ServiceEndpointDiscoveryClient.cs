@@ -212,6 +212,8 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
         {
             SubscriberActor = PidLabel(subscriberPid)
         });
+
+        await ReplayCurrentEndpointValuesAsync(keyFilter, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -368,6 +370,25 @@ public sealed class ServiceEndpointDiscoveryClient : IAsyncDisposable
                 registration,
                 "none",
                 changed.UpdatedMs));
+    }
+
+    private async Task ReplayCurrentEndpointValuesAsync(
+        HashSet<string> keyFilter,
+        CancellationToken cancellationToken)
+    {
+        foreach (var key in keyFilter)
+        {
+            var value = await RequestSettingsAsync<SettingValue>(
+                    new SettingGet { Key = key },
+                    cancellationToken)
+                .ConfigureAwait(false);
+            HandleSettingChanged(new SettingChanged
+            {
+                Key = value.Key,
+                Value = value.Value,
+                UpdatedMs = value.UpdatedMs
+            });
+        }
     }
 
     private static HashSet<string> BuildKeyFilter(IEnumerable<string>? keys)

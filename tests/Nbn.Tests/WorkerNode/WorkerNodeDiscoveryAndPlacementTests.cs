@@ -164,6 +164,12 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
 
         await discovery.SubscribeAsync([ServiceEndpointSettings.HiveMindKey, ServiceEndpointSettings.IoGatewayKey]);
         await Task.Delay(50);
+        var baselineIoUpdates = metrics.SumLong(
+            "nbn.workernode.discovery.endpoint.observed",
+            ("worker_node_id", workerTag),
+            ("target", ServiceEndpointSettings.IoGatewayKey),
+            ("failure_reason", "none"),
+            ("outcome", "update_updated"));
         await discovery.PublishAsync(ServiceEndpointSettings.IoGatewayKey, updatedIo);
         await updateSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -179,7 +185,7 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
             timeoutMs: 5_000);
 
         Assert.Equal(
-            1,
+            baselineIoUpdates + 1,
             metrics.SumLong(
                 "nbn.workernode.discovery.endpoint.observed",
                 ("worker_node_id", workerTag),

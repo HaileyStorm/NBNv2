@@ -70,22 +70,36 @@ public sealed partial class HiveMindActor
         Task<IReadOnlyList<WorkerPeerLatencyMeasurement>> refreshTask,
         Task<IReadOnlyList<WorkerPeerLatencyMeasurement>> completed)
     {
-        if (ReferenceEquals(_peerLatencyRefreshTask, refreshTask))
+        try
         {
-            _peerLatencyRefreshTask = null;
-        }
+            if (ReferenceEquals(_peerLatencyRefreshTask, refreshTask))
+            {
+                _peerLatencyRefreshTask = null;
+            }
 
-        if (!completed.IsCompletedSuccessfully)
+            if (!completed.IsCompletedSuccessfully)
+            {
+                return;
+            }
+
+            ApplyPeerLatencyMeasurements(completed.Result, NowMs());
+        }
+        catch (Exception ex)
         {
-            return;
+            LogError($"Peer latency refresh result failed: {ex.GetBaseException().Message}");
         }
-
-        ApplyPeerLatencyMeasurements(completed.Result, NowMs());
     }
 
     private void ApplyPeerLatencyMeasurements(IReadOnlyList<WorkerPeerLatencyMeasurement> measurements, long snapshotMs)
     {
-        var byWorker = measurements.ToDictionary(static measurement => measurement.WorkerNodeId);
+        var byWorker = measurements
+            .GroupBy(static measurement => measurement.WorkerNodeId)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group
+                    .OrderByDescending(static measurement => measurement.SampleCount)
+                    .ThenBy(static measurement => measurement.AveragePeerLatencyMs)
+                    .First());
         foreach (var entry in _workerCatalog.Values)
         {
             if (byWorker.TryGetValue(entry.NodeId, out var measurement))

@@ -1,9 +1,12 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using Nbn.Proto;
 using Nbn.Proto.Io;
 using Nbn.Runtime.Artifacts;
 using Nbn.Runtime.HiveMind;
 using Nbn.Runtime.IO;
+using Nbn.Runtime.SettingsMonitor;
 using Nbn.Runtime.WorkerNode;
 using Nbn.Shared;
 using PauseBrainRequest = Nbn.Shared.HiveMind.PauseBrainRequest;
@@ -11,7 +14,10 @@ using ResumeBrainRequest = Nbn.Shared.HiveMind.ResumeBrainRequest;
 using Nbn.Tests.Format;
 using Nbn.Tests.TestSupport;
 using Proto;
+using Proto.Remote;
+using Proto.Remote.GrpcNet;
 using ProtoControl = Nbn.Proto.Control;
+using ProtoSettings = Nbn.Proto.Settings;
 using Repro = Nbn.Proto.Repro;
 using ProtoSpec = Nbn.Proto.Speciation;
 
@@ -289,6 +295,99 @@ public class IoGatewayArtifactReferenceTests
         Assert.Equal(brainDef.ToSha256Hex(), forwardedRequest.BrainDef.ToSha256Hex());
 
         await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SpawnBrainViaIO_RefreshesHiveMindEndpoint_AndRetries_WhenCachedPidIsStale()
+    {
+        using var databaseScope = TempDirectoryScope.Create("nbn-io-stale-hivemind", clearSqlitePools: true);
+        var store = new SettingsMonitorStore(databaseScope.GetPath("settings.db"));
+        await store.InitializeAsync();
+
+        var settingsPort = GetFreePort();
+        var gatewayPort = GetFreePort();
+        var settingsSystem = new ActorSystem();
+        settingsSystem.WithRemote(RemoteConfig.BindToLocalhost(settingsPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            ProtoSettings.NbnSettingsReflection.Descriptor));
+        await settingsSystem.Remote().StartAsync();
+        settingsSystem.Root.SpawnNamed(
+            Props.FromProducer(() => new SettingsMonitorActor(store)),
+            "SettingsMonitor");
+
+        var gatewaySystem = new ActorSystem();
+        gatewaySystem.WithRemote(RemoteConfig.BindToLocalhost(gatewayPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            ProtoControl.NbnControlReflection.Descriptor,
+            NbnIoReflection.Descriptor,
+            ProtoSettings.NbnSettingsReflection.Descriptor));
+        await gatewaySystem.Remote().StartAsync();
+
+        try
+        {
+            var root = gatewaySystem.Root;
+            var staleHive = root.SpawnNamed(
+                Props.FromProducer(() => new HiveSpawnProbe(
+                    new TaskCompletionSource<ProtoControl.SpawnBrain>(TaskCreationOptions.RunContinuationsAsynchronously),
+                    new ProtoControl.SpawnBrainAck())),
+                $"stale-hive-{Guid.NewGuid():N}");
+            root.Stop(staleHive);
+            await Task.Delay(50);
+
+            var forwarded = new TaskCompletionSource<ProtoControl.SpawnBrain>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var expectedBrainId = Guid.NewGuid();
+            var liveHive = root.SpawnNamed(
+                Props.FromProducer(() => new HiveSpawnProbe(
+                    forwarded,
+                    new ProtoControl.SpawnBrainAck
+                    {
+                        BrainId = expectedBrainId.ToProtoUuid(),
+                        AcceptedForPlacement = true
+                    })),
+                $"live-hive-{Guid.NewGuid():N}");
+
+            var discovery = new ServiceEndpointDiscoveryClient(
+                gatewaySystem,
+                new PID($"127.0.0.1:{settingsPort}", "SettingsMonitor"));
+            await discovery.PublishAsync(
+                ServiceEndpointSettings.HiveMindKey,
+                new ServiceEndpoint(gatewaySystem.Address, liveHive.Id));
+            await discovery.DisposeAsync();
+
+            var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(
+                CreateOptions(settingsHost: "127.0.0.1", settingsPort: settingsPort),
+                hiveMindPid: staleHive)));
+
+            var brainDef = new string('9', 64).ToArtifactRef(99, "application/x-nbn", "test-store");
+            var response = await root.RequestAsync<SpawnBrainViaIOAck>(
+                gateway,
+                new SpawnBrainViaIO
+                {
+                    Request = new ProtoControl.SpawnBrain
+                    {
+                        BrainDef = brainDef
+                    }
+                },
+                TimeSpan.FromSeconds(5));
+
+            Assert.NotNull(response.Ack);
+            Assert.True(response.Ack.BrainId.TryToGuid(out var actualBrainId));
+            Assert.Equal(expectedBrainId, actualBrainId);
+            Assert.True(response.Ack.AcceptedForPlacement);
+            Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureReasonCode));
+            Assert.True(string.IsNullOrWhiteSpace(response.Ack.FailureMessage));
+
+            var forwardedRequest = await forwarded.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.NotNull(forwardedRequest.BrainDef);
+            Assert.Equal(brainDef.ToSha256Hex(), forwardedRequest.BrainDef.ToSha256Hex());
+        }
+        finally
+        {
+            await gatewaySystem.Remote().ShutdownAsync(true);
+            await gatewaySystem.ShutdownAsync();
+            await settingsSystem.Remote().ShutdownAsync(true);
+            await settingsSystem.ShutdownAsync();
+        }
     }
 
     [Fact]
@@ -2953,7 +3052,7 @@ public class IoGatewayArtifactReferenceTests
             },
             TimeSpan.FromMilliseconds((double)Math.Max((ulong)100, timeoutMs + 1_000)));
 
-    private static IoOptions CreateOptions()
+    private static IoOptions CreateOptions(string? settingsHost = null, int settingsPort = 0)
         => new(
             BindHost: "127.0.0.1",
             Port: 0,
@@ -2961,13 +3060,22 @@ public class IoGatewayArtifactReferenceTests
             AdvertisedPort: null,
             GatewayName: IoNames.Gateway,
             ServerName: "nbn.io.tests",
-            SettingsHost: null,
-            SettingsPort: 0,
+            SettingsHost: settingsHost,
+            SettingsPort: settingsPort,
             SettingsName: "SettingsMonitor",
             HiveMindAddress: null,
             HiveMindName: null,
             ReproAddress: null,
             ReproName: null);
+
+    private static int GetFreePort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
 
     private sealed class ThrowingArtifactStore : IArtifactStore
     {

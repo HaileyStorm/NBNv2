@@ -1,5 +1,6 @@
 using Nbn.Proto;
 using Nbn.Shared;
+using Proto;
 
 namespace Nbn.Runtime.IO;
 
@@ -100,6 +101,73 @@ public sealed partial class IoGatewayActor
         }
     }
 
+    private async Task<TResponse?> RequestHiveMindAsync<TResponse>(
+        IContext context,
+        object request,
+        TimeSpan timeout,
+        string operation)
+        where TResponse : class
+    {
+        var initialPid = _hiveMindPid;
+        if (initialPid is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await context.RequestAsync<TResponse>(initialPid, request, timeout).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (IsStaleServiceEndpointFailure(ex))
+        {
+            var refreshed = await TryRefreshHiveMindEndpointAsync(context, operation, ex).ConfigureAwait(false);
+            var retryPid = _hiveMindPid;
+            if (!refreshed || retryPid is null)
+            {
+                throw;
+            }
+
+            Console.WriteLine(
+                $"[WARN] IO retrying {operation} after HiveMind endpoint refresh: previous={PidLabel(initialPid)} current={PidLabel(retryPid)} failure={ex.GetBaseException().Message}");
+            return await context.RequestAsync<TResponse>(retryPid, request, timeout).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> TryRefreshHiveMindEndpointAsync(IContext context, string operation, Exception failure)
+    {
+        var client = ServiceEndpointDiscoveryClient.Create(
+            context.System,
+            _options.SettingsHost,
+            _options.SettingsPort,
+            _options.SettingsName);
+        if (client is null)
+        {
+            return false;
+        }
+
+        await using (client.ConfigureAwait(false))
+        {
+            try
+            {
+                var registration = await client.ResolveAsync(ServiceEndpointSettings.HiveMindKey).ConfigureAwait(false);
+                if (registration is not null)
+                {
+                    ApplyEndpoint(registration.Value);
+                    return _hiveMindPid is not null;
+                }
+
+                _hiveMindPid = _configuredHiveMindPid;
+                return _hiveMindPid is not null;
+            }
+            catch (Exception refreshEx)
+            {
+                Console.WriteLine(
+                    $"[WARN] IO failed to refresh HiveMind endpoint after {operation} failure ({failure.GetBaseException().Message}): {refreshEx.GetBaseException().Message}");
+                return false;
+            }
+        }
+    }
+
     private void ApplyObservationRemoval(string key, string source, string reason)
     {
         if (string.Equals(key, ServiceEndpointSettings.HiveMindKey, StringComparison.Ordinal))
@@ -157,4 +225,18 @@ public sealed partial class IoGatewayActor
 
     private static string NormalizeFailureReason(string? value, string fallback)
         => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
+    private static bool IsStaleServiceEndpointFailure(Exception ex)
+    {
+        var failure = ex.GetBaseException();
+        if (failure is TimeoutException)
+        {
+            return false;
+        }
+
+        var detail = failure.Message;
+        return !string.IsNullOrWhiteSpace(detail)
+               && (detail.Contains("no longer exists", StringComparison.OrdinalIgnoreCase)
+                   || detail.Contains("unknown actor", StringComparison.OrdinalIgnoreCase));
+    }
 }

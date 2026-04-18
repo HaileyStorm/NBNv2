@@ -18,10 +18,12 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            var inventory = await context.RequestAsync<ProtoControl.PlacementWorkerInventory>(
-                _hiveMindPid,
-                new ProtoControl.PlacementWorkerInventoryRequest(),
-                DefaultRequestTimeout);
+            var inventory = await RequestHiveMindAsync<ProtoControl.PlacementWorkerInventory>(
+                    context,
+                    new ProtoControl.PlacementWorkerInventoryRequest(),
+                    DefaultRequestTimeout,
+                    "GetPlacementWorkerInventory")
+                .ConfigureAwait(false);
             if (inventory is null)
             {
                 context.Respond(BuildPlacementWorkerInventoryFailure(

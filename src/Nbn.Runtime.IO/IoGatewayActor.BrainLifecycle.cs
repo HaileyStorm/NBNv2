@@ -29,7 +29,12 @@ public sealed partial class IoGatewayActor
 
         try
         {
-            var ack = await context.RequestAsync<ProtoControl.SpawnBrainAck>(_hiveMindPid, message.Request, SpawnRequestTimeout);
+            var ack = await RequestHiveMindAsync<ProtoControl.SpawnBrainAck>(
+                    context,
+                    message.Request,
+                    SpawnRequestTimeout,
+                    "SpawnBrainViaIO")
+                .ConfigureAwait(false);
             if (ack is null)
             {
                 ack = BuildSpawnFailureAck(

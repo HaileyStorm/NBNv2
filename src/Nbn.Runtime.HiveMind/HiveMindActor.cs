@@ -134,14 +134,21 @@ public sealed partial class HiveMindActor : IActor
     /// <inheritdoc />
     public Task ReceiveAsync(IContext context)
     {
-        _ = HandleActorLifecycleMessage(context)
-            || HandleControlPlaneMessage(context)
-            || HandleArtifactMessage(context)
-            || HandlePlacementMessage(context)
-            || HandleSettingsMessage(context)
-            || HandleWorkerInventoryMessage(context)
-            || HandleTickAndRescheduleMessage(context)
-            || HandleRuntimeSurfaceMessage(context);
+        try
+        {
+            _ = HandleActorLifecycleMessage(context)
+                || HandleControlPlaneMessage(context)
+                || HandleArtifactMessage(context)
+                || HandlePlacementMessage(context)
+                || HandleSettingsMessage(context)
+                || HandleWorkerInventoryMessage(context)
+                || HandleTickAndRescheduleMessage(context)
+                || HandleRuntimeSurfaceMessage(context);
+        }
+        catch (Exception ex)
+        {
+            LogError($"HiveMind handler {context.Message?.GetType().Name ?? "unknown"} failed: {ex.GetBaseException().Message}");
+        }
 
         return Task.CompletedTask;
     }

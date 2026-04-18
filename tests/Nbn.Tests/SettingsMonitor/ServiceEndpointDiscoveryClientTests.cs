@@ -132,6 +132,7 @@ public sealed class ServiceEndpointDiscoveryClientTests
         };
 
         await client.SubscribeAsync([key]);
+        changedTriggered = false;
         await Task.Delay(50);
         await harness.Root.RequestAsync<ProtoSettings.SettingValue>(
             harness.SettingsPid,
@@ -174,6 +175,7 @@ public sealed class ServiceEndpointDiscoveryClientTests
         };
 
         await client.SubscribeAsync([key]);
+        changedTriggered = false;
         await Task.Delay(50);
         await harness.Root.RequestAsync<ProtoSettings.SettingValue>(
             harness.SettingsPid,
@@ -255,6 +257,66 @@ public sealed class ServiceEndpointDiscoveryClientTests
             var changed = await changeTask.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(key, changed.Key);
             Assert.Equal(updatedEndpoint, changed.Endpoint);
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            await subscriberSystem.Remote().ShutdownAsync(true);
+            await subscriberSystem.ShutdownAsync();
+            await settingsSystem.Remote().ShutdownAsync(true);
+            await settingsSystem.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task SubscribeAsync_RemoteSettingsMonitor_ReplaysCurrentEndpointValue()
+    {
+        using var databaseScope = new TempDatabaseScope();
+        var store = new SettingsMonitorStore(databaseScope.DatabasePath);
+        await store.InitializeAsync();
+
+        var settingsPort = GetFreePort();
+        var subscriberPort = GetFreePort();
+        var settingsSystem = new ActorSystem();
+        var settingsConfig = RemoteConfig.BindToLocalhost(settingsPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            NbnSettingsReflection.Descriptor);
+        settingsSystem.WithRemote(settingsConfig);
+        await settingsSystem.Remote().StartAsync();
+        settingsSystem.Root.SpawnNamed(
+            Props.FromProducer(() => new SettingsMonitorActor(store)),
+            "SettingsMonitor");
+
+        var subscriberSystem = new ActorSystem();
+        var subscriberConfig = RemoteConfig.BindToLocalhost(subscriberPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            NbnSettingsReflection.Descriptor);
+        subscriberSystem.WithRemote(subscriberConfig);
+        await subscriberSystem.Remote().StartAsync();
+
+        var client = new ServiceEndpointDiscoveryClient(
+            subscriberSystem,
+            new PID($"127.0.0.1:{settingsPort}", "SettingsMonitor"));
+
+        try
+        {
+            var endpoint = new ServiceEndpoint("127.0.0.1:12020", "HiveMind");
+            await client.PublishAsync(ServiceEndpointSettings.HiveMindKey, endpoint);
+
+            var replayed = new TaskCompletionSource<ServiceEndpointRegistration>(TaskCreationOptions.RunContinuationsAsynchronously);
+            client.EndpointChanged += registration =>
+            {
+                if (registration.Key == ServiceEndpointSettings.HiveMindKey)
+                {
+                    replayed.TrySetResult(registration);
+                }
+            };
+
+            await client.SubscribeAsync([ServiceEndpointSettings.HiveMindKey]);
+
+            var registration = await replayed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(ServiceEndpointSettings.HiveMindKey, registration.Key);
+            Assert.Equal(endpoint, registration.Endpoint);
         }
         finally
         {
