@@ -66,6 +66,28 @@ public sealed class PpoManagerActorTests
     }
 
     [Fact]
+    public async Task StartRun_RequiresSpeciationWhenReproductionIsAvailable()
+    {
+        await using var system = new ActorSystem();
+        var manager = system.Root.Spawn(
+            Props.FromProducer(() => new PpoManagerActor(
+                new PID("127.0.0.1:12070", "ReproductionManager"),
+                speciationPid: null)));
+
+        var response = await system.Root.RequestAsync<PpoStartRunResponse>(
+            manager,
+            new PpoStartRunRequest
+            {
+                Hyperparameters = CreateValidHyperparameters()
+            },
+            TimeSpan.FromSeconds(5));
+
+        Assert.False(response.Accepted);
+        Assert.Equal(PpoFailureReason.PpoFailureSpeciationUnavailable, response.FailureReason);
+        Assert.Equal("ppo_speciation_unavailable", response.FailureDetail);
+    }
+
+    [Fact]
     public async Task StartAndStopRun_TracksLifecycleWithoutRuntimeMutation()
     {
         await using var system = new ActorSystem();
@@ -118,6 +140,59 @@ public sealed class PpoManagerActorTests
 
         Assert.Equal(1UL, status.CompletedRunCount);
         Assert.Null(status.ActiveRun);
+    }
+
+    [Fact]
+    public async Task StopRun_RejectsMissingOrMismatchedRun()
+    {
+        await using var system = new ActorSystem();
+        var manager = system.Root.Spawn(
+            Props.FromProducer(() => new PpoManagerActor(
+                new PID("127.0.0.1:12070", "ReproductionManager"),
+                new PID("127.0.0.1:12080", "SpeciationManager"))));
+
+        var missing = await system.Root.RequestAsync<PpoStopRunResponse>(
+            manager,
+            new PpoStopRunRequest(),
+            TimeSpan.FromSeconds(5));
+
+        Assert.False(missing.Stopped);
+        Assert.Equal(PpoFailureReason.PpoFailureRunNotActive, missing.FailureReason);
+        Assert.Equal("ppo_run_not_active", missing.FailureDetail);
+
+        var started = await system.Root.RequestAsync<PpoStartRunResponse>(
+            manager,
+            new PpoStartRunRequest
+            {
+                RunId = "active-run",
+                Hyperparameters = CreateValidHyperparameters()
+            },
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(started.Accepted);
+
+        var mismatch = await system.Root.RequestAsync<PpoStopRunResponse>(
+            manager,
+            new PpoStopRunRequest
+            {
+                RunId = "other-run"
+            },
+            TimeSpan.FromSeconds(5));
+
+        Assert.False(mismatch.Stopped);
+        Assert.Equal(PpoFailureReason.PpoFailureInvalidRequest, mismatch.FailureReason);
+        Assert.Equal("ppo_run_id_mismatch", mismatch.FailureDetail);
+
+        var stopped = await system.Root.RequestAsync<PpoStopRunResponse>(
+            manager,
+            new PpoStopRunRequest
+            {
+                RunId = " "
+            },
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(stopped.Stopped);
+        Assert.Equal("active-run", stopped.Run.RunId);
     }
 
     [Fact]
