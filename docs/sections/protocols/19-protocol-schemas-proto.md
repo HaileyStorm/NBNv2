@@ -2028,3 +2028,97 @@ message SpeciationListHistoryResponse {
 }
 
 ```
+
+### 19.11 `nbn_ppo.proto`
+
+```proto
+syntax = "proto3";
+package nbn.ppo;
+
+option csharp_namespace = "Nbn.Proto.Ppo";
+
+enum PpoFailureReason {
+  PPO_FAILURE_NONE = 0;
+  PPO_FAILURE_SERVICE_UNAVAILABLE = 1;
+  PPO_FAILURE_INVALID_REQUEST = 2;
+  PPO_FAILURE_REPRODUCTION_UNAVAILABLE = 3;
+  PPO_FAILURE_SPECIATION_UNAVAILABLE = 4;
+  PPO_FAILURE_RUN_ALREADY_ACTIVE = 5;
+  PPO_FAILURE_RUN_NOT_ACTIVE = 6;
+}
+
+enum PpoRunState {
+  PPO_RUN_STATE_IDLE = 0;
+  PPO_RUN_STATE_RUNNING = 1;
+  PPO_RUN_STATE_COMPLETED = 2;
+  PPO_RUN_STATE_FAILED = 3;
+  PPO_RUN_STATE_CANCELLED = 4;
+}
+
+message PpoHyperparameters {
+  fixed64 rollout_tick_count = 1;
+  fixed64 rollout_batch_count = 2;
+  float clip_epsilon = 3;
+  float discount_gamma = 4;
+  float gae_lambda = 5;
+  float learning_rate = 6;
+  uint32 optimization_epoch_count = 7;
+  uint32 minibatch_size = 8;
+  fixed64 seed = 9;
+  string reward_signal = 10;
+}
+
+message PpoDependencyStatus {
+  bool reproduction_available = 1;
+  bool speciation_available = 2;
+  string reproduction_endpoint = 3;
+  string speciation_endpoint = 4;
+}
+
+message PpoRunDescriptor {
+  string run_id = 1;
+  PpoRunState state = 2;
+  fixed64 started_ms = 3;
+  fixed64 completed_ms = 4;
+  PpoHyperparameters hyperparameters = 5;
+  string objective_name = 6;
+  string metadata_json = 7;
+  string status_detail = 8;
+}
+
+message PpoStatusRequest {}
+
+message PpoStatusResponse {
+  PpoFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  PpoDependencyStatus dependencies = 3;
+  PpoRunDescriptor active_run = 4;
+  fixed64 completed_run_count = 5;
+}
+
+message PpoStartRunRequest {
+  string run_id = 1;
+  PpoHyperparameters hyperparameters = 2;
+  string objective_name = 3;
+  string metadata_json = 4;
+}
+
+message PpoStartRunResponse {
+  PpoFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  bool accepted = 3;
+  PpoRunDescriptor run = 4;
+}
+
+message PpoStopRunRequest {
+  string run_id = 1;
+  string reason = 2;
+}
+
+message PpoStopRunResponse {
+  PpoFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  bool stopped = 3;
+  PpoRunDescriptor run = 4;
+}
+```

@@ -24,7 +24,7 @@ NBN treats placement as a runtime concern:
 
 * Registry: nodes, addresses, root actor names, leases/heartbeats
 * Settings store: global configuration and mutable runtime settings
-* Canonical service endpoint keys for Workbench/service discovery: `service.endpoint.hivemind`, `service.endpoint.io_gateway`, `service.endpoint.reproduction_manager`, `service.endpoint.speciation_manager`, `service.endpoint.worker_node`, and `service.endpoint.observability` (encoded as `host:port/actor`)
+* Canonical service endpoint keys for Workbench/service discovery: `service.endpoint.hivemind`, `service.endpoint.io_gateway`, `service.endpoint.reproduction_manager`, `service.endpoint.speciation_manager`, `service.endpoint.ppo_manager`, `service.endpoint.worker_node`, and `service.endpoint.observability` (encoded as `host:port/actor`)
 * Capability store: node CPU/GPU characteristics and benchmark scores
   * Worker nodes publish real probed CPU cores, raw free/total RAM and storage, GPU/VRAM visibility, ILGPU accelerator availability, explicit CPU/GPU scores, explicit NBN limit percentages, and current load/pressure snapshots when the host/runtime can resolve them.
   * SettingsMonitor is the canonical persisted snapshot for those worker capability rows; HiveMind still owns freshness filtering, rerun requests, and placement/rebalance policy on top of the stored snapshot.
@@ -57,6 +57,12 @@ NBN treats placement as a runtime concern:
 
 * Content-addressed, deduplicating store for `.nbn` and `.nbs` artifacts
 * Supports partial fetch and local caching
+
+**PPO optimizer** (optional core service)
+
+* Owns PPO run-control state and dependency readiness outside the tick/shard runtime
+* Requires Reproduction for candidate synthesis/assessment and Speciation for lineage tracking/admission context
+* Does not participate in HiveMind tick barriers, mutate live RegionShard state, or bypass IO/Reproduction/Speciation ownership
 
 ### 3.3 Brain actor topology
 

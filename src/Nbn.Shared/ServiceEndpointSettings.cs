@@ -100,6 +100,11 @@ public static class ServiceEndpointSettings
     public const string SpeciationManagerKey = EndpointPrefix + "speciation_manager";
 
     /// <summary>
+    /// Settings key for the PPO manager endpoint.
+    /// </summary>
+    public const string PpoManagerKey = EndpointPrefix + "ppo_manager";
+
+    /// <summary>
     /// Settings key for the worker node endpoint.
     /// </summary>
     public const string WorkerNodeKey = EndpointPrefix + "worker_node";
@@ -115,6 +120,7 @@ public static class ServiceEndpointSettings
         IoGatewayKey,
         ReproductionManagerKey,
         SpeciationManagerKey,
+        PpoManagerKey,
         WorkerNodeKey,
         ObservabilityKey
     ];

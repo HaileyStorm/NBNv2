@@ -48,6 +48,7 @@ public class ReleaseConfigTests
                 "nbn-io",
                 "nbn-observability",
                 "nbn-perf-probe",
+                "nbn-ppo",
                 "nbn-regionhost",
                 "nbn-repro",
                 "nbn-settings",

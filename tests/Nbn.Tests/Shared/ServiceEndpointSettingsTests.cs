@@ -54,6 +54,7 @@ public sealed class ServiceEndpointSettingsTests
     public void IsKnownKey_RequiresCanonicalKey()
     {
         Assert.True(ServiceEndpointSettings.IsKnownKey(ServiceEndpointSettings.HiveMindKey));
+        Assert.True(ServiceEndpointSettings.IsKnownKey(ServiceEndpointSettings.PpoManagerKey));
         Assert.False(ServiceEndpointSettings.IsKnownKey(" service.endpoint.hivemind "));
         Assert.False(ServiceEndpointSettings.IsKnownKey("service.endpoint.unknown"));
         Assert.False(ServiceEndpointSettings.IsKnownKey(null));

@@ -197,6 +197,7 @@ public sealed class LocalProjectLaunchPreparer : ILocalProjectLaunchPreparer
             "Nbn.Runtime.IO" => "nbn-io",
             "Nbn.Runtime.Reproduction" => "nbn-repro",
             "Nbn.Runtime.Speciation" => "nbn-speciation",
+            "Nbn.Runtime.Ppo" => "nbn-ppo",
             "Nbn.Runtime.Observability" => "nbn-observability",
             "Nbn.Runtime.WorkerNode" => "nbn-worker",
             "Nbn.Runtime.BrainHost" => "nbn-brainhost",

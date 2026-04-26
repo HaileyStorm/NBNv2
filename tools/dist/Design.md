@@ -64,6 +64,7 @@ Full suite bundle:
 - `nbn-io`
 - `nbn-repro`
 - `nbn-speciation`
+- `nbn-ppo`
 - `nbn-observability`
 - `nbn-worker`
 - `nbn-brainhost`

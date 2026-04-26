@@ -4,6 +4,7 @@ using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Debug;
 using Nbn.Proto.Io;
+using Nbn.Proto.Ppo;
 using Nbn.Proto.Repro;
 using Nbn.Proto.Speciation;
 using Nbn.Proto.Settings;
@@ -22,12 +23,60 @@ public class ProtoCompatibilityTests
         Assert.Equal("nbn", NbnFunctionsReflection.Descriptor.Package);
         Assert.Equal("nbn.control", NbnControlReflection.Descriptor.Package);
         Assert.Equal("nbn.io", NbnIoReflection.Descriptor.Package);
+        Assert.Equal("nbn.ppo", NbnPpoReflection.Descriptor.Package);
         Assert.Equal("nbn.repro", NbnReproReflection.Descriptor.Package);
         Assert.Equal("nbn.speciation", NbnSpeciationReflection.Descriptor.Package);
         Assert.Equal("nbn.settings", NbnSettingsReflection.Descriptor.Package);
         Assert.Equal("nbn.signal", NbnSignalsReflection.Descriptor.Package);
         Assert.Equal("nbn.debug", NbnDebugReflection.Descriptor.Package);
         Assert.Equal("nbn.viz", NbnVizReflection.Descriptor.Package);
+    }
+
+    [Fact]
+    public void ProtoPpo_ControlSurfaceFields_AreStable()
+    {
+        var descriptor = NbnPpoReflection.Descriptor;
+
+        var failureReason = descriptor.EnumTypes.Single(@enum => @enum.Name == "PpoFailureReason");
+        AssertEnumValue(failureReason, "PPO_FAILURE_NONE", 0);
+        AssertEnumValue(failureReason, "PPO_FAILURE_REPRODUCTION_UNAVAILABLE", 3);
+        AssertEnumValue(failureReason, "PPO_FAILURE_SPECIATION_UNAVAILABLE", 4);
+
+        var runState = descriptor.EnumTypes.Single(@enum => @enum.Name == "PpoRunState");
+        AssertEnumValue(runState, "PPO_RUN_STATE_IDLE", 0);
+        AssertEnumValue(runState, "PPO_RUN_STATE_RUNNING", 1);
+        AssertEnumValue(runState, "PPO_RUN_STATE_CANCELLED", 4);
+
+        var hyperparameters = descriptor.MessageTypes.Single(message => message.Name == "PpoHyperparameters");
+        AssertField(hyperparameters, "rollout_tick_count", 1, FieldType.Fixed64);
+        AssertField(hyperparameters, "rollout_batch_count", 2, FieldType.Fixed64);
+        AssertField(hyperparameters, "clip_epsilon", 3, FieldType.Float);
+        AssertField(hyperparameters, "discount_gamma", 4, FieldType.Float);
+        AssertField(hyperparameters, "gae_lambda", 5, FieldType.Float);
+        AssertField(hyperparameters, "learning_rate", 6, FieldType.Float);
+        AssertField(hyperparameters, "optimization_epoch_count", 7, FieldType.UInt32);
+        AssertField(hyperparameters, "minibatch_size", 8, FieldType.UInt32);
+        AssertField(hyperparameters, "seed", 9, FieldType.Fixed64);
+        AssertField(hyperparameters, "reward_signal", 10, FieldType.String);
+
+        var dependencies = descriptor.MessageTypes.Single(message => message.Name == "PpoDependencyStatus");
+        AssertField(dependencies, "reproduction_available", 1, FieldType.Bool);
+        AssertField(dependencies, "speciation_available", 2, FieldType.Bool);
+        AssertField(dependencies, "reproduction_endpoint", 3, FieldType.String);
+        AssertField(dependencies, "speciation_endpoint", 4, FieldType.String);
+
+        var status = descriptor.MessageTypes.Single(message => message.Name == "PpoStatusResponse");
+        AssertField(status, "failure_reason", 1, FieldType.Enum, "nbn.ppo.PpoFailureReason");
+        AssertField(status, "failure_detail", 2, FieldType.String);
+        AssertField(status, "dependencies", 3, FieldType.Message, "nbn.ppo.PpoDependencyStatus");
+        AssertField(status, "active_run", 4, FieldType.Message, "nbn.ppo.PpoRunDescriptor");
+        AssertField(status, "completed_run_count", 5, FieldType.Fixed64);
+
+        var start = descriptor.MessageTypes.Single(message => message.Name == "PpoStartRunRequest");
+        AssertField(start, "run_id", 1, FieldType.String);
+        AssertField(start, "hyperparameters", 2, FieldType.Message, "nbn.ppo.PpoHyperparameters");
+        AssertField(start, "objective_name", 3, FieldType.String);
+        AssertField(start, "metadata_json", 4, FieldType.String);
     }
 
     [Fact]

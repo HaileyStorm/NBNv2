@@ -47,6 +47,7 @@ public sealed class ServiceEndpointDiscoveryClientTests
         var ioEndpoint = new ServiceEndpoint("127.0.0.1:12050", "io-gateway");
         var reproEndpoint = new ServiceEndpoint("127.0.0.1:12070", "ReproductionManager");
         var speciationEndpoint = new ServiceEndpoint("127.0.0.1:12080", "SpeciationManager");
+        var ppoEndpoint = new ServiceEndpoint("127.0.0.1:12090", "PpoManager");
         var workerEndpoint = new ServiceEndpoint("127.0.0.1:12041", "worker-node");
         var obsEndpoint = new ServiceEndpoint("127.0.0.1:12060", "DebugHub");
 
@@ -54,6 +55,7 @@ public sealed class ServiceEndpointDiscoveryClientTests
         await client.PublishAsync(ServiceEndpointSettings.IoGatewayKey, ioEndpoint);
         await client.PublishAsync(ServiceEndpointSettings.ReproductionManagerKey, reproEndpoint);
         await client.PublishAsync(ServiceEndpointSettings.SpeciationManagerKey, speciationEndpoint);
+        await client.PublishAsync(ServiceEndpointSettings.PpoManagerKey, ppoEndpoint);
         await client.PublishAsync(ServiceEndpointSettings.WorkerNodeKey, workerEndpoint);
         await client.PublishAsync(ServiceEndpointSettings.ObservabilityKey, obsEndpoint);
 
@@ -62,6 +64,7 @@ public sealed class ServiceEndpointDiscoveryClientTests
         Assert.Equal(ioEndpoint, resolvedFromList[ServiceEndpointSettings.IoGatewayKey].Endpoint);
         Assert.Equal(reproEndpoint, resolvedFromList[ServiceEndpointSettings.ReproductionManagerKey].Endpoint);
         Assert.Equal(speciationEndpoint, resolvedFromList[ServiceEndpointSettings.SpeciationManagerKey].Endpoint);
+        Assert.Equal(ppoEndpoint, resolvedFromList[ServiceEndpointSettings.PpoManagerKey].Endpoint);
         Assert.Equal(workerEndpoint, resolvedFromList[ServiceEndpointSettings.WorkerNodeKey].Endpoint);
         Assert.Equal(obsEndpoint, resolvedFromList[ServiceEndpointSettings.ObservabilityKey].Endpoint);
 
@@ -73,6 +76,7 @@ public sealed class ServiceEndpointDiscoveryClientTests
         Assert.Equal(ServiceEndpointSettings.AllKeys.Count, resolvedKnown.Count);
         Assert.Equal(reproEndpoint, resolvedKnown[ServiceEndpointSettings.ReproductionManagerKey].Endpoint);
         Assert.Equal(speciationEndpoint, resolvedKnown[ServiceEndpointSettings.SpeciationManagerKey].Endpoint);
+        Assert.Equal(ppoEndpoint, resolvedKnown[ServiceEndpointSettings.PpoManagerKey].Endpoint);
         Assert.Equal(workerEndpoint, resolvedKnown[ServiceEndpointSettings.WorkerNodeKey].Endpoint);
         Assert.Equal(obsEndpoint, resolvedKnown[ServiceEndpointSettings.ObservabilityKey].Endpoint);
 

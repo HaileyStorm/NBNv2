@@ -5,7 +5,7 @@
 - Core protobuf contracts and generated models are in place.
 - `.nbn`/`.nbs` format read/write and validation pipeline is implemented.
 - Tick-based runtime orchestration (compute then deliver) is implemented through HiveMind plus Brain/Region actors.
-- Core runtime services are operational: SettingsMonitor, HiveMind, IO, Reproduction, Observability, and Artifacts.
+- Core runtime services are operational: SettingsMonitor, HiveMind, IO, Reproduction, Speciation, PPO, Observability, and Artifacts.
 - Snapshot/recovery, plasticity overlays, and reproduction workflows are implemented and exercised by tests/tools.
 - Workbench orchestration, designer, debug, and visualization surfaces are implemented for operator workflows.
 - Workbench local launch plus Designer-driven spawn workflows provide repeatable operator validation paths.

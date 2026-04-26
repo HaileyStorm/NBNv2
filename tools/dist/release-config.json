@@ -83,6 +83,16 @@
       ]
     },
     {
+      "id": "ppo",
+      "project": "src/Nbn.Runtime.Ppo/Nbn.Runtime.Ppo.csproj",
+      "executable": "Nbn.Runtime.Ppo",
+      "alias": "nbn-ppo",
+      "install_subdir": "services/ppo",
+      "bundles": [
+        "suite"
+      ]
+    },
+    {
       "id": "observability",
       "project": "src/Nbn.Runtime.Observability/Nbn.Runtime.Observability.csproj",
       "executable": "Nbn.Runtime.Observability",
