@@ -66,7 +66,7 @@ NBN is not an ML training framework (no backpropagation/gradient descent).
 ### 2.2 Solution layout (high-level)
 
 * `Nbn.Shared`: shared contracts/helpers (addressing, quantization, generated proto code, validation).
-* Runtime service roots: `Nbn.Runtime.SettingsMonitor`, `Nbn.Runtime.HiveMind`, `Nbn.Runtime.Reproduction`, `Nbn.Runtime.IO`, `Nbn.Runtime.Observability`, `Nbn.Runtime.Artifacts`.
+* Runtime service roots: `Nbn.Runtime.SettingsMonitor`, `Nbn.Runtime.HiveMind`, `Nbn.Runtime.Reproduction`, `Nbn.Runtime.Speciation`, `Nbn.Runtime.Ppo`, `Nbn.Runtime.IO`, `Nbn.Runtime.Observability`, `Nbn.Runtime.Artifacts`.
 * Runtime execution: `Nbn.Runtime.Brain` (BrainRoot/BrainSignalRouter) and `Nbn.Runtime.RegionHost` (RegionShard workers, optional debug mirrors).
 * Tools/UI: `Nbn.Tools.Workbench` (operator desktop over runtime APIs and local launch helpers), `Nbn.Tools.EvolutionSim` (standalone artifact-first evolution/speciation stress simulator), `Nbn.Tools.PerfProbe` (placement/runtime profiling and report generation).
 * Tests: `Nbn.Tests` (format, simulation, parity, reproduction).
@@ -97,7 +97,7 @@ NBN treats placement as a runtime concern:
 
 * Registry: nodes, addresses, root actor names, leases/heartbeats
 * Settings store: global configuration and mutable runtime settings
-* Canonical service endpoint keys for Workbench/service discovery: `service.endpoint.hivemind`, `service.endpoint.io_gateway`, `service.endpoint.reproduction_manager`, `service.endpoint.speciation_manager`, `service.endpoint.worker_node`, and `service.endpoint.observability` (encoded as `host:port/actor`)
+* Canonical service endpoint keys for Workbench/service discovery: `service.endpoint.hivemind`, `service.endpoint.io_gateway`, `service.endpoint.reproduction_manager`, `service.endpoint.speciation_manager`, `service.endpoint.ppo_manager`, `service.endpoint.worker_node`, and `service.endpoint.observability` (encoded as `host:port/actor`)
 * Capability store: node CPU/GPU characteristics and benchmark scores
   * Worker nodes publish real probed CPU cores, raw free/total RAM and storage, GPU/VRAM visibility, ILGPU accelerator availability, explicit CPU/GPU scores, explicit NBN limit percentages, and current load/pressure snapshots when the host/runtime can resolve them.
   * SettingsMonitor is the canonical persisted snapshot for those worker capability rows; HiveMind still owns freshness filtering, rerun requests, and placement/rebalance policy on top of the stored snapshot.
@@ -130,6 +130,12 @@ NBN treats placement as a runtime concern:
 
 * Content-addressed, deduplicating store for `.nbn` and `.nbs` artifacts
 * Supports partial fetch and local caching
+
+**PPO optimizer** (optional core service)
+
+* Owns PPO run-control state and dependency readiness outside the tick/shard runtime
+* Requires Reproduction for candidate synthesis/assessment and Speciation for lineage tracking/admission context
+* Does not participate in HiveMind tick barriers, mutate live RegionShard state, or bypass IO/Reproduction/Speciation ownership
 
 ### 3.3 Brain actor topology
 
@@ -3868,6 +3874,100 @@ message SpeciationListHistoryResponse {
 
 ```
 
+### 19.11 `nbn_ppo.proto`
+
+```proto
+syntax = "proto3";
+package nbn.ppo;
+
+option csharp_namespace = "Nbn.Proto.Ppo";
+
+enum PpoFailureReason {
+  PPO_FAILURE_NONE = 0;
+  PPO_FAILURE_SERVICE_UNAVAILABLE = 1;
+  PPO_FAILURE_INVALID_REQUEST = 2;
+  PPO_FAILURE_REPRODUCTION_UNAVAILABLE = 3;
+  PPO_FAILURE_SPECIATION_UNAVAILABLE = 4;
+  PPO_FAILURE_RUN_ALREADY_ACTIVE = 5;
+  PPO_FAILURE_RUN_NOT_ACTIVE = 6;
+}
+
+enum PpoRunState {
+  PPO_RUN_STATE_IDLE = 0;
+  PPO_RUN_STATE_RUNNING = 1;
+  PPO_RUN_STATE_COMPLETED = 2;
+  PPO_RUN_STATE_FAILED = 3;
+  PPO_RUN_STATE_CANCELLED = 4;
+}
+
+message PpoHyperparameters {
+  fixed64 rollout_tick_count = 1;
+  fixed64 rollout_batch_count = 2;
+  float clip_epsilon = 3;
+  float discount_gamma = 4;
+  float gae_lambda = 5;
+  float learning_rate = 6;
+  uint32 optimization_epoch_count = 7;
+  uint32 minibatch_size = 8;
+  fixed64 seed = 9;
+  string reward_signal = 10;
+}
+
+message PpoDependencyStatus {
+  bool reproduction_available = 1;
+  bool speciation_available = 2;
+  string reproduction_endpoint = 3;
+  string speciation_endpoint = 4;
+}
+
+message PpoRunDescriptor {
+  string run_id = 1;
+  PpoRunState state = 2;
+  fixed64 started_ms = 3;
+  fixed64 completed_ms = 4;
+  PpoHyperparameters hyperparameters = 5;
+  string objective_name = 6;
+  string metadata_json = 7;
+  string status_detail = 8;
+}
+
+message PpoStatusRequest {}
+
+message PpoStatusResponse {
+  PpoFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  PpoDependencyStatus dependencies = 3;
+  PpoRunDescriptor active_run = 4;
+  fixed64 completed_run_count = 5;
+}
+
+message PpoStartRunRequest {
+  string run_id = 1;
+  PpoHyperparameters hyperparameters = 2;
+  string objective_name = 3;
+  string metadata_json = 4;
+}
+
+message PpoStartRunResponse {
+  PpoFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  bool accepted = 3;
+  PpoRunDescriptor run = 4;
+}
+
+message PpoStopRunRequest {
+  string run_id = 1;
+  string reason = 2;
+}
+
+message PpoStopRunResponse {
+  PpoFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  bool stopped = 3;
+  PpoRunDescriptor run = 4;
+}
+```
+
 ## 20. Status and next steps
 
 ### 20.1 Completed baseline
@@ -3875,7 +3975,7 @@ message SpeciationListHistoryResponse {
 - Core protobuf contracts and generated models are in place.
 - `.nbn`/`.nbs` format read/write and validation pipeline is implemented.
 - Tick-based runtime orchestration (compute then deliver) is implemented through HiveMind plus Brain/Region actors.
-- Core runtime services are operational: SettingsMonitor, HiveMind, IO, Reproduction, Observability, and Artifacts.
+- Core runtime services are operational: SettingsMonitor, HiveMind, IO, Reproduction, Speciation, PPO, Observability, and Artifacts.
 - Snapshot/recovery, plasticity overlays, and reproduction workflows are implemented and exercised by tests/tools.
 - Workbench orchestration, designer, debug, and visualization surfaces are implemented for operator workflows.
 - Workbench local launch plus Designer-driven spawn workflows provide repeatable operator validation paths.
