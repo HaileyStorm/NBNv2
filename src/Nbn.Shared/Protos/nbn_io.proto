@@ -354,6 +354,9 @@ message RequestSnapshot {
 message SnapshotReady {
   nbn.Uuid brain_id = 1;
   nbn.ArtifactRef snapshot = 2; // .nbs
+  fixed64 snapshot_tick_id = 3;
+  bool generated_from_live_state = 4;
+  string snapshot_source = 5;
 }
 
 message ExportBrainDefinition {

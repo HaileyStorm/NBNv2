@@ -1099,7 +1099,8 @@ public sealed partial class IoGatewayActor
                 context.Respond(new SnapshotReady
                 {
                     BrainId = message.BrainId,
-                    Snapshot = entry.LastSnapshot
+                    Snapshot = entry.LastSnapshot,
+                    SnapshotSource = "cached_last_snapshot"
                 });
                 return;
             }
@@ -1143,7 +1144,8 @@ public sealed partial class IoGatewayActor
                 context.Respond(new SnapshotReady
                 {
                     BrainId = message.BrainId,
-                    Snapshot = entry.LastSnapshot
+                    Snapshot = entry.LastSnapshot,
+                    SnapshotSource = "cached_last_snapshot"
                 });
                 return;
             }
@@ -1158,7 +1160,8 @@ public sealed partial class IoGatewayActor
                 context.Respond(new SnapshotReady
                 {
                     BrainId = message.BrainId,
-                    Snapshot = entry.LastSnapshot
+                    Snapshot = entry.LastSnapshot,
+                    SnapshotSource = "cached_last_snapshot"
                 });
                 return;
             }

@@ -15,6 +15,10 @@ public sealed partial class PpoManagerActor
             return;
         }
 
+        _ioPid = snapshot.Registrations.TryGetValue(ServiceEndpointSettings.IoGatewayKey, out var io)
+            ? io.Endpoint.ToPid()
+            : _configuredIoPid;
+
         _reproductionPid = snapshot.Registrations.TryGetValue(ServiceEndpointSettings.ReproductionManagerKey, out var reproduction)
             ? reproduction.Endpoint.ToPid()
             : _configuredReproductionPid;
@@ -35,14 +39,23 @@ public sealed partial class PpoManagerActor
             return;
         }
 
-        if (!string.Equals(observation.Key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.Ordinal))
+        if (string.Equals(observation.Key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.Ordinal))
+        {
+            _speciationPid = observation.Kind == ServiceEndpointObservationKind.Upserted
+                && observation.Registration is ServiceEndpointRegistration speciation
+                    ? speciation.Endpoint.ToPid()
+                    : _configuredSpeciationPid;
+            return;
+        }
+
+        if (!string.Equals(observation.Key, ServiceEndpointSettings.IoGatewayKey, StringComparison.Ordinal))
         {
             return;
         }
 
-        _speciationPid = observation.Kind == ServiceEndpointObservationKind.Upserted
-            && observation.Registration is ServiceEndpointRegistration speciation
-                ? speciation.Endpoint.ToPid()
-                : _configuredSpeciationPid;
+        _ioPid = observation.Kind == ServiceEndpointObservationKind.Upserted
+            && observation.Registration is ServiceEndpointRegistration io
+                ? io.Endpoint.ToPid()
+                : _configuredIoPid;
     }
 }

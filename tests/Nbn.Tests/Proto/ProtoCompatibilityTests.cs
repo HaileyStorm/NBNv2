@@ -41,6 +41,8 @@ public class ProtoCompatibilityTests
         AssertEnumValue(failureReason, "PPO_FAILURE_NONE", 0);
         AssertEnumValue(failureReason, "PPO_FAILURE_REPRODUCTION_UNAVAILABLE", 3);
         AssertEnumValue(failureReason, "PPO_FAILURE_SPECIATION_UNAVAILABLE", 4);
+        AssertEnumValue(failureReason, "PPO_FAILURE_IO_UNAVAILABLE", 7);
+        AssertEnumValue(failureReason, "PPO_FAILURE_ROLLOUT_FAILED", 8);
 
         var runState = descriptor.EnumTypes.Single(@enum => @enum.Name == "PpoRunState");
         AssertEnumValue(runState, "PPO_RUN_STATE_IDLE", 0);
@@ -64,6 +66,31 @@ public class ProtoCompatibilityTests
         AssertField(dependencies, "speciation_available", 2, FieldType.Bool);
         AssertField(dependencies, "reproduction_endpoint", 3, FieldType.String);
         AssertField(dependencies, "speciation_endpoint", 4, FieldType.String);
+        AssertField(dependencies, "io_available", 5, FieldType.Bool);
+        AssertField(dependencies, "io_endpoint", 6, FieldType.String);
+
+        var observedParent = descriptor.MessageTypes.Single(message => message.Name == "PpoObservedParent");
+        AssertField(observedParent, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(observedParent, "brain_def", 2, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(observedParent, "snapshot", 3, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(observedParent, "observed_ms", 4, FieldType.Fixed64);
+        AssertField(observedParent, "snapshot_tick_id", 5, FieldType.Fixed64);
+        AssertField(observedParent, "snapshot_source", 6, FieldType.String);
+
+        var candidate = descriptor.MessageTypes.Single(message => message.Name == "PpoCandidateResult");
+        AssertField(candidate, "run_index", 1, FieldType.UInt32);
+        AssertField(candidate, "seed", 2, FieldType.Fixed64);
+        AssertField(candidate, "child_def", 3, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(candidate, "reproduction_report", 4, FieldType.Message, "nbn.repro.SimilarityReport");
+        AssertField(candidate, "mutation_summary", 5, FieldType.Message, "nbn.repro.MutationSummary");
+        AssertField(candidate, "speciation_decision", 6, FieldType.Message, "nbn.speciation.SpeciationDecision");
+
+        var executionReport = descriptor.MessageTypes.Single(message => message.Name == "PpoRolloutExecutionReport");
+        AssertRepeatedField(executionReport, "observed_parents", 1, FieldType.Message, "nbn.ppo.PpoObservedParent");
+        AssertField(executionReport, "reproduction_result", 2, FieldType.Message, "nbn.repro.ReproduceResult");
+        AssertField(executionReport, "speciation_result", 3, FieldType.Message, "nbn.speciation.SpeciationBatchEvaluateApplyResponse");
+        AssertRepeatedField(executionReport, "candidates", 4, FieldType.Message, "nbn.ppo.PpoCandidateResult");
+        AssertField(executionReport, "provenance_json", 5, FieldType.String);
 
         var status = descriptor.MessageTypes.Single(message => message.Name == "PpoStatusResponse");
         AssertField(status, "failure_reason", 1, FieldType.Enum, "nbn.ppo.PpoFailureReason");
@@ -71,12 +98,19 @@ public class ProtoCompatibilityTests
         AssertField(status, "dependencies", 3, FieldType.Message, "nbn.ppo.PpoDependencyStatus");
         AssertField(status, "active_run", 4, FieldType.Message, "nbn.ppo.PpoRunDescriptor");
         AssertField(status, "completed_run_count", 5, FieldType.Fixed64);
+        AssertField(status, "last_run", 6, FieldType.Message, "nbn.ppo.PpoRunDescriptor");
+
+        var run = descriptor.MessageTypes.Single(message => message.Name == "PpoRunDescriptor");
+        AssertField(run, "execution_report", 9, FieldType.Message, "nbn.ppo.PpoRolloutExecutionReport");
 
         var start = descriptor.MessageTypes.Single(message => message.Name == "PpoStartRunRequest");
         AssertField(start, "run_id", 1, FieldType.String);
         AssertField(start, "hyperparameters", 2, FieldType.Message, "nbn.ppo.PpoHyperparameters");
         AssertField(start, "objective_name", 3, FieldType.String);
         AssertField(start, "metadata_json", 4, FieldType.String);
+        AssertRepeatedField(start, "parent_brain_ids", 5, FieldType.Message, "nbn.Uuid");
+        AssertField(start, "reproduce_config", 6, FieldType.Message, "nbn.repro.ReproduceConfig");
+        AssertField(start, "strength_source", 7, FieldType.Enum, "nbn.repro.StrengthSource");
     }
 
     [Fact]
@@ -911,6 +945,9 @@ public class ProtoCompatibilityTests
         var snapshotReady = descriptor.MessageTypes.Single(message => message.Name == "SnapshotReady");
         AssertField(snapshotReady, "brain_id", 1, FieldType.Message, "nbn.Uuid");
         AssertField(snapshotReady, "snapshot", 2, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(snapshotReady, "snapshot_tick_id", 3, FieldType.Fixed64);
+        AssertField(snapshotReady, "generated_from_live_state", 4, FieldType.Bool);
+        AssertField(snapshotReady, "snapshot_source", 5, FieldType.String);
 
         var exportBrainDefinition = descriptor.MessageTypes.Single(message => message.Name == "ExportBrainDefinition");
         AssertField(exportBrainDefinition, "brain_id", 1, FieldType.Message, "nbn.Uuid");

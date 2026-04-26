@@ -1,4 +1,5 @@
 using Nbn.Proto;
+using Nbn.Proto.Io;
 using Nbn.Proto.Ppo;
 using Nbn.Proto.Repro;
 using Nbn.Proto.Settings;
@@ -41,6 +42,7 @@ public static class PpoRemote
 
         return config.WithProtoMessages(
             NbnCommonReflection.Descriptor,
+            NbnIoReflection.Descriptor,
             NbnPpoReflection.Descriptor,
             NbnReproReflection.Descriptor,
             NbnSettingsReflection.Descriptor,

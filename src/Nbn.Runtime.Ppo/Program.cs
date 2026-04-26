@@ -12,7 +12,7 @@ system.WithRemote(remoteConfig);
 await system.Remote().StartAsync();
 
 var managerPid = system.Root.SpawnNamed(
-    Props.FromProducer(() => new PpoManagerActor(BuildReproductionPid(options), BuildSpeciationPid(options))),
+    Props.FromProducer(() => new PpoManagerActor(BuildIoPid(options), BuildReproductionPid(options), BuildSpeciationPid(options))),
     options.ManagerName);
 
 var advertisedHost = remoteConfig.AdvertisedHost ?? remoteConfig.Host;
@@ -110,6 +110,17 @@ if (settingsReporter is not null)
 await system.Remote().ShutdownAsync(true);
 await system.ShutdownAsync();
 
+static PID? BuildIoPid(PpoOptions options)
+{
+    if (string.IsNullOrWhiteSpace(options.IoAddress)
+        || string.IsNullOrWhiteSpace(options.IoName))
+    {
+        return null;
+    }
+
+    return new PID(options.IoAddress, options.IoName);
+}
+
 static PID? BuildReproductionPid(PpoOptions options)
 {
     if (string.IsNullOrWhiteSpace(options.ReproductionAddress)
@@ -140,6 +151,7 @@ static async Task RunDiscoveryBootstrapLoopAsync(
 {
     string[] watchedKeys =
     [
+        ServiceEndpointSettings.IoGatewayKey,
         ServiceEndpointSettings.ReproductionManagerKey,
         ServiceEndpointSettings.SpeciationManagerKey
     ];

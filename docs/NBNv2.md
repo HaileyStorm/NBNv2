@@ -133,8 +133,9 @@ NBN treats placement as a runtime concern:
 
 **PPO optimizer** (optional core service)
 
-* Owns PPO run-control state and dependency readiness outside the tick/shard runtime
-* Requires Reproduction for candidate synthesis/assessment and Speciation for lineage tracking/admission context
+* Owns PPO run-control and rollout orchestration outside the tick/shard runtime
+* Uses IO live-generated snapshot artifacts for parent observations; it does not treat output subscriptions as post-deliver fences
+* Requires Reproduction for candidate synthesis/assessment and Speciation for lineage tracking/admission commits
 * Does not participate in HiveMind tick barriers, mutate live RegionShard state, or bypass IO/Reproduction/Speciation ownership
 
 ### 3.3 Brain actor topology
@@ -3141,6 +3142,9 @@ message RequestSnapshot {
 message SnapshotReady {
   nbn.Uuid brain_id = 1;
   nbn.ArtifactRef snapshot = 2; // .nbs
+  fixed64 snapshot_tick_id = 3;
+  bool generated_from_live_state = 4;
+  string snapshot_source = 5;
 }
 
 message ExportBrainDefinition {
@@ -3882,6 +3886,10 @@ package nbn.ppo;
 
 option csharp_namespace = "Nbn.Proto.Ppo";
 
+import "nbn_common.proto";
+import "nbn_repro.proto";
+import "nbn_speciation.proto";
+
 enum PpoFailureReason {
   PPO_FAILURE_NONE = 0;
   PPO_FAILURE_SERVICE_UNAVAILABLE = 1;
@@ -3890,6 +3898,8 @@ enum PpoFailureReason {
   PPO_FAILURE_SPECIATION_UNAVAILABLE = 4;
   PPO_FAILURE_RUN_ALREADY_ACTIVE = 5;
   PPO_FAILURE_RUN_NOT_ACTIVE = 6;
+  PPO_FAILURE_IO_UNAVAILABLE = 7;
+  PPO_FAILURE_ROLLOUT_FAILED = 8;
 }
 
 enum PpoRunState {
@@ -3918,6 +3928,34 @@ message PpoDependencyStatus {
   bool speciation_available = 2;
   string reproduction_endpoint = 3;
   string speciation_endpoint = 4;
+  bool io_available = 5;
+  string io_endpoint = 6;
+}
+
+message PpoObservedParent {
+  nbn.Uuid brain_id = 1;
+  nbn.ArtifactRef brain_def = 2;
+  nbn.ArtifactRef snapshot = 3;
+  fixed64 observed_ms = 4;
+  fixed64 snapshot_tick_id = 5;
+  string snapshot_source = 6;
+}
+
+message PpoCandidateResult {
+  uint32 run_index = 1;
+  fixed64 seed = 2;
+  nbn.ArtifactRef child_def = 3;
+  nbn.repro.SimilarityReport reproduction_report = 4;
+  nbn.repro.MutationSummary mutation_summary = 5;
+  nbn.speciation.SpeciationDecision speciation_decision = 6;
+}
+
+message PpoRolloutExecutionReport {
+  repeated PpoObservedParent observed_parents = 1;
+  nbn.repro.ReproduceResult reproduction_result = 2;
+  nbn.speciation.SpeciationBatchEvaluateApplyResponse speciation_result = 3;
+  repeated PpoCandidateResult candidates = 4;
+  string provenance_json = 5;
 }
 
 message PpoRunDescriptor {
@@ -3929,6 +3967,7 @@ message PpoRunDescriptor {
   string objective_name = 6;
   string metadata_json = 7;
   string status_detail = 8;
+  PpoRolloutExecutionReport execution_report = 9;
 }
 
 message PpoStatusRequest {}
@@ -3939,6 +3978,7 @@ message PpoStatusResponse {
   PpoDependencyStatus dependencies = 3;
   PpoRunDescriptor active_run = 4;
   fixed64 completed_run_count = 5;
+  PpoRunDescriptor last_run = 6;
 }
 
 message PpoStartRunRequest {
@@ -3946,6 +3986,9 @@ message PpoStartRunRequest {
   PpoHyperparameters hyperparameters = 2;
   string objective_name = 3;
   string metadata_json = 4;
+  repeated nbn.Uuid parent_brain_ids = 5;
+  nbn.repro.ReproduceConfig reproduce_config = 6;
+  nbn.repro.StrengthSource strength_source = 7;
 }
 
 message PpoStartRunResponse {
@@ -3976,7 +4019,7 @@ message PpoStopRunResponse {
 - `.nbn`/`.nbs` format read/write and validation pipeline is implemented.
 - Tick-based runtime orchestration (compute then deliver) is implemented through HiveMind plus Brain/Region actors.
 - Core runtime services are operational: SettingsMonitor, HiveMind, IO, Reproduction, Speciation, PPO, Observability, and Artifacts.
-- Snapshot/recovery, plasticity overlays, and reproduction workflows are implemented and exercised by tests/tools.
+- Snapshot/recovery, plasticity overlays, reproduction workflows, and PPO artifact-rollout orchestration are implemented and exercised by tests/tools.
 - Workbench orchestration, designer, debug, and visualization surfaces are implemented for operator workflows.
 - Workbench local launch plus Designer-driven spawn workflows provide repeatable operator validation paths.
 - Documentation assembly pipeline is implemented (`docs/INDEX.md` -> `docs/NBNv2.md`) with CI freshness checks.

@@ -158,7 +158,10 @@ public sealed partial class HiveMindActor
                 context.Respond(new ProtoIo.SnapshotReady
                 {
                     BrainId = brainId.ToProtoUuid(),
-                    Snapshot = snapshot
+                    Snapshot = snapshot,
+                    SnapshotTickId = _lastCompletedTickId,
+                    GeneratedFromLiveState = true,
+                    SnapshotSource = "live_tick_boundary"
                 });
                 return Task.CompletedTask;
             }
@@ -578,7 +581,8 @@ public sealed partial class HiveMindActor
             context.Respond(new ProtoIo.SnapshotReady
             {
                 BrainId = brainId.ToProtoUuid(),
-                Snapshot = snapshot
+                Snapshot = snapshot,
+                SnapshotSource = "cached_last_snapshot"
             });
             return;
         }

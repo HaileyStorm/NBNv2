@@ -13,6 +13,8 @@ public sealed record PpoOptions(
     string? SettingsHost,
     int SettingsPort,
     string SettingsName,
+    string? IoAddress,
+    string? IoName,
     string? ReproductionAddress,
     string? ReproductionName,
     string? SpeciationAddress,
@@ -29,6 +31,8 @@ public sealed record PpoOptions(
         var settingsHost = GetEnv("NBN_SETTINGS_HOST") ?? "127.0.0.1";
         var settingsPort = GetEnvInt("NBN_SETTINGS_PORT") ?? 12010;
         var settingsName = GetEnv("NBN_SETTINGS_NAME") ?? "SettingsMonitor";
+        var ioAddress = GetEnv("NBN_PPO_IO_ADDRESS");
+        var ioName = GetEnv("NBN_PPO_IO_NAME") ?? "IoGateway";
         var reproductionAddress = GetEnv("NBN_PPO_REPRO_ADDRESS");
         var reproductionName = GetEnv("NBN_PPO_REPRO_NAME") ?? "ReproductionManager";
         var speciationAddress = GetEnv("NBN_PPO_SPECIATION_ADDRESS");
@@ -99,6 +103,18 @@ public sealed record PpoOptions(
                     if (i + 1 < args.Length)
                     {
                         settingsName = args[++i];
+                    }
+                    continue;
+                case "--io-address":
+                    if (i + 1 < args.Length)
+                    {
+                        ioAddress = args[++i];
+                    }
+                    continue;
+                case "--io-name":
+                    if (i + 1 < args.Length)
+                    {
+                        ioName = args[++i];
                     }
                     continue;
                 case "--repro-address":
@@ -198,6 +214,18 @@ public sealed record PpoOptions(
                 continue;
             }
 
+            if (arg.StartsWith("--io-address=", StringComparison.OrdinalIgnoreCase))
+            {
+                ioAddress = arg.Substring("--io-address=".Length);
+                continue;
+            }
+
+            if (arg.StartsWith("--io-name=", StringComparison.OrdinalIgnoreCase))
+            {
+                ioName = arg.Substring("--io-name=".Length);
+                continue;
+            }
+
             if (arg.StartsWith("--repro-address=", StringComparison.OrdinalIgnoreCase))
             {
                 reproductionAddress = arg.Substring("--repro-address=".Length);
@@ -244,6 +272,8 @@ public sealed record PpoOptions(
             string.IsNullOrWhiteSpace(settingsHost) ? null : settingsHost,
             settingsPort,
             settingsName,
+            string.IsNullOrWhiteSpace(ioAddress) ? null : ioAddress,
+            string.IsNullOrWhiteSpace(ioName) ? null : ioName,
             string.IsNullOrWhiteSpace(reproductionAddress) ? null : reproductionAddress,
             string.IsNullOrWhiteSpace(reproductionName) ? null : reproductionName,
             string.IsNullOrWhiteSpace(speciationAddress) ? null : speciationAddress,
@@ -270,6 +300,8 @@ public sealed record PpoOptions(
         Console.WriteLine("  --settings-host <host>           SettingsMonitor host (default 127.0.0.1)");
         Console.WriteLine("  --settings-port <port>           SettingsMonitor port (default 12010)");
         Console.WriteLine("  --settings-name <name>           SettingsMonitor actor name (default SettingsMonitor)");
+        Console.WriteLine("  --io-address <host:port>         IO Gateway address");
+        Console.WriteLine("  --io-name <name>                 IO Gateway actor name (default IoGateway)");
         Console.WriteLine("  --repro-address <host:port>      Reproduction manager address");
         Console.WriteLine("  --repro-name <name>              Reproduction manager actor name (default ReproductionManager)");
         Console.WriteLine("  --speciation-address <host:port> Speciation manager address");
