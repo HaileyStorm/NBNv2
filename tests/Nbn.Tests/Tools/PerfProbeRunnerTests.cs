@@ -71,6 +71,60 @@ public sealed class PerfProbeRunnerTests
     }
 
     [Fact]
+    public void BuildWorkerProfileScenarios_SkipsGpuProfiles_WhenGpuVramQuotaDisablesRuntimeCapacity()
+    {
+        var config = new WorkerProfileConfig(
+            PlannerWorkerCount: 4,
+            PlannerIterations: 8,
+            HiddenRegionNeurons: WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold);
+        var capabilities = CreateCudaCapabilities();
+        capabilities.GpuVramLimitPercent = 0;
+
+        var scenarios = PerfProbeRunner.BuildWorkerProfileScenarios(config, capabilities).ToArray();
+
+        var gpuCapability = Assert.Single(scenarios, static scenario =>
+            scenario.Suite == "worker_profile"
+            && scenario.Scenario == "capability_probe"
+            && scenario.Backend == "gpu");
+        Assert.Equal(PerfScenarioStatus.Skipped, gpuCapability.Status);
+        Assert.Equal("gpu_vram_not_available", gpuCapability.SkipReason);
+
+        var gpuPlanner = Assert.Single(scenarios, static scenario =>
+            scenario.Suite == "worker_profile"
+            && scenario.Scenario == "placement_planner_profile"
+            && scenario.Backend == "gpu");
+        Assert.Equal(PerfScenarioStatus.Skipped, gpuPlanner.Status);
+        Assert.Equal("gpu_vram_not_available", gpuPlanner.SkipReason);
+    }
+
+    [Fact]
+    public void BuildWorkerProfileScenarios_SkipsGpuProfiles_WhenGpuComputeQuotaDisablesRuntimeCapacity()
+    {
+        var config = new WorkerProfileConfig(
+            PlannerWorkerCount: 4,
+            PlannerIterations: 8,
+            HiddenRegionNeurons: WorkerCapabilitySettingsKeys.DefaultRegionShardGpuNeuronThreshold);
+        var capabilities = CreateCudaCapabilities();
+        capabilities.GpuComputeLimitPercent = 0;
+
+        var scenarios = PerfProbeRunner.BuildWorkerProfileScenarios(config, capabilities).ToArray();
+
+        var gpuCapability = Assert.Single(scenarios, static scenario =>
+            scenario.Suite == "worker_profile"
+            && scenario.Scenario == "capability_probe"
+            && scenario.Backend == "gpu");
+        Assert.Equal(PerfScenarioStatus.Skipped, gpuCapability.Status);
+        Assert.Equal("gpu_compute_not_available", gpuCapability.SkipReason);
+
+        var gpuPlanner = Assert.Single(scenarios, static scenario =>
+            scenario.Suite == "worker_profile"
+            && scenario.Scenario == "placement_planner_profile"
+            && scenario.Backend == "gpu");
+        Assert.Equal(PerfScenarioStatus.Skipped, gpuPlanner.Status);
+        Assert.Equal("gpu_compute_not_available", gpuPlanner.SkipReason);
+    }
+
+    [Fact]
     public void BuildWorkerProfileScenarios_SkipsGpuPlanner_WhenHiddenWorkloadCannotReachGpuThreshold()
     {
         var config = new WorkerProfileConfig(
@@ -339,7 +393,7 @@ public sealed class PerfProbeRunnerTests
     public async Task LocalRuntimeHarness_GpuSingleBrainFlow_Completes_WhenCompatibleGpuIsAvailable()
     {
         var capabilities = new WorkerNodeCapabilityProvider().GetCapabilities();
-        if (!capabilities.IlgpuCudaAvailable && !capabilities.IlgpuOpenclAvailable)
+        if (!HasCurrentGpuRuntimeCapacity(capabilities))
         {
             return;
         }
@@ -448,9 +502,7 @@ public sealed class PerfProbeRunnerTests
             && result.Backend == "gpu");
 
         var capabilities = new WorkerNodeCapabilityProvider().GetCapabilities();
-        if (capabilities.HasGpu
-            && capabilities.GpuScore > 0f
-            && (capabilities.IlgpuCudaAvailable || capabilities.IlgpuOpenclAvailable))
+        if (HasCurrentGpuRuntimeCapacity(capabilities))
         {
             Assert.Equal(PerfScenarioStatus.Passed, gpuRow.Status);
         }
@@ -540,4 +592,13 @@ public sealed class PerfProbeRunnerTests
             ProcessCpuLoadPercent = 0f,
             ProcessRamUsedBytes = 0
         };
+
+    private static bool HasCurrentGpuRuntimeCapacity(ProtoSettings.NodeCapabilities capabilities)
+        => capabilities.HasGpu
+           && (capabilities.IlgpuCudaAvailable || capabilities.IlgpuOpenclAvailable)
+           && WorkerCapabilityMath.EffectiveGpuScore(capabilities.GpuScore, capabilities.GpuComputeLimitPercent) > 0f
+           && WorkerCapabilityMath.EffectiveVramFreeBytes(
+               capabilities.VramFreeBytes,
+               capabilities.VramTotalBytes,
+               capabilities.GpuVramLimitPercent) > 0;
 }

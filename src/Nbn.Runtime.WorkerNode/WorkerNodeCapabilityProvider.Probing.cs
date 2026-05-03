@@ -67,10 +67,23 @@ public sealed partial class WorkerNodeCapabilityProvider
             }
 
             var availability = RegionShardGpuRuntime.ProbeAvailability(devices);
-            var gpuMemory = ResolveGpuMemory(context, gpuDevice);
+            var compatibleGpuDevice = RegionShardGpuRuntime.SelectPreferredCompatibleGpuDevice(devices);
+            if (!availability.IsBackendAvailable || compatibleGpuDevice is null)
+            {
+                return new WorkerGpuInfo(
+                    HasGpu: true,
+                    GpuName: gpuDevice.Name ?? string.Empty,
+                    VramFreeBytes: 0,
+                    VramTotalBytes: ToUnsignedBytes(gpuDevice.MemorySize),
+                    IlgpuCudaAvailable: false,
+                    IlgpuOpenclAvailable: false);
+            }
+
+            using var accelerator = compatibleGpuDevice.CreateAccelerator(context);
+            var gpuMemory = ResolveGpuMemory(accelerator);
             return new WorkerGpuInfo(
                 HasGpu: true,
-                GpuName: gpuDevice.Name ?? string.Empty,
+                GpuName: compatibleGpuDevice.Name ?? gpuDevice.Name ?? string.Empty,
                 VramFreeBytes: gpuMemory.FreeBytes,
                 VramTotalBytes: gpuMemory.TotalBytes,
                 IlgpuCudaAvailable: availability.CudaAvailable,
@@ -78,30 +91,43 @@ public sealed partial class WorkerNodeCapabilityProvider
         }
         catch
         {
+            return ProbeGpuVisibilityWithoutRuntime();
+        }
+    }
+
+    private static WorkerGpuInfo ProbeGpuVisibilityWithoutRuntime()
+    {
+        try
+        {
+            using var context = Context.CreateDefault();
+            var gpuDevice = RegionShardGpuRuntime.SelectPreferredGpuDevice(context.Devices);
+            return gpuDevice is null
+                ? new WorkerGpuInfo(false, string.Empty, 0, 0, false, false)
+                : new WorkerGpuInfo(
+                    HasGpu: true,
+                    GpuName: gpuDevice.Name ?? string.Empty,
+                    VramFreeBytes: 0,
+                    VramTotalBytes: ToUnsignedBytes(gpuDevice.MemorySize),
+                    IlgpuCudaAvailable: false,
+                    IlgpuOpenclAvailable: false);
+        }
+        catch
+        {
             return new WorkerGpuInfo(false, string.Empty, 0, 0, false, false);
         }
     }
 
-    private static WorkerMemoryInfo ResolveGpuMemory(Context context, Device device)
+    private static WorkerMemoryInfo ResolveGpuMemory(Accelerator accelerator)
     {
-        try
+        if (accelerator is CudaAccelerator cudaAccelerator)
         {
-            using var accelerator = device.CreateAccelerator(context);
-            if (accelerator is CudaAccelerator cudaAccelerator)
-            {
-                return new WorkerMemoryInfo(
-                    ToUnsignedBytes(cudaAccelerator.GetFreeMemory()),
-                    ToUnsignedBytes(accelerator.MemorySize));
-            }
+            return new WorkerMemoryInfo(
+                ToUnsignedBytes(cudaAccelerator.GetFreeMemory()),
+                ToUnsignedBytes(accelerator.MemorySize));
+        }
 
-            var totalBytes = ToUnsignedBytes(accelerator.MemorySize);
-            return new WorkerMemoryInfo(totalBytes, totalBytes);
-        }
-        catch
-        {
-            var totalBytes = ToUnsignedBytes(device.MemorySize);
-            return new WorkerMemoryInfo(totalBytes, totalBytes);
-        }
+        var totalBytes = ToUnsignedBytes(accelerator.MemorySize);
+        return new WorkerMemoryInfo(totalBytes, totalBytes);
     }
 
     private static WorkerMemoryInfo ProbeRamInfo()

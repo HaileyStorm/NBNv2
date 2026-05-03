@@ -268,8 +268,12 @@ public static partial class PerfProbeRunner
 
     private static bool HasCompatibleGpuCapabilities(ProtoSettings.NodeCapabilities capabilities)
         => capabilities.HasGpu
-           && capabilities.GpuScore > 0f
-           && (capabilities.IlgpuCudaAvailable || capabilities.IlgpuOpenclAvailable);
+           && (capabilities.IlgpuCudaAvailable || capabilities.IlgpuOpenclAvailable)
+           && WorkerCapabilityMath.EffectiveGpuScore(capabilities.GpuScore, capabilities.GpuComputeLimitPercent) > 0f
+           && WorkerCapabilityMath.EffectiveVramFreeBytes(
+               capabilities.VramFreeBytes,
+               capabilities.VramTotalBytes,
+               capabilities.GpuVramLimitPercent) > 0;
 
     private static bool CanExerciseGpuPlannerProfile(WorkerProfileConfig config)
         => config.HiddenRegionNeurons >= ResolvePlannerMaxNeuronsPerShard();
@@ -411,6 +415,21 @@ public static partial class PerfProbeRunner
         if (!capabilities.IlgpuCudaAvailable && !capabilities.IlgpuOpenclAvailable)
         {
             return "ilgpu_gpu_accelerator_unavailable";
+        }
+
+        if (WorkerCapabilityMath.EffectiveGpuScore(capabilities.GpuScore, capabilities.GpuComputeLimitPercent) <= 0f)
+        {
+            return capabilities.GpuScore > 0f && capabilities.GpuComputeLimitPercent == 0
+                ? "gpu_compute_not_available"
+                : "gpu_score_not_available";
+        }
+
+        if (WorkerCapabilityMath.EffectiveVramFreeBytes(
+                capabilities.VramFreeBytes,
+                capabilities.VramTotalBytes,
+                capabilities.GpuVramLimitPercent) == 0)
+        {
+            return "gpu_vram_not_available";
         }
 
         return "gpu_score_not_available";

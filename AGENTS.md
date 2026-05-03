@@ -45,6 +45,12 @@
 - `nbn_runtime_invariants`: checks region `0`/`31`, tick barrier ordering, snapshot/recovery, and reproduction protections against the assigned change.
 - `nbn_docs_guard`: decides whether canonical docs or render/check commands must change, and points to the exact doc files.
 
+## Model policy
+
+- Use GPT-5.5 as the default non-Spark model for local work and any agent/model override.
+- Use Spark only for discovery-only, simple mechanical, or otherwise low-risk delegated work.
+- Do not use GPT-5.4 model aliases for this repository.
+
 ## Documentation maintenance policy (required)
 
 When making code changes, update relevant canonical docs if behavior, decisions, ownership boundaries, invariants, or externally-visible contracts changed.

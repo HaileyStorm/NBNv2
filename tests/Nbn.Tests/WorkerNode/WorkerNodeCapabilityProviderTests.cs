@@ -95,13 +95,13 @@ public sealed class WorkerNodeCapabilityProviderTests
         provider.MarkDirty();
         var fifth = provider.GetCapabilities();
 
-        Assert.Equal(2, baselineCalls);
+        Assert.Equal(3, baselineCalls);
         Assert.Equal(2, scoreCalls);
         Assert.Equal((ulong)1_000, first.RamFreeBytes);
         Assert.Equal((ulong)1_000, second.RamFreeBytes);
         Assert.Equal((ulong)1_000, third.RamFreeBytes);
         Assert.Equal((ulong)2_000, fourth.RamFreeBytes);
-        Assert.Equal((ulong)2_000, fifth.RamFreeBytes);
+        Assert.Equal((ulong)3_000, fifth.RamFreeBytes);
         Assert.Equal(10f, first.CpuScore);
         Assert.Equal(10f, second.CpuScore);
         Assert.Equal(10f, third.CpuScore);
@@ -168,6 +168,51 @@ public sealed class WorkerNodeCapabilityProviderTests
         Assert.Equal(10f, first.CpuScore);
         Assert.Equal(20f, second.CpuScore);
         Assert.Equal(40f, second.GpuScore);
+    }
+
+    [Fact]
+    public void GetCapabilities_RebenchmarksWhenGpuVramAvailabilityChanges()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var baselineCalls = 0;
+        var scoreCalls = 0;
+
+        var provider = new WorkerNodeCapabilityProvider(
+            probeRefreshInterval: TimeSpan.FromMinutes(1),
+            clock: () => now,
+            baselineProbe: () =>
+            {
+                baselineCalls++;
+                return new WorkerNodeCapabilityProvider.WorkerCapabilityBaseline(
+                    CpuCores: 8,
+                    RamFreeBytes: 1_000,
+                    RamTotalBytes: 16_000,
+                    StorageFreeBytes: 2_000,
+                    StorageTotalBytes: 8_000,
+                    HasGpu: true,
+                    GpuName: "gpu0",
+                    VramFreeBytes: baselineCalls == 1 ? 0UL : 4_000UL,
+                    VramTotalBytes: 8_000,
+                    IlgpuCudaAvailable: true,
+                    IlgpuOpenclAvailable: false);
+            },
+            scoreProbe: baseline =>
+            {
+                scoreCalls++;
+                return new WorkerNodeCapabilityProvider.WorkerCapabilityScores(
+                    CpuScore: 10f,
+                    GpuScore: baseline.VramFreeBytes == 0 ? 0f : 20f);
+            });
+
+        var first = provider.GetCapabilities();
+
+        now = now.AddMinutes(2);
+        var second = provider.GetCapabilities();
+
+        Assert.Equal(2, baselineCalls);
+        Assert.Equal(2, scoreCalls);
+        Assert.Equal(0f, first.GpuScore);
+        Assert.Equal(20f, second.GpuScore);
     }
 
     [Fact]

@@ -21,6 +21,7 @@ public sealed partial class WorkerNodeCapabilityProvider
     private WorkerCapabilityScores? _scores;
     private DateTimeOffset _baselineSampledAt;
     private ProcessCpuSample? _lastProcessCpuSample;
+    private bool _forceScoreRefresh;
 
     /// <summary>
     /// Creates a capability provider with optional probe overrides for testing or custom host integration.
@@ -62,13 +63,16 @@ public sealed partial class WorkerNodeCapabilityProvider
     }
 
     /// <summary>
-    /// Invalidates cached score benchmarks so the next capability read recomputes them.
+    /// Invalidates cached host probes and score benchmarks so the next capability read resamples the worker.
     /// </summary>
     public void MarkDirty()
     {
         lock (_sync)
         {
+            _baseline = null;
+            _baselineSampledAt = DateTimeOffset.MinValue;
             _scores = null;
+            _forceScoreRefresh = true;
         }
     }
 
@@ -129,7 +133,12 @@ public sealed partial class WorkerNodeCapabilityProvider
 
     private WorkerCapabilityScores GetOrRefreshScores(WorkerCapabilityBaseline baseline)
     {
-        _scores ??= SafeProbeScores(baseline);
+        if (_forceScoreRefresh || _scores is null)
+        {
+            _scores = SafeProbeScores(baseline);
+            _forceScoreRefresh = false;
+        }
+
         return _scores;
     }
 
@@ -172,6 +181,8 @@ public sealed partial class WorkerNodeCapabilityProvider
         => left.CpuCores == right.CpuCores
            && left.HasGpu == right.HasGpu
            && string.Equals(left.GpuName, right.GpuName, StringComparison.Ordinal)
+           && left.VramFreeBytes == right.VramFreeBytes
+           && left.VramTotalBytes == right.VramTotalBytes
            && left.IlgpuCudaAvailable == right.IlgpuCudaAvailable
            && left.IlgpuOpenclAvailable == right.IlgpuOpenclAvailable;
 
