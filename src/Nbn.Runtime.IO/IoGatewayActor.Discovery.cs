@@ -25,10 +25,11 @@ public sealed partial class IoGatewayActor
 
         var hiveSeen = false;
         var reproSeen = false;
+        var ppoSeen = false;
         var speciationSeen = false;
         foreach (var entry in snapshot.Registrations)
         {
-            if (!TryMarkDiscoveryKey(entry.Key, ref hiveSeen, ref reproSeen, ref speciationSeen))
+            if (!TryMarkDiscoveryKey(entry.Key, ref hiveSeen, ref reproSeen, ref ppoSeen, ref speciationSeen))
             {
                 continue;
             }
@@ -44,6 +45,11 @@ public sealed partial class IoGatewayActor
         if (!reproSeen)
         {
             _reproPid = _configuredReproPid;
+        }
+
+        if (!ppoSeen)
+        {
+            _ppoPid = _configuredPpoPid;
         }
 
         if (!speciationSeen)
@@ -92,6 +98,12 @@ public sealed partial class IoGatewayActor
         if (string.Equals(registration.Key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.Ordinal))
         {
             _reproPid = registration.Endpoint.ToPid();
+            return;
+        }
+
+        if (string.Equals(registration.Key, ServiceEndpointSettings.PpoManagerKey, StringComparison.Ordinal))
+        {
+            _ppoPid = registration.Endpoint.ToPid();
             return;
         }
 
@@ -184,6 +196,13 @@ public sealed partial class IoGatewayActor
             return;
         }
 
+        if (string.Equals(key, ServiceEndpointSettings.PpoManagerKey, StringComparison.Ordinal))
+        {
+            _ppoPid = _configuredPpoPid;
+            Console.WriteLine($"[WARN] IO discovery removed ppo endpoint (source={source}, reason={reason}).");
+            return;
+        }
+
         if (string.Equals(key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.Ordinal))
         {
             _speciationPid = _configuredSpeciationPid;
@@ -194,12 +213,14 @@ public sealed partial class IoGatewayActor
     private static bool IsDiscoveryKey(string? key)
         => string.Equals(key, ServiceEndpointSettings.HiveMindKey, StringComparison.Ordinal)
            || string.Equals(key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.Ordinal)
+           || string.Equals(key, ServiceEndpointSettings.PpoManagerKey, StringComparison.Ordinal)
            || string.Equals(key, ServiceEndpointSettings.SpeciationManagerKey, StringComparison.Ordinal);
 
     private static bool TryMarkDiscoveryKey(
         string? key,
         ref bool hiveSeen,
         ref bool reproSeen,
+        ref bool ppoSeen,
         ref bool speciationSeen)
     {
         if (string.Equals(key, ServiceEndpointSettings.HiveMindKey, StringComparison.Ordinal))
@@ -211,6 +232,12 @@ public sealed partial class IoGatewayActor
         if (string.Equals(key, ServiceEndpointSettings.ReproductionManagerKey, StringComparison.Ordinal))
         {
             reproSeen = true;
+            return true;
+        }
+
+        if (string.Equals(key, ServiceEndpointSettings.PpoManagerKey, StringComparison.Ordinal))
+        {
+            ppoSeen = true;
             return true;
         }
 

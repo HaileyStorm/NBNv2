@@ -1026,6 +1026,30 @@ public class ProtoCompatibilityTests
     }
 
     [Fact]
+    public void ProtoIo_PpoWrappers_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+
+        var status = descriptor.MessageTypes.Single(message => message.Name == "PpoStatus");
+        AssertField(status, "request", 1, FieldType.Message, "nbn.ppo.PpoStatusRequest");
+
+        var statusResult = descriptor.MessageTypes.Single(message => message.Name == "PpoStatusResult");
+        AssertField(statusResult, "response", 1, FieldType.Message, "nbn.ppo.PpoStatusResponse");
+
+        var startRun = descriptor.MessageTypes.Single(message => message.Name == "PpoStartRun");
+        AssertField(startRun, "request", 1, FieldType.Message, "nbn.ppo.PpoStartRunRequest");
+
+        var startRunResult = descriptor.MessageTypes.Single(message => message.Name == "PpoStartRunResult");
+        AssertField(startRunResult, "response", 1, FieldType.Message, "nbn.ppo.PpoStartRunResponse");
+
+        var stopRun = descriptor.MessageTypes.Single(message => message.Name == "PpoStopRun");
+        AssertField(stopRun, "request", 1, FieldType.Message, "nbn.ppo.PpoStopRunRequest");
+
+        var stopRunResult = descriptor.MessageTypes.Single(message => message.Name == "PpoStopRunResult");
+        AssertField(stopRunResult, "response", 1, FieldType.Message, "nbn.ppo.PpoStopRunResponse");
+    }
+
+    [Fact]
     public void ProtoIo_SpeciationWrappers_AreStable()
     {
         var descriptor = NbnIoReflection.Descriptor;

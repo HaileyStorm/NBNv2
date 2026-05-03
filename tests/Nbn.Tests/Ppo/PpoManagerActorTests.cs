@@ -475,6 +475,32 @@ public sealed class PpoManagerActorTests
     }
 
     [Fact]
+    public async Task DependencyPidsConfigured_UpdatesRuntimeDependencyPids()
+    {
+        await using var system = new ActorSystem();
+        var manager = system.Root.Spawn(Props.FromProducer(() => new PpoManagerActor()));
+        var ioPid = system.Root.SpawnNamed(Props.FromFunc(_ => Task.CompletedTask), "ppo-test-io");
+        var reproductionPid = system.Root.SpawnNamed(Props.FromFunc(_ => Task.CompletedTask), "ppo-test-reproduction");
+        var speciationPid = system.Root.SpawnNamed(Props.FromFunc(_ => Task.CompletedTask), "ppo-test-speciation");
+
+        system.Root.Send(
+            manager,
+            new PpoManagerActor.DependencyPidsConfigured(ioPid, reproductionPid, speciationPid));
+
+        var status = await system.Root.RequestAsync<PpoStatusResponse>(
+            manager,
+            new PpoStatusRequest(),
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(status.Dependencies.IoAvailable);
+        Assert.True(status.Dependencies.ReproductionAvailable);
+        Assert.True(status.Dependencies.SpeciationAvailable);
+        Assert.Equal(ExpectedPidLabel(ioPid), status.Dependencies.IoEndpoint);
+        Assert.Equal(ExpectedPidLabel(reproductionPid), status.Dependencies.ReproductionEndpoint);
+        Assert.Equal(ExpectedPidLabel(speciationPid), status.Dependencies.SpeciationEndpoint);
+    }
+
+    [Fact]
     public async Task StartRun_RejectsInvalidHyperparameters()
     {
         await using var system = new ActorSystem();
@@ -511,6 +537,9 @@ public sealed class PpoManagerActorTests
             Seed = 42,
             RewardSignal = "output.reward"
         };
+
+    private static string ExpectedPidLabel(PID pid)
+        => string.IsNullOrWhiteSpace(pid.Address) ? pid.Id : $"{pid.Address}/{pid.Id}";
 
     private static PpoStartRunRequest CreateValidStartRequest(Guid parentA, Guid parentB, string runId)
     {

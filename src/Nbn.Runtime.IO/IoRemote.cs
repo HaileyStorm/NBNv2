@@ -1,6 +1,7 @@
 using Nbn.Proto;
 using Nbn.Proto.Control;
 using Nbn.Proto.Io;
+using Nbn.Proto.Ppo;
 using Nbn.Proto.Repro;
 using Nbn.Proto.Speciation;
 using Nbn.Proto.Settings;
@@ -45,6 +46,7 @@ public static class IoRemote
             NbnCommonReflection.Descriptor,
             NbnControlReflection.Descriptor,
             NbnIoReflection.Descriptor,
+            NbnPpoReflection.Descriptor,
             NbnReproReflection.Descriptor,
             NbnSpeciationReflection.Descriptor,
             NbnSettingsReflection.Descriptor,

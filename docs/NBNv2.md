@@ -942,6 +942,7 @@ IO supports:
 * system plasticity master key (`plasticity.system.enabled`) from SettingsMonitor, combined with per-brain `enabled` at runtime (`effective = system && brain`)
 * system plasticity default mode/rate keys in SettingsMonitor (`plasticity.system.probabilistic_updates`, `plasticity.system.rate`) for operator sync surfaces (Workbench Energy + Plasticity and Orchestrator Settings)
 * homeostasis control (`enabled`, target/update modes, base probability, min-step codes, optional energy coupling scales)
+* PPO optional core service status/start/stop forwarding; IO discovers the PPO manager through `service.endpoint.ppo_manager` and clients do not need a direct PPO endpoint
 
 Command writes can be sent as requests and return `IoCommandAck` with:
 
@@ -2814,6 +2815,7 @@ option csharp_namespace = "Nbn.Proto.Io";
 
 import "nbn_common.proto";
 import "nbn_control.proto";
+import "nbn_ppo.proto";
 import "nbn_repro.proto";
 import "nbn_speciation.proto";
 import "nbn_signals.proto";
@@ -3179,6 +3181,30 @@ message ReproduceResult {
 
 message AssessCompatibilityResult {
   nbn.repro.ReproduceResult result = 1;
+}
+
+message PpoStatus {
+  nbn.ppo.PpoStatusRequest request = 1;
+}
+
+message PpoStatusResult {
+  nbn.ppo.PpoStatusResponse response = 1;
+}
+
+message PpoStartRun {
+  nbn.ppo.PpoStartRunRequest request = 1;
+}
+
+message PpoStartRunResult {
+  nbn.ppo.PpoStartRunResponse response = 1;
+}
+
+message PpoStopRun {
+  nbn.ppo.PpoStopRunRequest request = 1;
+}
+
+message PpoStopRunResult {
+  nbn.ppo.PpoStopRunResponse response = 1;
 }
 
 message SpeciationStatus {

@@ -23,6 +23,7 @@ public sealed partial class IoGatewayActor : IActor
     private static readonly TimeSpan BrainInfoResolveTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan SpawnRequestTimeout = TimeSpan.FromSeconds(70);
     private static readonly TimeSpan ReproRequestTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan PpoRequestTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan SpeciationRequestTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan ExportRequestTimeout = TimeSpan.FromSeconds(45);
     private const float DefaultPlasticityRate = 0.001f;
@@ -52,24 +53,33 @@ public sealed partial class IoGatewayActor : IActor
     private readonly Dictionary<string, int> _outputSubscriberWatchRefCounts = new(StringComparer.Ordinal);
     private readonly PID? _configuredHiveMindPid;
     private readonly PID? _configuredReproPid;
+    private readonly PID? _configuredPpoPid;
     private readonly PID? _configuredSpeciationPid;
 
     private PID? _hiveMindPid;
     private PID? _reproPid;
+    private PID? _ppoPid;
     private PID? _speciationPid;
 
     /// <summary>
     /// Initializes an IO gateway actor with optional preconfigured service endpoints.
     /// </summary>
-    public IoGatewayActor(IoOptions options, PID? hiveMindPid = null, PID? reproPid = null, PID? speciationPid = null)
+    public IoGatewayActor(
+        IoOptions options,
+        PID? hiveMindPid = null,
+        PID? reproPid = null,
+        PID? speciationPid = null,
+        PID? ppoPid = null)
     {
         _options = options;
         _configuredHiveMindPid = hiveMindPid ?? TryCreatePid(options.HiveMindAddress, options.HiveMindName);
         _configuredReproPid = reproPid ?? TryCreatePid(options.ReproAddress, options.ReproName);
         _configuredSpeciationPid = speciationPid ?? TryCreatePid(options.SpeciationAddress, options.SpeciationName);
+        _configuredPpoPid = ppoPid;
         _hiveMindPid = _configuredHiveMindPid;
         _reproPid = _configuredReproPid;
         _speciationPid = _configuredSpeciationPid;
+        _ppoPid = _configuredPpoPid;
     }
 
     /// <summary>
@@ -197,6 +207,15 @@ public sealed partial class IoGatewayActor : IActor
                     break;
                 case AssessCompatibilityByArtifacts message:
                     HandleAssessCompatibilityByArtifacts(context, message);
+                    break;
+                case PpoStatus message:
+                    HandlePpoStatus(context, message);
+                    break;
+                case PpoStartRun message:
+                    HandlePpoStartRun(context, message);
+                    break;
+                case PpoStopRun message:
+                    HandlePpoStopRun(context, message);
                     break;
                 case SpeciationStatus message:
                     HandleSpeciationStatus(context, message);

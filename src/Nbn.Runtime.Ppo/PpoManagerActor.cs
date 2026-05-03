@@ -49,6 +49,9 @@ public sealed partial class PpoManagerActor : IActor
             case PpoStopRunRequest message:
                 context.Respond(StopRun(message));
                 break;
+            case DependencyPidsConfigured message:
+                ApplyConfiguredDependencyPids(message);
+                break;
             case DiscoverySnapshotApplied snapshot:
                 ApplyDiscoverySnapshot(snapshot);
                 break;
@@ -69,6 +72,26 @@ public sealed partial class PpoManagerActor : IActor
             LastRun = _lastRun?.Clone(),
             CompletedRunCount = _completedRunCount
         };
+
+    public sealed record DependencyPidsConfigured(PID? IoPid, PID? ReproductionPid, PID? SpeciationPid);
+
+    private void ApplyConfiguredDependencyPids(DependencyPidsConfigured message)
+    {
+        if (message.IoPid is not null)
+        {
+            _ioPid = message.IoPid;
+        }
+
+        if (message.ReproductionPid is not null)
+        {
+            _reproductionPid = message.ReproductionPid;
+        }
+
+        if (message.SpeciationPid is not null)
+        {
+            _speciationPid = message.SpeciationPid;
+        }
+    }
 
     private PpoStartRunResponse StartRun(IContext context, PpoStartRunRequest request)
     {

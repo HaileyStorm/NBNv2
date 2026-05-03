@@ -123,6 +123,7 @@ static async Task RunDiscoveryBootstrapLoopAsync(
     [
         ServiceEndpointSettings.HiveMindKey,
         ServiceEndpointSettings.ReproductionManagerKey,
+        ServiceEndpointSettings.PpoManagerKey,
         ServiceEndpointSettings.SpeciationManagerKey
     ];
     var refreshInterval = TimeSpan.FromSeconds(15);

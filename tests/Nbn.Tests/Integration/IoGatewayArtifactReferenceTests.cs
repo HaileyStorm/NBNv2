@@ -17,6 +17,7 @@ using Proto;
 using Proto.Remote;
 using Proto.Remote.GrpcNet;
 using ProtoControl = Nbn.Proto.Control;
+using ProtoPpo = Nbn.Proto.Ppo;
 using ProtoSettings = Nbn.Proto.Settings;
 using Repro = Nbn.Proto.Repro;
 using ProtoSpec = Nbn.Proto.Speciation;
@@ -2816,6 +2817,95 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task PpoStatus_Returns_ServiceUnavailable_When_Ppo_Manager_Is_Not_Configured()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var response = await root.RequestAsync<PpoStatusResult>(
+            gateway,
+            new PpoStatus
+            {
+                Request = new ProtoPpo.PpoStatusRequest()
+            });
+
+        Assert.NotNull(response.Response);
+        Assert.Equal(ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable, response.Response.FailureReason);
+        Assert.Contains("PPO manager endpoint is not configured", response.Response.FailureDetail);
+        Assert.NotNull(response.Response.Dependencies);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task PpoRequests_Forward_Through_Manager_And_PreserveResponses()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var ppoProbe = root.Spawn(Props.FromProducer(() => new PpoFixedResponseProbe()));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), ppoPid: ppoProbe)));
+
+        var status = await root.RequestAsync<PpoStatusResult>(
+            gateway,
+            new PpoStatus
+            {
+                Request = new ProtoPpo.PpoStatusRequest()
+            });
+
+        Assert.NotNull(status.Response);
+        Assert.Equal(ProtoPpo.PpoFailureReason.PpoFailureNone, status.Response.FailureReason);
+        Assert.Equal((ulong)3, status.Response.CompletedRunCount);
+        Assert.True(status.Response.Dependencies.IoAvailable);
+
+        var start = await root.RequestAsync<PpoStartRunResult>(
+            gateway,
+            new PpoStartRun
+            {
+                Request = new ProtoPpo.PpoStartRunRequest
+                {
+                    RunId = "io-forward-run",
+                    Hyperparameters = new ProtoPpo.PpoHyperparameters
+                    {
+                        RolloutTickCount = 16,
+                        RolloutBatchCount = 2,
+                        ClipEpsilon = 0.12f,
+                        DiscountGamma = 0.95f,
+                        GaeLambda = 0.9f,
+                        LearningRate = 0.0003f,
+                        OptimizationEpochCount = 2,
+                        MinibatchSize = 1,
+                        Seed = 17
+                    }
+                }
+            });
+
+        Assert.NotNull(start.Response);
+        Assert.True(start.Response.Accepted);
+        Assert.Equal(ProtoPpo.PpoFailureReason.PpoFailureNone, start.Response.FailureReason);
+        Assert.Equal("io-forward-run", start.Response.Run.RunId);
+        Assert.Equal(ProtoPpo.PpoRunState.Running, start.Response.Run.State);
+
+        var stop = await root.RequestAsync<PpoStopRunResult>(
+            gateway,
+            new PpoStopRun
+            {
+                Request = new ProtoPpo.PpoStopRunRequest
+                {
+                    RunId = "io-forward-run"
+                }
+            });
+
+        Assert.NotNull(stop.Response);
+        Assert.True(stop.Response.Stopped);
+        Assert.Equal(ProtoPpo.PpoFailureReason.PpoFailureNone, stop.Response.FailureReason);
+        Assert.Equal("io-forward-run", stop.Response.Run.RunId);
+        Assert.Equal(ProtoPpo.PpoRunState.Cancelled, stop.Response.Run.State);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SpeciationStatus_Forwards_Response_And_PreservesSnapshot()
     {
         var system = new ActorSystem();
@@ -3839,6 +3929,59 @@ public class IoGatewayArtifactReferenceTests
                 case Repro.AssessCompatibilityByBrainIdsRequest:
                 case Repro.AssessCompatibilityByArtifactsRequest:
                     context.Respond("unexpected-response-type");
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class PpoFixedResponseProbe : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoPpo.PpoStatusRequest:
+                    context.Respond(new ProtoPpo.PpoStatusResponse
+                    {
+                        FailureReason = ProtoPpo.PpoFailureReason.PpoFailureNone,
+                        FailureDetail = string.Empty,
+                        CompletedRunCount = 3,
+                        Dependencies = new ProtoPpo.PpoDependencyStatus
+                        {
+                            IoAvailable = true,
+                            ReproductionAvailable = true,
+                            SpeciationAvailable = true
+                        }
+                    });
+                    break;
+                case ProtoPpo.PpoStartRunRequest start:
+                    context.Respond(new ProtoPpo.PpoStartRunResponse
+                    {
+                        FailureReason = ProtoPpo.PpoFailureReason.PpoFailureNone,
+                        FailureDetail = string.Empty,
+                        Accepted = true,
+                        Run = new ProtoPpo.PpoRunDescriptor
+                        {
+                            RunId = start.RunId,
+                            State = ProtoPpo.PpoRunState.Running,
+                            Hyperparameters = start.Hyperparameters?.Clone()
+                        }
+                    });
+                    break;
+                case ProtoPpo.PpoStopRunRequest stop:
+                    context.Respond(new ProtoPpo.PpoStopRunResponse
+                    {
+                        FailureReason = ProtoPpo.PpoFailureReason.PpoFailureNone,
+                        FailureDetail = string.Empty,
+                        Stopped = true,
+                        Run = new ProtoPpo.PpoRunDescriptor
+                        {
+                            RunId = stop.RunId,
+                            State = ProtoPpo.PpoRunState.Cancelled
+                        }
+                    });
                     break;
             }
 

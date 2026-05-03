@@ -968,6 +968,7 @@ option csharp_namespace = "Nbn.Proto.Io";
 
 import "nbn_common.proto";
 import "nbn_control.proto";
+import "nbn_ppo.proto";
 import "nbn_repro.proto";
 import "nbn_speciation.proto";
 import "nbn_signals.proto";
@@ -1333,6 +1334,30 @@ message ReproduceResult {
 
 message AssessCompatibilityResult {
   nbn.repro.ReproduceResult result = 1;
+}
+
+message PpoStatus {
+  nbn.ppo.PpoStatusRequest request = 1;
+}
+
+message PpoStatusResult {
+  nbn.ppo.PpoStatusResponse response = 1;
+}
+
+message PpoStartRun {
+  nbn.ppo.PpoStartRunRequest request = 1;
+}
+
+message PpoStartRunResult {
+  nbn.ppo.PpoStartRunResponse response = 1;
+}
+
+message PpoStopRun {
+  nbn.ppo.PpoStopRunRequest request = 1;
+}
+
+message PpoStopRunResult {
+  nbn.ppo.PpoStopRunResponse response = 1;
 }
 
 message SpeciationStatus {
