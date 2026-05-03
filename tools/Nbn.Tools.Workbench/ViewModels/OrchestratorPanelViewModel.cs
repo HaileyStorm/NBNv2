@@ -46,6 +46,7 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private readonly ILocalServiceRunner _ioRunner;
     private readonly ILocalServiceRunner _reproRunner;
     private readonly ILocalServiceRunner _speciationRunner;
+    private readonly ILocalServiceRunner _ppoRunner;
     private readonly ILocalServiceRunner _workerRunner;
     private readonly ILocalServiceRunner _obsRunner;
     private readonly ILocalServiceRunner _profileCurrentSystemRunner;
@@ -68,6 +69,7 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private string _ioLaunchStatus = "Idle";
     private string _reproLaunchStatus = "Idle";
     private string _speciationLaunchStatus = "Idle";
+    private string _ppoLaunchStatus = "Idle";
     private string _workerLaunchStatus = "Idle";
     private string _obsLaunchStatus = "Idle";
     private string _profileCurrentSystemStatus = "Idle";
@@ -126,6 +128,9 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
         nameof(ConnectionViewModel.SpeciationDiscoverable),
         nameof(ConnectionViewModel.SpeciationStatus),
         nameof(ConnectionViewModel.SpeciationEndpointDisplay),
+        nameof(ConnectionViewModel.PpoDiscoverable),
+        nameof(ConnectionViewModel.PpoStatus),
+        nameof(ConnectionViewModel.PpoEndpointDisplay),
         nameof(ConnectionViewModel.ObsConnected),
         nameof(ConnectionViewModel.ObsDiscoverable),
         nameof(ConnectionViewModel.ObsStatus),
@@ -159,6 +164,7 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
         _ioRunner = createRunner();
         _reproRunner = createRunner();
         _speciationRunner = createRunner();
+        _ppoRunner = createRunner();
         _workerRunner = createRunner();
         _obsRunner = createRunner();
         _profileCurrentSystemRunner = createRunner();
@@ -190,6 +196,8 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
         StopReproCommand = new AsyncRelayCommand(() => StopRunnerAsync(_reproRunner, value => ReproLaunchStatus = value));
         StartSpeciationCommand = new AsyncRelayCommand(StartSpeciationAsync);
         StopSpeciationCommand = new AsyncRelayCommand(() => StopRunnerAsync(_speciationRunner, value => SpeciationLaunchStatus = value));
+        StartPpoCommand = new AsyncRelayCommand(StartPpoAsync);
+        StopPpoCommand = new AsyncRelayCommand(() => StopRunnerAsync(_ppoRunner, value => PpoLaunchStatus = value));
         StartWorkerCommand = new AsyncRelayCommand(StartWorkerAsync);
         StopWorkerCommand = new AsyncRelayCommand(() => StopRunnerAsync(_workerRunner, value => WorkerLaunchStatus = value));
         StartObsCommand = new AsyncRelayCommand(StartObsAsync);
@@ -251,6 +259,10 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
 
     public AsyncRelayCommand StopSpeciationCommand { get; }
 
+    public AsyncRelayCommand StartPpoCommand { get; }
+
+    public AsyncRelayCommand StopPpoCommand { get; }
+
     public AsyncRelayCommand StartObsCommand { get; }
 
     public AsyncRelayCommand StopObsCommand { get; }
@@ -289,6 +301,12 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     {
         get => _speciationLaunchStatus;
         set => SetProperty(ref _speciationLaunchStatus, value);
+    }
+
+    public string PpoLaunchStatus
+    {
+        get => _ppoLaunchStatus;
+        set => SetProperty(ref _ppoLaunchStatus, value);
     }
 
     public string WorkerLaunchStatus

@@ -18,6 +18,9 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _speciationHost = "127.0.0.1";
     private string _speciationPortText = "12080";
     private string _speciationManager = "SpeciationManager";
+    private string _ppoHost = "127.0.0.1";
+    private string _ppoPortText = "12090";
+    private string _ppoManager = "PpoManager";
     private string _workerHost = "127.0.0.1";
     private string _workerPortText = "12041";
     private string _workerCountText = "1";
@@ -43,6 +46,7 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _ioStatus = "Disconnected";
     private string _reproStatus = "Disconnected";
     private string _speciationStatus = "Disconnected";
+    private string _ppoStatus = "Disconnected";
     private string _workerStatus = "Disconnected";
     private string _obsStatus = "Disconnected";
     private string _settingsStatus = "Idle";
@@ -56,12 +60,14 @@ public sealed class ConnectionViewModel : ViewModelBase
     private bool _ioDiscoverable;
     private bool _reproDiscoverable;
     private bool _speciationDiscoverable;
+    private bool _ppoDiscoverable;
     private bool _workerDiscoverable;
     private bool _obsDiscoverable;
     private bool _hiveMindDiscoverable;
     private string _ioEndpointDisplay = "Missing";
     private string _reproEndpointDisplay = "Missing";
     private string _speciationEndpointDisplay = "Missing";
+    private string _ppoEndpointDisplay = "Missing";
     private string _workerEndpointDisplay = "Missing";
     private string _obsEndpointDisplay = "Missing";
     private string _hiveMindEndpointDisplay = "Missing";
@@ -165,6 +171,24 @@ public sealed class ConnectionViewModel : ViewModelBase
     {
         get => _speciationManager;
         set => SetProperty(ref _speciationManager, value);
+    }
+
+    public string PpoHost
+    {
+        get => _ppoHost;
+        set => SetProperty(ref _ppoHost, value);
+    }
+
+    public string PpoPortText
+    {
+        get => _ppoPortText;
+        set => SetProperty(ref _ppoPortText, value);
+    }
+
+    public string PpoManager
+    {
+        get => _ppoManager;
+        set => SetProperty(ref _ppoManager, value);
     }
 
     public string WorkerHost
@@ -340,6 +364,12 @@ public sealed class ConnectionViewModel : ViewModelBase
         set => SetProperty(ref _speciationStatus, value);
     }
 
+    public string PpoStatus
+    {
+        get => _ppoStatus;
+        set => SetProperty(ref _ppoStatus, value);
+    }
+
     public string WorkerStatus
     {
         get => _workerStatus;
@@ -493,6 +523,20 @@ public sealed class ConnectionViewModel : ViewModelBase
         }
     }
 
+    public bool PpoDiscoverable
+    {
+        get => _ppoDiscoverable;
+        set
+        {
+            if (SetProperty(ref _ppoDiscoverable, value))
+            {
+                OnPropertyChanged(nameof(PpoChipBackground));
+                OnPropertyChanged(nameof(PpoChipBorder));
+                OnPropertyChanged(nameof(PpoStatusLabel));
+            }
+        }
+    }
+
     public bool WorkerDiscoverable
     {
         get => _workerDiscoverable;
@@ -539,6 +583,12 @@ public sealed class ConnectionViewModel : ViewModelBase
         set => SetProperty(ref _speciationEndpointDisplay, value);
     }
 
+    public string PpoEndpointDisplay
+    {
+        get => _ppoEndpointDisplay;
+        set => SetProperty(ref _ppoEndpointDisplay, value);
+    }
+
     public string WorkerEndpointDisplay
     {
         get => _workerEndpointDisplay;
@@ -573,6 +623,10 @@ public sealed class ConnectionViewModel : ViewModelBase
 
     public IBrush SpeciationChipBorder => SpeciationDiscoverable ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
 
+    public IBrush PpoChipBackground => PpoDiscoverable ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
+
+    public IBrush PpoChipBorder => PpoDiscoverable ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
+
     public IBrush WorkerChipBackground => WorkerDiscoverable ? new SolidColorBrush(Color.Parse("#DBF2EC")) : new SolidColorBrush(Color.Parse("#F4E8E0"));
 
     public IBrush WorkerChipBorder => WorkerDiscoverable ? new SolidColorBrush(Color.Parse("#9FD9C8")) : new SolidColorBrush(Color.Parse("#E1C0AF"));
@@ -594,6 +648,8 @@ public sealed class ConnectionViewModel : ViewModelBase
     public string ReproStatusLabel => ReproDiscoverable ? "Repro online" : "Repro offline";
 
     public string SpeciationStatusLabel => SpeciationDiscoverable ? "Speciation online" : "Speciation offline";
+
+    public string PpoStatusLabel => PpoDiscoverable ? "PPO online" : "PPO offline";
 
     public string WorkerStatusLabel => WorkerDiscoverable ? "Worker online" : "Worker offline";
 
@@ -618,6 +674,9 @@ public sealed class ConnectionViewModel : ViewModelBase
 
     public bool IsSpeciationServiceReady()
         => SpeciationDiscoverable || HasPositiveStatus(SpeciationStatus);
+
+    public bool IsPpoServiceReady()
+        => PpoDiscoverable || HasPositiveStatus(PpoStatus);
 
     public bool HasSpawnServiceReadiness()
         => IsSettingsServiceReady() && IsHiveMindServiceReady() && IsIoServiceReady();

@@ -25,6 +25,7 @@ public sealed partial class OrchestratorPanelViewModel
                 StopRunnerAsync(_ioRunner, _ => { }),
                 StopRunnerAsync(_reproRunner, _ => { }),
                 StopRunnerAsync(_speciationRunner, _ => { }),
+                StopRunnerAsync(_ppoRunner, _ => { }),
                 StopRunnerAsync(_obsRunner, _ => { }))
             .ConfigureAwait(false);
     }
@@ -150,6 +151,35 @@ public sealed partial class OrchestratorPanelViewModel
             _speciationRunner,
             includeRuntimeDiagnostics: true).ConfigureAwait(false);
         StatusMessage = $"Speciation launch: {SpeciationLaunchStatus}";
+    }
+
+    private async Task StartPpoAsync()
+    {
+        var projectPath = RepoLocator.ResolvePathFromRepo("src", "Nbn.Runtime.Ppo");
+        if (!TryParsePort(Connections.PpoPortText, out var ppoPort))
+        {
+            PpoLaunchStatus = "Invalid PPO port.";
+            return;
+        }
+
+        if (!TryParsePort(Connections.SettingsPortText, out var settingsPort))
+        {
+            PpoLaunchStatus = "Invalid Settings port.";
+            return;
+        }
+
+        var args = BuildLocalServiceNetworkArgs(Connections.ResolveExplicitLocalAdvertiseHost(), Connections.PpoHost, ppoPort)
+                 + $" --manager-name {Connections.PpoManager}"
+                 + $" --settings-host {Connections.SettingsHost} --settings-port {settingsPort} --settings-name {Connections.SettingsName}";
+        PpoLaunchStatus = await StartLocalServiceAsync(
+            projectPath,
+            "Nbn.Runtime.Ppo",
+            args,
+            "PPO",
+            ppoPort,
+            _ppoRunner,
+            includeRuntimeDiagnostics: true).ConfigureAwait(false);
+        StatusMessage = $"PPO launch: {PpoLaunchStatus}";
     }
 
     private async Task StartWorkerAsync()
@@ -396,6 +426,18 @@ public sealed partial class OrchestratorPanelViewModel
     public Task StopSpeciationServiceAsync()
         => StopRunnerAsync(_speciationRunner, value => SpeciationLaunchStatus = value);
 
+    /// <summary>
+    /// Starts the local PPO runtime service using SettingsMonitor discovery for dependencies.
+    /// </summary>
+    public Task StartPpoServiceAsync()
+        => StartPpoAsync();
+
+    /// <summary>
+    /// Stops the locally launched PPO runtime service and updates the visible launch status.
+    /// </summary>
+    public Task StopPpoServiceAsync()
+        => StopRunnerAsync(_ppoRunner, value => PpoLaunchStatus = value);
+
     private async Task StartAllAsync()
     {
         var rollbackActions = new List<Func<Task>>();
@@ -492,6 +534,7 @@ public sealed partial class OrchestratorPanelViewModel
     {
         _disconnectAll?.Invoke();
         await StopRunnerAsync(_obsRunner, value => ObsLaunchStatus = value).ConfigureAwait(false);
+        await StopRunnerAsync(_ppoRunner, value => PpoLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_ioRunner, value => IoLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_reproRunner, value => ReproLaunchStatus = value).ConfigureAwait(false);
         await StopRunnerAsync(_speciationRunner, value => SpeciationLaunchStatus = value).ConfigureAwait(false);

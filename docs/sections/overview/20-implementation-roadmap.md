@@ -27,6 +27,7 @@
 - Workbench operator path:
   - `dotnet run --project tools/Nbn.Tools.Workbench -c Release`
   - In `Orchestrator`, use `Start All`, then in `Designer` use `Generate Random Brain` and `Spawn Brain`
+  - Start optional PPO from `Orchestrator` Local Launch only when running optimization flows; it is discoverable through SettingsMonitor but not part of `Start All`
 - Operator runbooks:
   - `docs/runbooks/reproduction_operator_runbook.md`
   - `docs/runbooks/speciation_operator_runbook.md`

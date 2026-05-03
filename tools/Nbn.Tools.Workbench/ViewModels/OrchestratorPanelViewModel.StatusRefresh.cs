@@ -525,6 +525,10 @@ public sealed partial class OrchestratorPanelViewModel
             Connections.SpeciationStatus = "Offline";
             Connections.SpeciationEndpointDisplay = "Missing";
 
+            Connections.PpoDiscoverable = false;
+            Connections.PpoStatus = "Offline";
+            Connections.PpoEndpointDisplay = "Missing";
+
             Connections.WorkerDiscoverable = false;
             Connections.WorkerStatus = "Offline";
             Connections.WorkerEndpointDisplay = "Missing";
@@ -696,6 +700,14 @@ public sealed partial class OrchestratorPanelViewModel
             return true;
         }
 
+        if (string.Equals(item.Key, ServiceEndpointSettings.PpoManagerKey, StringComparison.OrdinalIgnoreCase))
+        {
+            Connections.PpoHost = host;
+            Connections.PpoPortText = port.ToString();
+            Connections.PpoManager = endpoint.ActorName;
+            return true;
+        }
+
         if (string.Equals(item.Key, ServiceEndpointSettings.WorkerNodeKey, StringComparison.OrdinalIgnoreCase))
         {
             Connections.WorkerHost = host;
@@ -825,6 +837,10 @@ public sealed partial class OrchestratorPanelViewModel
             discoveredServiceEndpoints,
             ServiceEndpointSettings.SpeciationManagerKey,
             Connections.SpeciationManager);
+        var ppoActorName = ResolveDiscoveredActorName(
+            discoveredServiceEndpoints,
+            ServiceEndpointSettings.PpoManagerKey,
+            Connections.PpoManager);
         var obsActorName = ResolveDiscoveredActorName(
             discoveredServiceEndpoints,
             ServiceEndpointSettings.ObservabilityKey,
@@ -835,6 +851,7 @@ public sealed partial class OrchestratorPanelViewModel
         var ioAlive = IsAnyFreshNodeMatch(nodes, nowMs, ioActorName);
         var reproAlive = IsAnyFreshNodeMatch(nodes, nowMs, reproActorName);
         var speciationAlive = IsAnyFreshNodeMatch(nodes, nowMs, speciationActorName);
+        var ppoAlive = IsAnyFreshNodeMatch(nodes, nowMs, ppoActorName);
         var obsAlive = IsAnyFreshNodeMatch(nodes, nowMs, obsCandidates);
 
         var hiveEndpointDisplay = ResolveEndpointDisplay(
@@ -853,6 +870,10 @@ public sealed partial class OrchestratorPanelViewModel
             discoveredServiceEndpoints,
             ServiceEndpointSettings.SpeciationManagerKey,
             speciationActorName);
+        var ppoEndpointDisplay = ResolveEndpointDisplay(
+            discoveredServiceEndpoints,
+            ServiceEndpointSettings.PpoManagerKey,
+            ppoActorName);
         var obsEndpointDisplay = ResolveEndpointDisplay(
             discoveredServiceEndpoints,
             ServiceEndpointSettings.ObservabilityKey,
@@ -879,6 +900,10 @@ public sealed partial class OrchestratorPanelViewModel
             Connections.SpeciationStatus = speciationAlive ? "Online" : "Offline";
             Connections.SpeciationEndpointDisplay = speciationEndpointDisplay;
 
+            Connections.PpoDiscoverable = ppoAlive;
+            Connections.PpoStatus = ppoAlive ? "Online" : "Offline";
+            Connections.PpoEndpointDisplay = ppoEndpointDisplay;
+
             Connections.WorkerDiscoverable = workerEndpointState.ActiveCount > 0 || workerEndpointState.LimitedCount > 0;
             Connections.WorkerStatus = workerEndpointState.Rows.Count > 0
                 ? workerEndpointState.SummaryText
@@ -899,6 +924,7 @@ public sealed partial class OrchestratorPanelViewModel
         Endpoints.Add(CreateEndpointStatusItem("Observability", Connections.ObsEndpointDisplay, Connections.IsObsServiceReady()));
         Endpoints.Add(CreateEndpointStatusItem("Reproduction", Connections.ReproEndpointDisplay, Connections.IsReproServiceReady()));
         Endpoints.Add(CreateEndpointStatusItem("Speciation", Connections.SpeciationEndpointDisplay, Connections.IsSpeciationServiceReady()));
+        Endpoints.Add(CreateEndpointStatusItem("PPO", Connections.PpoEndpointDisplay, Connections.IsPpoServiceReady()));
         Endpoints.Add(CreateEndpointStatusItem("SettingsMonitor", BuildSettingsEndpointDisplay(), Connections.IsSettingsServiceReady()));
         Endpoints.Add(CreateEndpointStatusItem("HiveMind", Connections.HiveMindEndpointDisplay, Connections.IsHiveMindServiceReady()));
     }

@@ -1191,7 +1191,7 @@ Runtime behavior:
 * Workbench visualizer cadence controls consume SettingsMonitor snapshots plus `SettingChanged` feeds, including external Settings DB value updates detected and published by SettingsMonitor for existing setting rows, so the operator control target tracks the authoritative settings value without reconnecting.
 * When `tick.cadence.hz` changes externally, Workbench re-queries HiveMind status so the visualizer continues to show both the configured cadence target and the current authoritative runtime target when they temporarily diverge.
 * When stream throttling is active (`target tick cadence faster than configured stream interval`), RegionShards sample visualization work in deterministic region phases across ticks to spread CPU cost without changing simulation compute/deliver semantics.
-* Workbench Orchestrator exposes local worker count for WorkerNode launch, settings-backed worker policy controls for capability refresh cadence and pressure-rebalance thresholds, node-scoped resource-usage summaries derived from SettingsMonitor worker capability snapshots (workers grouped by address host, including multiple worker roots that share one port), recent worker-pressure/tick-health summaries from HiveMind status, and `Profile Current System` for attached perf-probe runs against the currently running deployment.
+* Workbench Orchestrator exposes local worker count for WorkerNode launch, settings-backed worker policy controls for capability refresh cadence and pressure-rebalance thresholds, node-scoped resource-usage summaries derived from SettingsMonitor worker capability snapshots (workers grouped by address host, including multiple worker roots that share one port), explicit optional PPO Local Launch start/stop controls outside `Start All`, recent worker-pressure/tick-health summaries from HiveMind status, and `Profile Current System` for attached perf-probe runs against the currently running deployment.
 * Workbench Debug mirrors that same node-scoped system-load summary so operators can correlate debug streams with current node resource usage, recent worker pressure, and automatic tick-cadence backpressure without leaving the debug surface.
 * Workbench Speciation surfaces total epoch count, current active epoch, and a pane-wide epoch selector so memberships and history visualizations stay aligned to one epoch scope when the operator drills into historical taxonomy state.
 
@@ -4066,6 +4066,7 @@ message PpoStopRunResponse {
 - Workbench operator path:
   - `dotnet run --project tools/Nbn.Tools.Workbench -c Release`
   - In `Orchestrator`, use `Start All`, then in `Designer` use `Generate Random Brain` and `Spawn Brain`
+  - Start optional PPO from `Orchestrator` Local Launch only when running optimization flows; it is discoverable through SettingsMonitor but not part of `Start All`
 - Operator runbooks:
   - `docs/runbooks/reproduction_operator_runbook.md`
   - `docs/runbooks/speciation_operator_runbook.md`

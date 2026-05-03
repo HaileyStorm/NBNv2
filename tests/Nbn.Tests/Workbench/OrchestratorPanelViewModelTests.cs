@@ -221,11 +221,42 @@ public class OrchestratorPanelViewModelTests
 
             Assert.Equal(7, launchPreparer.CallCount);
             Assert.Equal(1, reconnectCount);
+            Assert.DoesNotContain("Nbn.Runtime.Ppo", launchPreparer.ExecutableNames);
         }
         finally
         {
             await vm.StopAllAsyncForShutdown();
         }
+    }
+
+    [Fact]
+    public async Task StartPpoCommand_UsesSettingsMonitorDiscoveryArgs()
+    {
+        var connections = new ConnectionViewModel
+        {
+            PpoHost = "127.0.0.1",
+            PpoPortText = "12090",
+            PpoManager = "PpoManagerLocal",
+            SettingsHost = "127.0.0.1",
+            SettingsPortText = "12010",
+            SettingsName = "SettingsMonitorLocal"
+        };
+
+        var launchPreparer = new RecordingLocalProjectLaunchPreparer("Build failed (code 1). ppo");
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
+
+        vm.StartPpoCommand.Execute(null);
+
+        await WaitForAsync(() => string.Equals(vm.PpoLaunchStatus, "Build failed (code 1). ppo", StringComparison.Ordinal));
+
+        Assert.Equal("Nbn.Runtime.Ppo", launchPreparer.LastExecutableName);
+        Assert.Contains("--bind-host 0.0.0.0 --port 12090", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.Contains("--manager-name PpoManagerLocal", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.Contains("--settings-host 127.0.0.1 --settings-port 12010 --settings-name SettingsMonitorLocal", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.DoesNotContain("--io-address", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.DoesNotContain("--repro-address", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.DoesNotContain("--speciation-address", launchPreparer.LastRuntimeArgs, StringComparison.Ordinal);
+        Assert.Equal("PPO launch: Build failed (code 1). ppo", vm.StatusMessage);
     }
 
     [Fact]
@@ -659,6 +690,19 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task StopAllCommand_StopsPpoRunner()
+    {
+        var connections = new ConnectionViewModel();
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient());
+        vm.PpoLaunchStatus = "Running";
+
+        vm.StopAllCommand.Execute(null);
+        await WaitForAsync(() => string.Equals(vm.PpoLaunchStatus, "Not running.", StringComparison.Ordinal));
+
+        Assert.Equal("Not running.", vm.PpoLaunchStatus);
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_MapsWorkerNodeIntoStatusAndNodeList()
     {
         var connections = new ConnectionViewModel();
@@ -898,15 +942,21 @@ public class OrchestratorPanelViewModelTests
                     },
                     new SettingValue
                     {
+                        Key = ServiceEndpointSettings.PpoManagerKey,
+                        Value = "10.20.30.46:12092/ppo-remote",
+                        UpdatedMs = 15
+                    },
+                    new SettingValue
+                    {
                         Key = ServiceEndpointSettings.WorkerNodeKey,
                         Value = "10.20.30.43:12044/worker-remote",
-                        UpdatedMs = 15
+                        UpdatedMs = 16
                     },
                     new SettingValue
                     {
                         Key = ServiceEndpointSettings.ObservabilityKey,
                         Value = "10.20.30.44:12064/DebugHubRemote",
-                        UpdatedMs = 16
+                        UpdatedMs = 17
                     }
                 }
             }
@@ -929,6 +979,9 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("10.20.30.45", connections.SpeciationHost);
         Assert.Equal("12082", connections.SpeciationPortText);
         Assert.Equal("speciation-remote", connections.SpeciationManager);
+        Assert.Equal("10.20.30.46", connections.PpoHost);
+        Assert.Equal("12092", connections.PpoPortText);
+        Assert.Equal("ppo-remote", connections.PpoManager);
         Assert.Equal("10.20.30.43", connections.WorkerHost);
         Assert.Equal("12044", connections.WorkerPortText);
         Assert.Equal("worker-remote", connections.WorkerRootName);
@@ -939,7 +992,61 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("10.20.30.41:12052/io-remote", connections.IoEndpointDisplay);
         Assert.Equal("10.20.30.42:12072/repro-remote", connections.ReproEndpointDisplay);
         Assert.Equal("10.20.30.45:12082/speciation-remote", connections.SpeciationEndpointDisplay);
+        Assert.Equal("10.20.30.46:12092/ppo-remote", connections.PpoEndpointDisplay);
         Assert.Equal("10.20.30.44:12064/DebugHubRemote", connections.ObsEndpointDisplay);
+    }
+
+    [Fact]
+    public async Task RefreshSettingsAsync_MapsPpoEndpointSetting_ToOnlineStatusRow()
+    {
+        var connections = new ConnectionViewModel
+        {
+            PpoManager = "PpoManager"
+        };
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    new NodeStatus
+                    {
+                        NodeId = Guid.NewGuid().ToProtoUuid(),
+                        LogicalName = "nbn.ppo",
+                        Address = "10.20.30.46:12092",
+                        RootActorName = "ppo-remote",
+                        LastSeenMs = (ulong)nowMs,
+                        IsAlive = true
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse
+            {
+                Settings =
+                {
+                    new SettingValue
+                    {
+                        Key = ServiceEndpointSettings.PpoManagerKey,
+                        Value = "10.20.30.46:12092/ppo-remote",
+                        UpdatedMs = 21
+                    }
+                }
+            }
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        Assert.True(connections.PpoDiscoverable);
+        Assert.Equal("10.20.30.46:12092/ppo-remote", connections.PpoEndpointDisplay);
+        Assert.Equal("Online", connections.PpoStatus);
+        var ppoEndpoint = Assert.Single(vm.Endpoints, endpoint => endpoint.ServiceName == "PPO");
+        Assert.Equal("online", ppoEndpoint.Status);
+        Assert.Equal("10.20.30.46:12092/ppo-remote", ppoEndpoint.EndpointDisplay);
     }
 
     [Fact]
@@ -1012,6 +1119,9 @@ public class OrchestratorPanelViewModelTests
             SpeciationHost = "127.0.0.1",
             SpeciationPortText = "12080",
             SpeciationManager = "SpeciationManager",
+            PpoHost = "127.0.0.1",
+            PpoPortText = "12090",
+            PpoManager = "PpoManager",
             WorkerHost = "127.0.0.1",
             WorkerPortText = "12041",
             WorkerRootName = "worker-node",
@@ -1053,15 +1163,21 @@ public class OrchestratorPanelViewModelTests
                     },
                     new SettingValue
                     {
+                        Key = ServiceEndpointSettings.PpoManagerKey,
+                        Value = "127.0.0.1:not-a-port/ppo",
+                        UpdatedMs = 35
+                    },
+                    new SettingValue
+                    {
                         Key = ServiceEndpointSettings.WorkerNodeKey,
                         Value = "invalid-worker-value",
-                        UpdatedMs = 35
+                        UpdatedMs = 36
                     },
                     new SettingValue
                     {
                         Key = ServiceEndpointSettings.ObservabilityKey,
                         Value = "127.0.0.1:not-a-port/debug",
-                        UpdatedMs = 36
+                        UpdatedMs = 37
                     }
                 }
             }
@@ -1084,6 +1200,9 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("127.0.0.1", connections.SpeciationHost);
         Assert.Equal("12080", connections.SpeciationPortText);
         Assert.Equal("SpeciationManager", connections.SpeciationManager);
+        Assert.Equal("127.0.0.1", connections.PpoHost);
+        Assert.Equal("12090", connections.PpoPortText);
+        Assert.Equal("PpoManager", connections.PpoManager);
         Assert.Equal("127.0.0.1", connections.WorkerHost);
         Assert.Equal("12041", connections.WorkerPortText);
         Assert.Equal("worker-node", connections.WorkerRootName);
@@ -1115,13 +1234,17 @@ public class OrchestratorPanelViewModelTests
             "192.168.100.14:13080/SpeciationProd",
             "4"));
         vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.PpoManagerKey,
+            "192.168.100.15:13090/PpoProd",
+            "5"));
+        vm.UpdateSetting(new SettingItem(
             ServiceEndpointSettings.WorkerNodeKey,
             "192.168.100.12:13041/worker-prod",
-            "5"));
+            "6"));
         vm.UpdateSetting(new SettingItem(
             ServiceEndpointSettings.ObservabilityKey,
             "192.168.100.13:13060/DebugProd",
-            "6"));
+            "7"));
 
         await WaitForAsync(() =>
             string.Equals(connections.IoHost, "192.168.100.9", StringComparison.Ordinal)
@@ -1136,6 +1259,9 @@ public class OrchestratorPanelViewModelTests
             && string.Equals(connections.SpeciationHost, "192.168.100.14", StringComparison.Ordinal)
             && string.Equals(connections.SpeciationPortText, "13080", StringComparison.Ordinal)
             && string.Equals(connections.SpeciationManager, "SpeciationProd", StringComparison.Ordinal)
+            && string.Equals(connections.PpoHost, "192.168.100.15", StringComparison.Ordinal)
+            && string.Equals(connections.PpoPortText, "13090", StringComparison.Ordinal)
+            && string.Equals(connections.PpoManager, "PpoProd", StringComparison.Ordinal)
             && string.Equals(connections.WorkerHost, "192.168.100.12", StringComparison.Ordinal)
             && string.Equals(connections.WorkerPortText, "13041", StringComparison.Ordinal)
             && string.Equals(connections.WorkerRootName, "worker-prod", StringComparison.Ordinal)
@@ -1155,6 +1281,9 @@ public class OrchestratorPanelViewModelTests
             SpeciationHost = "127.0.0.1",
             SpeciationPortText = "12080",
             SpeciationManager = "SpeciationManager",
+            PpoHost = "127.0.0.1",
+            PpoPortText = "12090",
+            PpoManager = "PpoManager",
             WorkerHost = "127.0.0.1",
             WorkerPortText = "12041",
             WorkerRootName = "worker-node",
@@ -1173,13 +1302,17 @@ public class OrchestratorPanelViewModelTests
             "127.0.0.1:not-a-port/speciation",
             "2"));
         vm.UpdateSetting(new SettingItem(
+            ServiceEndpointSettings.PpoManagerKey,
+            "127.0.0.1:not-a-port/ppo",
+            "3"));
+        vm.UpdateSetting(new SettingItem(
             ServiceEndpointSettings.WorkerNodeKey,
             "invalid-worker-value",
-            "3"));
+            "4"));
         vm.UpdateSetting(new SettingItem(
             ServiceEndpointSettings.ObservabilityKey,
             "127.0.0.1:not-a-port/debug",
-            "4"));
+            "5"));
 
         await WaitForAsync(() =>
             string.Equals(connections.ReproHost, "127.0.0.1", StringComparison.Ordinal)
@@ -1188,6 +1321,9 @@ public class OrchestratorPanelViewModelTests
             && string.Equals(connections.SpeciationHost, "127.0.0.1", StringComparison.Ordinal)
             && string.Equals(connections.SpeciationPortText, "12080", StringComparison.Ordinal)
             && string.Equals(connections.SpeciationManager, "SpeciationManager", StringComparison.Ordinal)
+            && string.Equals(connections.PpoHost, "127.0.0.1", StringComparison.Ordinal)
+            && string.Equals(connections.PpoPortText, "12090", StringComparison.Ordinal)
+            && string.Equals(connections.PpoManager, "PpoManager", StringComparison.Ordinal)
             && string.Equals(connections.WorkerHost, "127.0.0.1", StringComparison.Ordinal)
             && string.Equals(connections.WorkerPortText, "12041", StringComparison.Ordinal)
             && string.Equals(connections.WorkerRootName, "worker-node", StringComparison.Ordinal)
@@ -1827,7 +1963,7 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("Offline", connections.WorkerStatus);
         Assert.Empty(vm.WorkerEndpoints);
         Assert.Equal("No active nodes.", vm.WorkerEndpointSummary);
-        Assert.Equal(6, vm.Endpoints.Count);
+        Assert.Equal(7, vm.Endpoints.Count);
         Assert.DoesNotContain(vm.Endpoints, endpoint => endpoint.ServiceName == "Worker Node");
         var settingsEndpoint = Assert.Single(vm.Endpoints, endpoint => endpoint.ServiceName == "SettingsMonitor");
         Assert.Equal("online", settingsEndpoint.Status);
@@ -1846,18 +1982,21 @@ public class OrchestratorPanelViewModelTests
             ObsDiscoverable = true,
             ReproDiscoverable = true,
             SpeciationDiscoverable = true,
+            PpoDiscoverable = true,
             WorkerDiscoverable = true,
             HiveMindDiscoverable = true,
             IoStatus = "Online",
             ObsStatus = "Online",
             ReproStatus = "Online",
             SpeciationStatus = "Online",
+            PpoStatus = "Online",
             WorkerStatus = "1 active node",
             HiveMindStatus = "Online",
             IoEndpointDisplay = "10.0.0.1:12050/io",
             ObsEndpointDisplay = "10.0.0.2:12060/debug",
             ReproEndpointDisplay = "10.0.0.3:12070/repro",
             SpeciationEndpointDisplay = "10.0.0.6:12080/speciation",
+            PpoEndpointDisplay = "10.0.0.7:12090/ppo",
             WorkerEndpointDisplay = "1 active node",
             HiveMindEndpointDisplay = "10.0.0.4:12020/hive"
         };
@@ -1870,25 +2009,28 @@ public class OrchestratorPanelViewModelTests
         Assert.False(connections.ObsDiscoverable);
         Assert.False(connections.ReproDiscoverable);
         Assert.False(connections.SpeciationDiscoverable);
+        Assert.False(connections.PpoDiscoverable);
         Assert.False(connections.WorkerDiscoverable);
         Assert.False(connections.HiveMindDiscoverable);
         Assert.Equal("Offline", connections.IoStatus);
         Assert.Equal("Offline", connections.ObsStatus);
         Assert.Equal("Offline", connections.ReproStatus);
         Assert.Equal("Offline", connections.SpeciationStatus);
+        Assert.Equal("Offline", connections.PpoStatus);
         Assert.Equal("Offline", connections.WorkerStatus);
         Assert.Equal("Offline", connections.HiveMindStatus);
         Assert.Equal("Missing", connections.IoEndpointDisplay);
         Assert.Equal("Missing", connections.ObsEndpointDisplay);
         Assert.Equal("Missing", connections.ReproEndpointDisplay);
         Assert.Equal("Missing", connections.SpeciationEndpointDisplay);
+        Assert.Equal("Missing", connections.PpoEndpointDisplay);
         Assert.Equal("Missing", connections.WorkerEndpointDisplay);
         Assert.Equal("Missing", connections.HiveMindEndpointDisplay);
         Assert.Empty(vm.Nodes);
         Assert.Empty(vm.WorkerEndpoints);
         Assert.Empty(vm.Actors);
         Assert.Equal("No active nodes.", vm.WorkerEndpointSummary);
-        Assert.Equal(6, vm.Endpoints.Count);
+        Assert.Equal(7, vm.Endpoints.Count);
         Assert.DoesNotContain(vm.Endpoints, endpoint => endpoint.ServiceName == "Worker Node");
         var settingsEndpoint = Assert.Single(vm.Endpoints, endpoint => endpoint.ServiceName == "SettingsMonitor");
         Assert.Equal("offline", settingsEndpoint.Status);
@@ -4107,11 +4249,13 @@ public class OrchestratorPanelViewModelTests
     private sealed class RecordingLocalProjectLaunchPreparer(string failureMessage = "unexpected") : ILocalProjectLaunchPreparer
     {
         public int CallCount { get; private set; }
+        public string LastExecutableName { get; private set; } = string.Empty;
         public string LastRuntimeArgs { get; private set; } = string.Empty;
 
         public Task<LocalProjectLaunchPreparation> PrepareAsync(string? projectPath, string exeName, string runtimeArgs, string label)
         {
             CallCount++;
+            LastExecutableName = exeName;
             LastRuntimeArgs = runtimeArgs;
             return Task.FromResult(new LocalProjectLaunchPreparation(false, null, failureMessage));
         }

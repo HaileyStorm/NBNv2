@@ -11,6 +11,7 @@ Owns the optional core PPO optimization service. PPO depends on IO for live-gene
 - PPO commits candidate artifact lineage through Speciation `BatchEvaluateApply` in commit mode. PPO writes provenance metadata, but Reproduction remains authoritative for synthesis/assessment and Speciation remains authoritative for species membership.
 - PPO does not use output subscriptions as post-deliver-safe trajectory observations until IO exposes an explicit post-deliver observation fence.
 - Endpoint discovery watches `service.endpoint.io_gateway`, `service.endpoint.reproduction_manager`, and `service.endpoint.speciation_manager`; invalid or removed observations fall back to explicit CLI endpoint hints if present.
+- Workbench can launch PPO explicitly from Orchestrator Local Launch using the SettingsMonitor coordinates as the only bootstrap dependency. PPO remains optional and is not part of Workbench `Start All` by default.
 
 ## Maintenance guidance
 
