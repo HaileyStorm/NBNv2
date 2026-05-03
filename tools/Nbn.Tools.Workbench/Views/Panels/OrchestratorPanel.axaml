@@ -136,17 +136,17 @@
               <Button Grid.Row="1" Grid.Column="3" Content="Stop" Command="{Binding StopSpeciationCommand}" />
               <TextBlock Grid.Row="1" Grid.Column="4" Text="{Binding SpeciationLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
 
-              <TextBlock Grid.Row="2" Text="PPO" Classes="muted" />
-              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Connections.PpoPortText}" Width="90" />
-              <Button Grid.Row="2" Grid.Column="2" Content="Start" Command="{Binding StartPpoCommand}" Classes="accent" />
-              <Button Grid.Row="2" Grid.Column="3" Content="Stop" Command="{Binding StopPpoCommand}" />
-              <TextBlock Grid.Row="2" Grid.Column="4" Text="{Binding PpoLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+              <TextBlock Grid.Row="2" Text="Observability" Classes="muted" />
+              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Connections.ObsPortText}" Width="90" />
+              <Button Grid.Row="2" Grid.Column="2" Content="Start" Command="{Binding StartObsCommand}" Classes="accent" />
+              <Button Grid.Row="2" Grid.Column="3" Content="Stop" Command="{Binding StopObsCommand}" />
+              <TextBlock Grid.Row="2" Grid.Column="4" Text="{Binding ObsLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
 
-              <TextBlock Grid.Row="3" Text="Observability" Classes="muted" />
-              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Connections.ObsPortText}" Width="90" />
-              <Button Grid.Row="3" Grid.Column="2" Content="Start" Command="{Binding StartObsCommand}" Classes="accent" />
-              <Button Grid.Row="3" Grid.Column="3" Content="Stop" Command="{Binding StopObsCommand}" />
-              <TextBlock Grid.Row="3" Grid.Column="4" Text="{Binding ObsLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
+              <TextBlock Grid.Row="3" Text="PPO (manual)" Classes="muted" />
+              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Connections.PpoPortText}" Width="90" />
+              <Button Grid.Row="3" Grid.Column="2" Content="Start" Command="{Binding StartPpoCommand}" Classes="accent" />
+              <Button Grid.Row="3" Grid.Column="3" Content="Stop" Command="{Binding StopPpoCommand}" />
+              <TextBlock Grid.Row="3" Grid.Column="4" Text="{Binding PpoLaunchStatus}" Classes="muted" VerticalAlignment="Center" />
             </Grid>
           </Grid>
         </StackPanel>

@@ -69,7 +69,7 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private string _ioLaunchStatus = "Idle";
     private string _reproLaunchStatus = "Idle";
     private string _speciationLaunchStatus = "Idle";
-    private string _ppoLaunchStatus = "Idle";
+    private string _ppoLaunchStatus = "Not included in Start All.";
     private string _workerLaunchStatus = "Idle";
     private string _obsLaunchStatus = "Idle";
     private string _profileCurrentSystemStatus = "Idle";

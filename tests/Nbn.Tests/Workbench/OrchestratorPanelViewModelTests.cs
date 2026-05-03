@@ -221,12 +221,72 @@ public class OrchestratorPanelViewModelTests
 
             Assert.Equal(7, launchPreparer.CallCount);
             Assert.Equal(1, reconnectCount);
+            Assert.Equal(
+                [
+                    "Nbn.Runtime.SettingsMonitor",
+                    "Nbn.Runtime.HiveMind",
+                    "Nbn.Runtime.WorkerNode",
+                    "Nbn.Runtime.Reproduction",
+                    "Nbn.Runtime.Speciation",
+                    "Nbn.Runtime.IO",
+                    "Nbn.Runtime.Observability"
+                ],
+                launchPreparer.ExecutableNames);
+        }
+        finally
+        {
+            await vm.StopAllAsyncForShutdown();
+        }
+    }
+
+    [Fact]
+    public async Task StartAllCommand_IgnoresInvalidPpoPort_WhenPpoExcludedFromStartAll()
+    {
+        var connections = new ConnectionViewModel
+        {
+            SettingsPortText = "12010",
+            HiveMindPortText = "12020",
+            WorkerPortText = "12041",
+            ReproPortText = "12070",
+            SpeciationPortText = "12080",
+            IoPortText = "12050",
+            ObsPortText = "12060",
+            PpoPortText = "bad",
+            WorkerCpuLimitPercentText = "80",
+            WorkerRamLimitPercentText = "70",
+            WorkerGpuLimitPercentText = "60",
+            WorkerVramLimitPercentText = "50"
+        };
+
+        var launchPreparer = new SequencedLocalProjectLaunchPreparer(
+            Enumerable.Repeat(
+                    new LocalProjectLaunchPreparation(true, CreateLongRunningProcessStartInfo(), "Prepared."),
+                    7)
+                .ToArray());
+        var vm = CreateViewModel(connections, new FakeWorkbenchClient(), launchPreparer);
+
+        try
+        {
+            vm.StartAllCommand.Execute(null);
+
+            await WaitForAsync(() => string.Equals(vm.StatusMessage, "Start All completed.", StringComparison.Ordinal), timeoutMs: 10000);
+
+            Assert.Equal(7, launchPreparer.CallCount);
+            Assert.Equal("Not included in Start All.", vm.PpoLaunchStatus);
             Assert.DoesNotContain("Nbn.Runtime.Ppo", launchPreparer.ExecutableNames);
         }
         finally
         {
             await vm.StopAllAsyncForShutdown();
         }
+    }
+
+    [Fact]
+    public void PpoLaunchStatus_DefaultsToStartAllExclusion()
+    {
+        var vm = CreateViewModel(new ConnectionViewModel(), new FakeWorkbenchClient());
+
+        Assert.Equal("Not included in Start All.", vm.PpoLaunchStatus);
     }
 
     [Fact]
