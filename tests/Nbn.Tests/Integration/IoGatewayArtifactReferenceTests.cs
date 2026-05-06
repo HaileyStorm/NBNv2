@@ -392,6 +392,73 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task PpoStatus_RefreshesPpoEndpoint_WhenEndpointWasPublishedBeforeRequest()
+    {
+        using var databaseScope = TempDirectoryScope.Create("nbn-io-ppo-refresh", clearSqlitePools: true);
+        var store = new SettingsMonitorStore(databaseScope.GetPath("settings.db"));
+        await store.InitializeAsync();
+
+        var settingsPort = GetFreePort();
+        var gatewayPort = GetFreePort();
+        var settingsSystem = new ActorSystem();
+        settingsSystem.WithRemote(RemoteConfig.BindToLocalhost(settingsPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            ProtoSettings.NbnSettingsReflection.Descriptor));
+        await settingsSystem.Remote().StartAsync();
+        settingsSystem.Root.SpawnNamed(
+            Props.FromProducer(() => new SettingsMonitorActor(store)),
+            "SettingsMonitor");
+
+        var gatewaySystem = new ActorSystem();
+        gatewaySystem.WithRemote(RemoteConfig.BindToLocalhost(gatewayPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            ProtoControl.NbnControlReflection.Descriptor,
+            NbnIoReflection.Descriptor,
+            ProtoPpo.NbnPpoReflection.Descriptor,
+            ProtoSettings.NbnSettingsReflection.Descriptor));
+        await gatewaySystem.Remote().StartAsync();
+
+        try
+        {
+            var root = gatewaySystem.Root;
+            var ppoProbe = root.SpawnNamed(
+                Props.FromProducer(() => new PpoFixedResponseProbe()),
+                $"ppo-refresh-{Guid.NewGuid():N}");
+
+            var discovery = new ServiceEndpointDiscoveryClient(
+                gatewaySystem,
+                new PID($"127.0.0.1:{settingsPort}", "SettingsMonitor"));
+            await discovery.PublishAsync(
+                ServiceEndpointSettings.PpoManagerKey,
+                new ServiceEndpoint(gatewaySystem.Address, ppoProbe.Id));
+            await discovery.DisposeAsync();
+
+            var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(
+                CreateOptions(settingsHost: "127.0.0.1", settingsPort: settingsPort))));
+
+            var status = await root.RequestAsync<PpoStatusResult>(
+                gateway,
+                new PpoStatus
+                {
+                    Request = new ProtoPpo.PpoStatusRequest()
+                },
+                TimeSpan.FromSeconds(5));
+
+            Assert.NotNull(status.Response);
+            Assert.Equal(ProtoPpo.PpoFailureReason.PpoFailureNone, status.Response.FailureReason);
+            Assert.Equal((ulong)3, status.Response.CompletedRunCount);
+            Assert.True(status.Response.Dependencies.IoAvailable);
+        }
+        finally
+        {
+            await gatewaySystem.Remote().ShutdownAsync(true);
+            await gatewaySystem.ShutdownAsync();
+            await settingsSystem.Remote().ShutdownAsync(true);
+            await settingsSystem.ShutdownAsync();
+        }
+    }
+
+    [Fact]
     public async Task SpawnBrainViaIO_Forwards_ExplicitIoWidths_To_HiveMind()
     {
         var system = new ActorSystem();

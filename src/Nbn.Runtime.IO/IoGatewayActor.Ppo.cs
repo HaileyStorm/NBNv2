@@ -66,33 +66,17 @@ public sealed partial class IoGatewayActor
         where TResponse : class
         where TResult : class
     {
-        if (_ppoPid is null)
-        {
-            context.Respond(
-                wrapResponse(
-                    createFailureResponse(
-                        ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
-                        $"{operationName} failed: PPO manager endpoint is not configured.")));
-            return;
-        }
-
-        var requestTask = context.RequestAsync<TResponse>(_ppoPid, request, PpoRequestTimeout);
+        var requestTask = RequestPpoAsync(
+            context,
+            request,
+            wrapResponse,
+            createFailureResponse,
+            operationName);
         context.ReenterAfter(requestTask, completed =>
         {
             if (completed.IsCompletedSuccessfully)
             {
-                var response = completed.Result;
-                if (response is null)
-                {
-                    context.Respond(
-                        wrapResponse(
-                            createFailureResponse(
-                                ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
-                                $"{operationName} failed: PPO manager returned an empty response.")));
-                    return Task.CompletedTask;
-                }
-
-                context.Respond(wrapResponse(response));
+                context.Respond(completed.Result);
                 return Task.CompletedTask;
             }
 
@@ -105,5 +89,66 @@ public sealed partial class IoGatewayActor
                         $"{operationName} failed: forwarding request to PPO manager failed ({detail}).")));
             return Task.CompletedTask;
         });
+    }
+
+    private async Task<TResult> RequestPpoAsync<TRequest, TResponse, TResult>(
+        IContext context,
+        TRequest request,
+        Func<TResponse, TResult> wrapResponse,
+        Func<ProtoPpo.PpoFailureReason, string, TResponse> createFailureResponse,
+        string operationName)
+        where TRequest : class
+        where TResponse : class
+        where TResult : class
+    {
+        var ppoPid = _ppoPid;
+        if (ppoPid is null)
+        {
+            await TryRefreshPpoEndpointAsync(context, operationName).ConfigureAwait(false);
+            ppoPid = _ppoPid;
+            if (ppoPid is null)
+            {
+                return wrapResponse(
+                    createFailureResponse(
+                        ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+                        $"{operationName} failed: PPO manager endpoint is not configured."));
+            }
+        }
+
+        try
+        {
+            var response = await context.RequestAsync<TResponse>(ppoPid, request, PpoRequestTimeout).ConfigureAwait(false);
+            if (response is null)
+            {
+                return wrapResponse(
+                    createFailureResponse(
+                        ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+                        $"{operationName} failed: PPO manager returned an empty response."));
+            }
+
+            return wrapResponse(response);
+        }
+        catch (Exception ex) when (IsStaleServiceEndpointFailure(ex))
+        {
+            var refreshed = await TryRefreshPpoEndpointAsync(context, operationName, ex).ConfigureAwait(false);
+            var retryPid = _ppoPid;
+            if (!refreshed || retryPid is null)
+            {
+                return wrapResponse(
+                    createFailureResponse(
+                        ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+                        $"{operationName} failed: forwarding request to PPO manager failed ({ex.GetBaseException().Message})."));
+            }
+
+            Console.WriteLine(
+                $"[WARN] IO retrying {operationName} after PPO endpoint refresh: previous={PidLabel(ppoPid)} current={PidLabel(retryPid)} failure={ex.GetBaseException().Message}");
+            var response = await context.RequestAsync<TResponse>(retryPid, request, PpoRequestTimeout).ConfigureAwait(false);
+            return response is null
+                ? wrapResponse(
+                    createFailureResponse(
+                        ProtoPpo.PpoFailureReason.PpoFailureServiceUnavailable,
+                        $"{operationName} failed: PPO manager returned an empty response."))
+                : wrapResponse(response);
+        }
     }
 }

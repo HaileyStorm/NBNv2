@@ -180,6 +180,44 @@ public sealed partial class IoGatewayActor
         }
     }
 
+    private async Task<bool> TryRefreshPpoEndpointAsync(IContext context, string operation, Exception? failure = null)
+    {
+        var client = ServiceEndpointDiscoveryClient.Create(
+            context.System,
+            _options.SettingsHost,
+            _options.SettingsPort,
+            _options.SettingsName);
+        if (client is null)
+        {
+            return false;
+        }
+
+        await using (client.ConfigureAwait(false))
+        {
+            try
+            {
+                var registration = await client.ResolveAsync(ServiceEndpointSettings.PpoManagerKey).ConfigureAwait(false);
+                if (registration is not null)
+                {
+                    ApplyEndpoint(registration.Value);
+                    return _ppoPid is not null;
+                }
+
+                _ppoPid = _configuredPpoPid;
+                return _ppoPid is not null;
+            }
+            catch (Exception refreshEx)
+            {
+                var failureDetail = failure is null
+                    ? "endpoint missing"
+                    : failure.GetBaseException().Message;
+                Console.WriteLine(
+                    $"[WARN] IO failed to refresh PPO endpoint after {operation} failure ({failureDetail}): {refreshEx.GetBaseException().Message}");
+                return false;
+            }
+        }
+    }
+
     private void ApplyObservationRemoval(string key, string source, string reason)
     {
         if (string.Equals(key, ServiceEndpointSettings.HiveMindKey, StringComparison.Ordinal))
