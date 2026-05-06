@@ -36,6 +36,14 @@ public sealed class RegionShardGpuAcceleratorLease : IDisposable
 
 public static class RegionShardGpuRuntime
 {
+    private static readonly string[] TransientRuntimeUnavailableTokens =
+    [
+        "gpu_backend_unavailable",
+        "CUDA_ERROR_OUT_OF_MEMORY",
+        "out of memory",
+        "insufficient memory"
+    ];
+
     public static RegionShardGpuRuntimeAvailability ProbeAvailability()
     {
         try
@@ -189,6 +197,17 @@ public static class RegionShardGpuRuntime
             };
             return false;
         }
+    }
+
+    public static bool IsTransientRuntimeUnavailableReason(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return false;
+        }
+
+        return TransientRuntimeUnavailableTokens.Any(token =>
+            reason.Contains(token, StringComparison.OrdinalIgnoreCase));
     }
 
     private static IEnumerable<Device> OrderGpuDevices(IEnumerable<Device> devices)

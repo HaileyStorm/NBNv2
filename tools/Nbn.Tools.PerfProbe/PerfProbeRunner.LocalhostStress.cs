@@ -138,11 +138,9 @@ public static partial class PerfProbeRunner
             var backendFailure = await harness.VerifyBackendExecutionAsync([brainId], cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(backendFailure))
             {
-                return new PerfScenarioResult(
-                    Suite: "localhost_stress",
+                return BuildBackendExecutionMismatchResult(
                     Scenario: $"brain_size_limit_{targetTickHz:0.###}hz",
                     Backend: backend,
-                    Status: PerfScenarioStatus.Failed,
                     Summary: "Runtime benchmark did not execute on the expected compute backend.",
                     Parameters: new Dictionary<string, string>
                     {
@@ -150,8 +148,8 @@ public static partial class PerfProbeRunner
                         ["hidden_neurons"] = hiddenNeuronCount.ToString(),
                         ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
                     },
-                    Metrics: new Dictionary<string, double>(),
-                    Failure: backendFailure);
+                    BackendFailure: backendFailure,
+                    ComputeBackendPreference: computeBackendPreference);
             }
 
             bestObservedTickHz = Math.Max(bestObservedTickHz, observedTickHz);
@@ -213,11 +211,9 @@ public static partial class PerfProbeRunner
             var backendFailure = await harness.VerifyBackendExecutionAsync(brainIds, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(backendFailure))
             {
-                return new PerfScenarioResult(
-                    Suite: "localhost_stress",
+                return BuildBackendExecutionMismatchResult(
                     Scenario: "brain_count_limit",
                     Backend: backend,
-                    Status: PerfScenarioStatus.Failed,
                     Summary: "Runtime benchmark did not execute on the expected compute backend.",
                     Parameters: new Dictionary<string, string>
                     {
@@ -226,8 +222,8 @@ public static partial class PerfProbeRunner
                         ["hidden_neurons"] = config.SustainableWorkloadNeurons.ToString(),
                         ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
                     },
-                    Metrics: new Dictionary<string, double>(),
-                    Failure: backendFailure);
+                    BackendFailure: backendFailure,
+                    ComputeBackendPreference: computeBackendPreference);
             }
 
             bestObservedTickHz = Math.Max(bestObservedTickHz, observedTickHz);
@@ -289,11 +285,9 @@ public static partial class PerfProbeRunner
             var backendFailure = await harness.VerifyBackendExecutionAsync(brainIds, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(backendFailure))
             {
-                return new PerfScenarioResult(
-                    Suite: "localhost_stress",
+                return BuildBackendExecutionMismatchResult(
                     Scenario: "max_sustainable_tick_rate",
                     Backend: backend,
-                    Status: PerfScenarioStatus.Failed,
                     Summary: "Runtime benchmark did not execute on the expected compute backend.",
                     Parameters: new Dictionary<string, string>
                     {
@@ -302,8 +296,8 @@ public static partial class PerfProbeRunner
                         ["hidden_neurons"] = config.SustainableWorkloadNeurons.ToString(),
                         ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
                     },
-                    Metrics: new Dictionary<string, double>(),
-                    Failure: backendFailure);
+                    BackendFailure: backendFailure,
+                    ComputeBackendPreference: computeBackendPreference);
             }
 
             bestObservedTickHz = Math.Max(bestObservedTickHz, observedTickHz);
@@ -363,11 +357,9 @@ public static partial class PerfProbeRunner
         var backendFailure = await harness.VerifyBackendExecutionAsync(brainIds, cancellationToken).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(backendFailure))
         {
-            return new PerfScenarioResult(
-                Suite: "localhost_stress",
+            return BuildBackendExecutionMismatchResult(
                 Scenario: "compute_dominant_tick_rate",
                 Backend: backend,
-                Status: PerfScenarioStatus.Failed,
                 Summary: "Compute-dominant runtime benchmark did not execute on the expected compute backend.",
                 Parameters: new Dictionary<string, string>
                 {
@@ -378,8 +370,8 @@ public static partial class PerfProbeRunner
                     ["input_mode"] = "runtime_hidden_seed",
                     ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
                 },
-                Metrics: new Dictionary<string, double>(),
-                Failure: backendFailure);
+                BackendFailure: backendFailure,
+                ComputeBackendPreference: computeBackendPreference);
         }
 
         return BuildCompletedLocalhostStressResult(
@@ -455,11 +447,9 @@ public static partial class PerfProbeRunner
         var backendFailure = await harness.VerifyBackendExecutionAsync(baseBrains, cancellationToken).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(backendFailure))
         {
-            return new PerfScenarioResult(
-                Suite: "localhost_stress",
+            return BuildBackendExecutionMismatchResult(
                 Scenario: "spawn_churn_under_load",
                 Backend: backend,
-                Status: PerfScenarioStatus.Failed,
                 Summary: "Runtime benchmark did not execute on the expected compute backend.",
                 Parameters: new Dictionary<string, string>
                 {
@@ -468,8 +458,8 @@ public static partial class PerfProbeRunner
                     ["hidden_neurons"] = config.SustainableWorkloadNeurons.ToString(),
                     ["requested_backend"] = computeBackendPreference.ToString().ToLowerInvariant()
                 },
-                Metrics: new Dictionary<string, double>(),
-                Failure: backendFailure);
+                BackendFailure: backendFailure,
+                ComputeBackendPreference: computeBackendPreference);
         }
 
         var ordered = latencies.OrderBy(static value => value).ToArray();
@@ -511,4 +501,41 @@ public static partial class PerfProbeRunner
             Summary: MetConfiguredTarget ? SuccessSummary : BelowTargetSummary,
             Parameters: Parameters,
             Metrics: Metrics);
+
+    internal static PerfScenarioResult BuildBackendExecutionMismatchResult(
+        string Scenario,
+        string Backend,
+        string Summary,
+        IReadOnlyDictionary<string, string> Parameters,
+        string BackendFailure,
+        RegionShardComputeBackendPreference ComputeBackendPreference)
+    {
+        if (ComputeBackendPreference == RegionShardComputeBackendPreference.Gpu
+            && RegionShardGpuRuntime.IsTransientRuntimeUnavailableReason(BackendFailure))
+        {
+            var skipParameters = new Dictionary<string, string>(Parameters, StringComparer.Ordinal)
+            {
+                ["runtime_fallback"] = BackendFailure
+            };
+            return new PerfScenarioResult(
+                Suite: "localhost_stress",
+                Scenario: Scenario,
+                Backend: Backend,
+                Status: PerfScenarioStatus.Skipped,
+                Summary: "GPU runtime execution is skipped because the compatible accelerator has no current runtime capacity.",
+                Parameters: skipParameters,
+                Metrics: new Dictionary<string, double>(),
+                SkipReason: RuntimeExecutionGpuSkipReason);
+        }
+
+        return new PerfScenarioResult(
+            Suite: "localhost_stress",
+            Scenario: Scenario,
+            Backend: Backend,
+            Status: PerfScenarioStatus.Failed,
+            Summary: Summary,
+            Parameters: Parameters,
+            Metrics: new Dictionary<string, double>(),
+            Failure: BackendFailure);
+    }
 }

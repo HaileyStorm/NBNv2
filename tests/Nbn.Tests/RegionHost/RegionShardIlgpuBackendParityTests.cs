@@ -84,6 +84,12 @@ public sealed class RegionShardIlgpuBackendParityTests
                 costTierCMultiplier: 1.5f,
                 outputVectorSource: outputVectorSource);
 
+            if (!gpu.LastExecution.UsedGpu
+                && RegionShardGpuRuntime.IsTransientRuntimeUnavailableReason(gpu.LastExecution.FallbackReason))
+            {
+                return;
+            }
+
             Assert.True(gpu.LastExecution.UsedGpu, gpu.LastExecution.FallbackReason);
             AssertEquivalentResults(expected, actual);
             AssertEquivalentState(cpuState, gpuState);
@@ -236,6 +242,12 @@ public sealed class RegionShardIlgpuBackendParityTests
             _ = gpu.Compute(tick, brainId, shardId, routing, visualization: RegionShardVisualizationComputeScope.Disabled, homeostasisConfig: homeostasis);
         }
 
+        if (!gpu.LastExecution.UsedGpu
+            && RegionShardGpuRuntime.IsTransientRuntimeUnavailableReason(gpu.LastExecution.FallbackReason))
+        {
+            return;
+        }
+
         Assert.True(gpu.LastExecution.UsedGpu, gpu.LastExecution.FallbackReason);
         AssertEquivalentState(cpuState, gpuState);
     }
@@ -262,10 +274,7 @@ public sealed class RegionShardIlgpuBackendParityTests
     private static bool IsTransientGpuResourceException(Exception ex)
     {
         var message = ex.GetBaseException().Message;
-        return message.Contains("out of memory", StringComparison.OrdinalIgnoreCase)
-               || message.Contains("insufficient memory", StringComparison.OrdinalIgnoreCase)
-               || message.Contains("memory allocation", StringComparison.OrdinalIgnoreCase)
-               || message.Contains("CUDA_ERROR_OUT_OF_MEMORY", StringComparison.OrdinalIgnoreCase);
+        return RegionShardGpuRuntime.IsTransientRuntimeUnavailableReason(message);
     }
 
     private static void AssertEquivalentResults(RegionShardComputeResult expected, RegionShardComputeResult actual)

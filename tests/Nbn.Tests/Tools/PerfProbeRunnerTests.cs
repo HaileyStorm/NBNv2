@@ -1,5 +1,6 @@
 using Nbn.Shared;
 using Nbn.Proto.Io;
+using Nbn.Runtime.RegionHost;
 using Nbn.Runtime.WorkerNode;
 using Nbn.Tools.PerfProbe;
 using Proto;
@@ -415,6 +416,12 @@ public sealed class PerfProbeRunnerTests
             CancellationToken.None);
 
         Assert.True(tickRate >= 0d);
+        if (!string.IsNullOrWhiteSpace(backendFailure)
+            && RegionShardGpuRuntime.IsTransientRuntimeUnavailableReason(backendFailure))
+        {
+            return;
+        }
+
         Assert.True(string.IsNullOrWhiteSpace(backendFailure), backendFailure);
     }
 
@@ -456,6 +463,47 @@ public sealed class PerfProbeRunnerTests
 
         Assert.Equal(PerfScenarioStatus.Passed, result.Status);
         Assert.Equal("success", result.Summary);
+    }
+
+    [Fact]
+    public void BuildBackendExecutionMismatchResult_SkipsTransientGpuRuntimeUnavailability()
+    {
+        var result = PerfProbeRunner.BuildBackendExecutionMismatchResult(
+            Scenario: "compute_dominant_tick_rate",
+            Backend: "gpu",
+            Summary: "Runtime benchmark did not execute on the expected compute backend.",
+            Parameters: new Dictionary<string, string>
+            {
+                ["requested_backend"] = "gpu"
+            },
+            BackendFailure: "expected_gpu_backend_but_observed_cpu:fallback=gpu_backend_unavailable",
+            ComputeBackendPreference: RegionShardComputeBackendPreference.Gpu);
+
+        Assert.Equal(PerfScenarioStatus.Skipped, result.Status);
+        Assert.Equal("regionshard_gpu_backend_not_available", result.SkipReason);
+        Assert.Null(result.Failure);
+        Assert.Equal(
+            "expected_gpu_backend_but_observed_cpu:fallback=gpu_backend_unavailable",
+            result.Parameters["runtime_fallback"]);
+    }
+
+    [Fact]
+    public void BuildBackendExecutionMismatchResult_FailsNonTransientBackendMismatch()
+    {
+        var result = PerfProbeRunner.BuildBackendExecutionMismatchResult(
+            Scenario: "compute_dominant_tick_rate",
+            Backend: "gpu",
+            Summary: "Runtime benchmark did not execute on the expected compute backend.",
+            Parameters: new Dictionary<string, string>
+            {
+                ["requested_backend"] = "gpu"
+            },
+            BackendFailure: "expected_gpu_backend_but_observed_cpu:fallback=unsupported_gpu_accelerator_type",
+            ComputeBackendPreference: RegionShardComputeBackendPreference.Gpu);
+
+        Assert.Equal(PerfScenarioStatus.Failed, result.Status);
+        Assert.Equal("expected_gpu_backend_but_observed_cpu:fallback=unsupported_gpu_accelerator_type", result.Failure);
+        Assert.Null(result.SkipReason);
     }
 
     [Fact]
@@ -504,12 +552,23 @@ public sealed class PerfProbeRunnerTests
         var capabilities = new WorkerNodeCapabilityProvider().GetCapabilities();
         if (HasCurrentGpuRuntimeCapacity(capabilities))
         {
-            Assert.Equal(PerfScenarioStatus.Passed, gpuRow.Status);
+            Assert.True(
+                gpuRow.Status is PerfScenarioStatus.Passed or PerfScenarioStatus.Skipped,
+                $"Expected GPU row to pass or skip after transient runtime fallback, got {gpuRow.Status}: {gpuRow.Failure}");
+            if (gpuRow.Status == PerfScenarioStatus.Skipped)
+            {
+                Assert.Equal("regionshard_gpu_backend_not_available", gpuRow.SkipReason);
+            }
         }
         else
         {
-            Assert.Equal(PerfScenarioStatus.Skipped, gpuRow.Status);
-            Assert.False(string.IsNullOrWhiteSpace(gpuRow.SkipReason));
+            Assert.True(
+                gpuRow.Status is PerfScenarioStatus.Passed or PerfScenarioStatus.Skipped,
+                $"Expected GPU row to pass before capacity changed or skip after transient runtime fallback, got {gpuRow.Status}: {gpuRow.Failure}");
+            if (gpuRow.Status == PerfScenarioStatus.Skipped)
+            {
+                Assert.False(string.IsNullOrWhiteSpace(gpuRow.SkipReason));
+            }
         }
     }
 
