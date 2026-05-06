@@ -2421,7 +2421,12 @@ public sealed class HiveMindPlacementOrchestrationTests
             Assert.Equal(1, metrics.SumLong("nbn.hivemind.recovery.completed", "brain_id", brainTag));
             Assert.Equal(0, metrics.SumLong("nbn.hivemind.recovery.failed", "brain_id", brainTag));
 
-            var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+            var debugSnapshot = await WaitForDebugSnapshotAsync(
+                root,
+                debugProbePid,
+                snapshot => snapshot.Count("brain.recovering") >= 1
+                            && snapshot.Count("brain.recovered") >= 1,
+                timeoutMs: 5_000);
             Assert.True(debugSnapshot.Count("brain.recovering") >= 1);
             Assert.True(debugSnapshot.Count("brain.recovered") >= 1);
         }
@@ -2664,7 +2669,12 @@ public sealed class HiveMindPlacementOrchestrationTests
             Assert.Equal(1, metrics.SumLong("nbn.hivemind.recovery.completed", "brain_id", brainTag));
             Assert.Equal(0, metrics.SumLong("nbn.hivemind.recovery.failed", "brain_id", brainTag));
 
-            var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+            var debugSnapshot = await WaitForDebugSnapshotAsync(
+                root,
+                debugProbePid,
+                snapshot => snapshot.Count("brain.recovering") >= 1
+                            && snapshot.Count("brain.recovered") >= 1,
+                timeoutMs: 5_000);
             Assert.True(debugSnapshot.Count("brain.recovering") >= 1);
             Assert.True(debugSnapshot.Count("brain.recovered") >= 1);
         }
@@ -2752,7 +2762,13 @@ public sealed class HiveMindPlacementOrchestrationTests
             Assert.Equal(0, metrics.SumLong("nbn.hivemind.recovery.completed", "brain_id", brainTag));
             Assert.Equal(1, metrics.SumLong("nbn.hivemind.recovery.failed", "brain_id", brainTag));
 
-            var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+            var debugSnapshot = await WaitForDebugSnapshotAsync(
+                root,
+                debugProbePid,
+                snapshot => snapshot.Count("brain.recovering") >= 1
+                            && snapshot.Count("brain.recovery.failed") >= 1
+                            && snapshot.Count("brain.terminated") >= 1,
+                timeoutMs: 5_000);
             Assert.True(debugSnapshot.Count("brain.recovering") >= 1);
             Assert.True(debugSnapshot.Count("brain.recovery.failed") >= 1);
             Assert.True(debugSnapshot.Count("brain.terminated") >= 1);
@@ -2875,7 +2891,12 @@ public sealed class HiveMindPlacementOrchestrationTests
             Assert.Equal(1, metrics.SumLong("nbn.hivemind.recovery.completed", "brain_id", brainTag));
             Assert.Equal(0, metrics.SumLong("nbn.hivemind.recovery.failed", "brain_id", brainTag));
 
-            var debugSnapshot = await root.RequestAsync<DebugProbeSnapshot>(debugProbePid, new GetDebugProbeSnapshot());
+            var debugSnapshot = await WaitForDebugSnapshotAsync(
+                root,
+                debugProbePid,
+                snapshot => snapshot.Count("brain.recovering") >= 1
+                            && snapshot.Count("brain.recovered") >= 1,
+                timeoutMs: 5_000);
             Assert.True(debugSnapshot.Count("brain.recovering") >= 1);
             Assert.True(debugSnapshot.Count("brain.recovered") >= 1);
         }
@@ -3245,6 +3266,44 @@ public sealed class HiveMindPlacementOrchestrationTests
         PID settingsProbePid,
         Guid brainId)
         => await root.RequestAsync<BrainStateEventSnapshot>(settingsProbePid, new GetBrainStateSnapshot(brainId));
+
+    private static async Task<DebugProbeSnapshot> WaitForDebugSnapshotAsync(
+        IRootContext root,
+        PID debugProbePid,
+        Func<DebugProbeSnapshot, bool> predicate,
+        int timeoutMs)
+    {
+        DebugProbeSnapshot? latest = null;
+        var requestTimeout = TimeSpan.FromMilliseconds(Math.Min(250, Math.Max(50, timeoutMs)));
+        var deadline = Stopwatch.StartNew();
+        while (deadline.ElapsedMilliseconds < timeoutMs)
+        {
+            try
+            {
+                latest = await root.RequestAsync<DebugProbeSnapshot>(
+                    debugProbePid,
+                    new GetDebugProbeSnapshot(),
+                    requestTimeout);
+                if (predicate(latest))
+                {
+                    return latest;
+                }
+            }
+            catch (TimeoutException)
+            {
+            }
+
+            await Task.Delay(20);
+        }
+
+        throw new TimeoutException(
+            $"Debug snapshot predicate was not satisfied within {timeoutMs} ms. Last counts: {FormatDebugCounts(latest)}");
+    }
+
+    private static string FormatDebugCounts(DebugProbeSnapshot? snapshot)
+        => snapshot is null
+            ? "<none>"
+            : string.Join(", ", snapshot.Counts.OrderBy(static pair => pair.Key).Select(static pair => $"{pair.Key}={pair.Value}"));
 
     private static void AssertStateSequence(BrainStateEventSnapshot snapshot, params string[] states)
     {
