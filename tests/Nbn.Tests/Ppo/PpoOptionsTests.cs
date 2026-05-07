@@ -10,7 +10,7 @@ public sealed class PpoOptionsTests
         var options = PpoOptions.FromArgs(Array.Empty<string>());
 
         Assert.Equal(Nbn.Shared.NetworkAddressDefaults.DefaultBindHost, options.BindHost);
-        Assert.Equal(12090, options.Port);
+        Assert.Equal(PpoOptions.DefaultPort, options.Port);
         Assert.Equal(PpoNames.Manager, options.ManagerName);
         Assert.Equal("nbn.ppo", options.ServiceName);
         Assert.Equal("127.0.0.1", options.SettingsHost);

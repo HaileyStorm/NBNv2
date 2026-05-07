@@ -20,10 +20,12 @@ public sealed record PpoOptions(
     string? SpeciationAddress,
     string? SpeciationName)
 {
+    public const int DefaultPort = 12092;
+
     public static PpoOptions FromArgs(string[] args)
     {
         var bindHost = GetEnv("NBN_PPO_BIND_HOST") ?? Nbn.Shared.NetworkAddressDefaults.DefaultBindHost;
-        var port = GetEnvInt("NBN_PPO_PORT") ?? 12090;
+        var port = GetEnvInt("NBN_PPO_PORT") ?? DefaultPort;
         var advertisedHost = GetEnv("NBN_PPO_ADVERTISE_HOST");
         var advertisedPort = GetEnvInt("NBN_PPO_ADVERTISE_PORT");
         var managerName = GetEnv("NBN_PPO_NAME") ?? PpoNames.Manager;
@@ -292,7 +294,7 @@ public sealed record PpoOptions(
     {
         Console.WriteLine("NBN PPO options:");
         Console.WriteLine($"  --bind, --bind-host <host>       Host/interface to bind (default {Nbn.Shared.NetworkAddressDefaults.DefaultBindHost})");
-        Console.WriteLine("  --port <port>                    Port to bind (default 12090)");
+        Console.WriteLine($"  --port <port>                    Port to bind (default {DefaultPort})");
         Console.WriteLine("  --advertise, --advertise-host    Advertised host for remoting");
         Console.WriteLine("  --advertise-port <port>          Advertised port for remoting");
         Console.WriteLine("  --manager-name <name>            PPO actor name (default PpoManager)");

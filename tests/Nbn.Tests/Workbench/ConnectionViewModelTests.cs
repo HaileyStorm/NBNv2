@@ -1,4 +1,5 @@
 using Nbn.Shared;
+using Nbn.Runtime.Ppo;
 using Nbn.Tools.Workbench.Services;
 using Nbn.Tools.Workbench.ViewModels;
 
@@ -47,6 +48,16 @@ public sealed class ConnectionViewModelTests
         var vm = new ConnectionViewModel();
 
         Assert.Equal(12091, vm.ResolveReachableArtifactPort());
+    }
+
+    [Fact]
+    public void PpoPort_DefaultDoesNotCollideWithWorkbenchReceiver()
+    {
+        var vm = new ConnectionViewModel();
+
+        Assert.Equal("12090", vm.LocalPortText);
+        Assert.Equal(PpoOptions.DefaultPort.ToString(), vm.PpoPortText);
+        Assert.NotEqual(vm.LocalPortText, vm.PpoPortText);
     }
 
     [Fact]

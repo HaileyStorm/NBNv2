@@ -19,7 +19,7 @@ public sealed class ConnectionViewModel : ViewModelBase
     private string _speciationPortText = "12080";
     private string _speciationManager = "SpeciationManager";
     private string _ppoHost = "127.0.0.1";
-    private string _ppoPortText = "12090";
+    private string _ppoPortText = "12092";
     private string _ppoManager = "PpoManager";
     private string _workerHost = "127.0.0.1";
     private string _workerPortText = "12041";

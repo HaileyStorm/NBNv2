@@ -1180,7 +1180,7 @@ public class OrchestratorPanelViewModelTests
             SpeciationPortText = "12080",
             SpeciationManager = "SpeciationManager",
             PpoHost = "127.0.0.1",
-            PpoPortText = "12090",
+            PpoPortText = "12092",
             PpoManager = "PpoManager",
             WorkerHost = "127.0.0.1",
             WorkerPortText = "12041",
@@ -1261,7 +1261,7 @@ public class OrchestratorPanelViewModelTests
         Assert.Equal("12080", connections.SpeciationPortText);
         Assert.Equal("SpeciationManager", connections.SpeciationManager);
         Assert.Equal("127.0.0.1", connections.PpoHost);
-        Assert.Equal("12090", connections.PpoPortText);
+        Assert.Equal("12092", connections.PpoPortText);
         Assert.Equal("PpoManager", connections.PpoManager);
         Assert.Equal("127.0.0.1", connections.WorkerHost);
         Assert.Equal("12041", connections.WorkerPortText);
@@ -1342,7 +1342,7 @@ public class OrchestratorPanelViewModelTests
             SpeciationPortText = "12080",
             SpeciationManager = "SpeciationManager",
             PpoHost = "127.0.0.1",
-            PpoPortText = "12090",
+            PpoPortText = "12092",
             PpoManager = "PpoManager",
             WorkerHost = "127.0.0.1",
             WorkerPortText = "12041",
@@ -1382,7 +1382,7 @@ public class OrchestratorPanelViewModelTests
             && string.Equals(connections.SpeciationPortText, "12080", StringComparison.Ordinal)
             && string.Equals(connections.SpeciationManager, "SpeciationManager", StringComparison.Ordinal)
             && string.Equals(connections.PpoHost, "127.0.0.1", StringComparison.Ordinal)
-            && string.Equals(connections.PpoPortText, "12090", StringComparison.Ordinal)
+            && string.Equals(connections.PpoPortText, "12092", StringComparison.Ordinal)
             && string.Equals(connections.PpoManager, "PpoManager", StringComparison.Ordinal)
             && string.Equals(connections.WorkerHost, "127.0.0.1", StringComparison.Ordinal)
             && string.Equals(connections.WorkerPortText, "12041", StringComparison.Ordinal)

@@ -12,6 +12,7 @@ Owns the optional core PPO optimization service. PPO depends on IO for live-gene
 - PPO does not use output subscriptions as post-deliver-safe trajectory observations until IO exposes an explicit post-deliver observation fence.
 - Endpoint discovery watches `service.endpoint.io_gateway`, `service.endpoint.reproduction_manager`, and `service.endpoint.speciation_manager`; invalid or removed observations fall back to explicit CLI endpoint hints if present.
 - Workbench can launch PPO explicitly from Orchestrator Local Launch using the SettingsMonitor coordinates as the only bootstrap dependency. PPO remains optional and is not part of Workbench `Start All` by default.
+- PPO binds TCP `12092` by default so it does not collide with the Workbench receiver default on TCP `12090`.
 
 ## Maintenance guidance
 
