@@ -1,4 +1,7 @@
 # Project-specific multi-agent roles for NBNv2.
+# Allowed model families are GPT-5.5 and Spark. If Spark quota is unavailable,
+# rerun the delegated work on GPT-5.5, usually with medium reasoning unless the
+# task risk calls for high or xhigh. Do not use GPT-5.4 aliases.
 
 [agents.explorer]
 description = "Read-heavy scout for ownership, call paths, invariants, docs, and candidate files."

@@ -47,8 +47,10 @@
 
 ## Model policy
 
+- Allowed model families are GPT-5.5 and Spark only.
 - Use GPT-5.5 as the default non-Spark model for local work and any agent/model override.
-- Use Spark only for discovery-only, simple mechanical, or otherwise low-risk delegated work.
+- Use Spark only for discovery-only, simple mechanical, or otherwise low-risk delegated work while Spark quota is available.
+- If Spark quota is exhausted or unavailable, promote the work to GPT-5.5; medium reasoning is the default when GPT-5.5 is replacing Spark unless the task risk calls for high or xhigh.
 - Do not use GPT-5.4 model aliases for this repository.
 
 ## Documentation maintenance policy (required)
