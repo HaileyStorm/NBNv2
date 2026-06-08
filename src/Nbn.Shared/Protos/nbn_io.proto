@@ -418,6 +418,14 @@ message PpoStopRunResult {
   nbn.ppo.PpoStopRunResponse response = 1;
 }
 
+message PpoRecordRewards {
+  nbn.ppo.PpoRecordRewardsRequest request = 1;
+}
+
+message PpoRecordRewardsResult {
+  nbn.ppo.PpoRecordRewardsResponse response = 1;
+}
+
 message SpeciationStatus {
   nbn.speciation.SpeciationStatusRequest request = 1;
 }

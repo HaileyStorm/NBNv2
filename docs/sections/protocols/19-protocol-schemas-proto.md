@@ -1360,6 +1360,14 @@ message PpoStopRunResult {
   nbn.ppo.PpoStopRunResponse response = 1;
 }
 
+message PpoRecordRewards {
+  nbn.ppo.PpoRecordRewardsRequest request = 1;
+}
+
+message PpoRecordRewardsResult {
+  nbn.ppo.PpoRecordRewardsResponse response = 1;
+}
+
 message SpeciationStatus {
   nbn.speciation.SpeciationStatusRequest request = 1;
 }
@@ -2127,6 +2135,9 @@ message PpoCandidateResult {
   nbn.repro.SimilarityReport reproduction_report = 4;
   nbn.repro.MutationSummary mutation_summary = 5;
   nbn.speciation.SpeciationDecision speciation_decision = 6;
+  float old_log_probability = 7;
+  float value_estimate = 8;
+  string action_json = 9;
 }
 
 message PpoRolloutExecutionReport {
@@ -2135,6 +2146,32 @@ message PpoRolloutExecutionReport {
   nbn.speciation.SpeciationBatchEvaluateApplyResponse speciation_result = 3;
   repeated PpoCandidateResult candidates = 4;
   string provenance_json = 5;
+  string policy_state_json = 6;
+}
+
+message PpoRewardSample {
+  string run_id = 1;
+  uint32 run_index = 2;
+  nbn.ArtifactRef child_def = 3;
+  float reward = 4;
+  float accuracy = 5;
+  float fitness = 6;
+  fixed64 generation = 7;
+  bool terminal = 8;
+  string metadata_json = 9;
+}
+
+message PpoPolicyUpdateReport {
+  fixed64 update_index = 1;
+  uint32 accepted_sample_count = 2;
+  float mean_reward = 3;
+  float max_reward = 4;
+  float mean_advantage = 5;
+  float policy_loss = 6;
+  float value_loss = 7;
+  float entropy = 8;
+  float approximate_kl = 9;
+  string policy_state_json = 10;
 }
 
 message PpoRunDescriptor {
@@ -2158,6 +2195,7 @@ message PpoStatusResponse {
   PpoRunDescriptor active_run = 4;
   fixed64 completed_run_count = 5;
   PpoRunDescriptor last_run = 6;
+  PpoPolicyUpdateReport last_policy_update = 7;
 }
 
 message PpoStartRunRequest {
@@ -2187,5 +2225,20 @@ message PpoStopRunResponse {
   string failure_detail = 2;
   bool stopped = 3;
   PpoRunDescriptor run = 4;
+}
+
+message PpoRecordRewardsRequest {
+  string objective_name = 1;
+  string reward_signal = 2;
+  PpoHyperparameters hyperparameters = 3;
+  repeated PpoRewardSample samples = 4;
+  string metadata_json = 5;
+}
+
+message PpoRecordRewardsResponse {
+  PpoFailureReason failure_reason = 1;
+  string failure_detail = 2;
+  bool accepted = 3;
+  PpoPolicyUpdateReport update = 4;
 }
 ```

@@ -84,6 +84,9 @@ public class ProtoCompatibilityTests
         AssertField(candidate, "reproduction_report", 4, FieldType.Message, "nbn.repro.SimilarityReport");
         AssertField(candidate, "mutation_summary", 5, FieldType.Message, "nbn.repro.MutationSummary");
         AssertField(candidate, "speciation_decision", 6, FieldType.Message, "nbn.speciation.SpeciationDecision");
+        AssertField(candidate, "old_log_probability", 7, FieldType.Float);
+        AssertField(candidate, "value_estimate", 8, FieldType.Float);
+        AssertField(candidate, "action_json", 9, FieldType.String);
 
         var executionReport = descriptor.MessageTypes.Single(message => message.Name == "PpoRolloutExecutionReport");
         AssertRepeatedField(executionReport, "observed_parents", 1, FieldType.Message, "nbn.ppo.PpoObservedParent");
@@ -91,6 +94,30 @@ public class ProtoCompatibilityTests
         AssertField(executionReport, "speciation_result", 3, FieldType.Message, "nbn.speciation.SpeciationBatchEvaluateApplyResponse");
         AssertRepeatedField(executionReport, "candidates", 4, FieldType.Message, "nbn.ppo.PpoCandidateResult");
         AssertField(executionReport, "provenance_json", 5, FieldType.String);
+        AssertField(executionReport, "policy_state_json", 6, FieldType.String);
+
+        var rewardSample = descriptor.MessageTypes.Single(message => message.Name == "PpoRewardSample");
+        AssertField(rewardSample, "run_id", 1, FieldType.String);
+        AssertField(rewardSample, "run_index", 2, FieldType.UInt32);
+        AssertField(rewardSample, "child_def", 3, FieldType.Message, "nbn.ArtifactRef");
+        AssertField(rewardSample, "reward", 4, FieldType.Float);
+        AssertField(rewardSample, "accuracy", 5, FieldType.Float);
+        AssertField(rewardSample, "fitness", 6, FieldType.Float);
+        AssertField(rewardSample, "generation", 7, FieldType.Fixed64);
+        AssertField(rewardSample, "terminal", 8, FieldType.Bool);
+        AssertField(rewardSample, "metadata_json", 9, FieldType.String);
+
+        var policyUpdate = descriptor.MessageTypes.Single(message => message.Name == "PpoPolicyUpdateReport");
+        AssertField(policyUpdate, "update_index", 1, FieldType.Fixed64);
+        AssertField(policyUpdate, "accepted_sample_count", 2, FieldType.UInt32);
+        AssertField(policyUpdate, "mean_reward", 3, FieldType.Float);
+        AssertField(policyUpdate, "max_reward", 4, FieldType.Float);
+        AssertField(policyUpdate, "mean_advantage", 5, FieldType.Float);
+        AssertField(policyUpdate, "policy_loss", 6, FieldType.Float);
+        AssertField(policyUpdate, "value_loss", 7, FieldType.Float);
+        AssertField(policyUpdate, "entropy", 8, FieldType.Float);
+        AssertField(policyUpdate, "approximate_kl", 9, FieldType.Float);
+        AssertField(policyUpdate, "policy_state_json", 10, FieldType.String);
 
         var status = descriptor.MessageTypes.Single(message => message.Name == "PpoStatusResponse");
         AssertField(status, "failure_reason", 1, FieldType.Enum, "nbn.ppo.PpoFailureReason");
@@ -99,6 +126,7 @@ public class ProtoCompatibilityTests
         AssertField(status, "active_run", 4, FieldType.Message, "nbn.ppo.PpoRunDescriptor");
         AssertField(status, "completed_run_count", 5, FieldType.Fixed64);
         AssertField(status, "last_run", 6, FieldType.Message, "nbn.ppo.PpoRunDescriptor");
+        AssertField(status, "last_policy_update", 7, FieldType.Message, "nbn.ppo.PpoPolicyUpdateReport");
 
         var run = descriptor.MessageTypes.Single(message => message.Name == "PpoRunDescriptor");
         AssertField(run, "execution_report", 9, FieldType.Message, "nbn.ppo.PpoRolloutExecutionReport");
@@ -111,6 +139,19 @@ public class ProtoCompatibilityTests
         AssertRepeatedField(start, "parent_brain_ids", 5, FieldType.Message, "nbn.Uuid");
         AssertField(start, "reproduce_config", 6, FieldType.Message, "nbn.repro.ReproduceConfig");
         AssertField(start, "strength_source", 7, FieldType.Enum, "nbn.repro.StrengthSource");
+
+        var recordRewards = descriptor.MessageTypes.Single(message => message.Name == "PpoRecordRewardsRequest");
+        AssertField(recordRewards, "objective_name", 1, FieldType.String);
+        AssertField(recordRewards, "reward_signal", 2, FieldType.String);
+        AssertField(recordRewards, "hyperparameters", 3, FieldType.Message, "nbn.ppo.PpoHyperparameters");
+        AssertRepeatedField(recordRewards, "samples", 4, FieldType.Message, "nbn.ppo.PpoRewardSample");
+        AssertField(recordRewards, "metadata_json", 5, FieldType.String);
+
+        var recordRewardsResponse = descriptor.MessageTypes.Single(message => message.Name == "PpoRecordRewardsResponse");
+        AssertField(recordRewardsResponse, "failure_reason", 1, FieldType.Enum, "nbn.ppo.PpoFailureReason");
+        AssertField(recordRewardsResponse, "failure_detail", 2, FieldType.String);
+        AssertField(recordRewardsResponse, "accepted", 3, FieldType.Bool);
+        AssertField(recordRewardsResponse, "update", 4, FieldType.Message, "nbn.ppo.PpoPolicyUpdateReport");
     }
 
     [Fact]
@@ -1047,6 +1088,12 @@ public class ProtoCompatibilityTests
 
         var stopRunResult = descriptor.MessageTypes.Single(message => message.Name == "PpoStopRunResult");
         AssertField(stopRunResult, "response", 1, FieldType.Message, "nbn.ppo.PpoStopRunResponse");
+
+        var recordRewards = descriptor.MessageTypes.Single(message => message.Name == "PpoRecordRewards");
+        AssertField(recordRewards, "request", 1, FieldType.Message, "nbn.ppo.PpoRecordRewardsRequest");
+
+        var recordRewardsResult = descriptor.MessageTypes.Single(message => message.Name == "PpoRecordRewardsResult");
+        AssertField(recordRewardsResult, "response", 1, FieldType.Message, "nbn.ppo.PpoRecordRewardsResponse");
     }
 
     [Fact]

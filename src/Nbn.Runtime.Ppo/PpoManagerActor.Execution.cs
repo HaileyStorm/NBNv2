@@ -45,7 +45,7 @@ public sealed partial class PpoManagerActor
                 .ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
-            var reproductionRequest = CreateReproductionRequest(request, observedParents);
+            var reproductionRequest = CreateReproductionRequest(run, request, observedParents, out var policyApplication);
             var reproduction = await context
                 .RequestAsync<ProtoRepro.ReproduceResult>(
                     reproductionPid,
@@ -68,6 +68,7 @@ public sealed partial class PpoManagerActor
                         ? "ppo_reproduction_candidate_missing"
                         : reproduction.Report.AbortReason);
             }
+            _policy.RegisterCandidates(run.RunId, candidates, policyApplication);
 
             cancellationToken.ThrowIfCancellationRequested();
             if (!executionState.TryMarkCommitDispatched())
@@ -75,7 +76,7 @@ public sealed partial class PpoManagerActor
                 return CreateTerminalRun(run, PpoRunState.Cancelled, "ppo_run_cancelled");
             }
 
-            var speciationRequest = CreateSpeciationRequest(run, request, observedParents, candidates);
+            var speciationRequest = CreateSpeciationRequest(run, request, observedParents, candidates, policyApplication);
             var speciation = await context
                 .RequestAsync<ProtoSpec.SpeciationBatchEvaluateApplyResponse>(
                     speciationPid,
@@ -88,7 +89,7 @@ public sealed partial class PpoManagerActor
                 return CreateTerminalRun(run, PpoRunState.Failed, "ppo_speciation_empty_response");
             }
 
-            var report = CreateExecutionReport(run, request, observedParents, reproduction, speciation, candidates);
+            var report = CreateExecutionReport(run, request, observedParents, reproduction, speciation, candidates, policyApplication);
             var success = speciation.FailureReason == ProtoSpec.SpeciationFailureReason.SpeciationFailureNone
                           && speciation.ProcessedCount == candidates.Count
                           && speciation.CommittedCount == candidates.Count;
@@ -172,13 +173,16 @@ public sealed partial class PpoManagerActor
         return observed;
     }
 
-    private static ProtoRepro.ReproduceByArtifactsRequest CreateReproductionRequest(
+    private ProtoRepro.ReproduceByArtifactsRequest CreateReproductionRequest(
+        PpoRunDescriptor run,
         PpoStartRunRequest request,
-        IReadOnlyList<PpoObservedParent> parents)
+        IReadOnlyList<PpoObservedParent> parents,
+        out PpoControllerPolicy.PpoPolicyApplication policyApplication)
     {
         var config = request.ReproduceConfig?.Clone() ?? new ProtoRepro.ReproduceConfig();
         config.SpawnChild = ProtoRepro.SpawnChildPolicy.SpawnChildNever;
         config.ProtectIoRegionNeuronCounts = true;
+        policyApplication = _policy.Apply(run.RunId, request, config);
 
         return new ProtoRepro.ReproduceByArtifactsRequest
         {
@@ -228,7 +232,8 @@ public sealed partial class PpoManagerActor
         PpoRunDescriptor run,
         PpoStartRunRequest request,
         IReadOnlyList<PpoObservedParent> parents,
-        IReadOnlyList<CandidateArtifact> candidates)
+        IReadOnlyList<CandidateArtifact> candidates,
+        PpoControllerPolicy.PpoPolicyApplication policyApplication)
     {
         var speciation = new ProtoSpec.SpeciationBatchEvaluateApplyRequest
         {
@@ -245,7 +250,7 @@ public sealed partial class PpoManagerActor
                     ArtifactRef = candidate.ChildDef.Clone()
                 },
                 DecisionReason = "ppo_rollout_candidate",
-                DecisionMetadataJson = CreateCandidateMetadataJson(run, request, parents, candidate),
+                DecisionMetadataJson = CreateCandidateMetadataJson(run, request, parents, candidate, policyApplication),
                 DecisionTimeMs = CurrentUnixTimeMs(),
                 HasDecisionTimeMs = true
             };
@@ -270,13 +275,15 @@ public sealed partial class PpoManagerActor
         IReadOnlyList<PpoObservedParent> parents,
         ProtoRepro.ReproduceResult reproduction,
         ProtoSpec.SpeciationBatchEvaluateApplyResponse speciation,
-        IReadOnlyList<CandidateArtifact> candidates)
+        IReadOnlyList<CandidateArtifact> candidates,
+        PpoControllerPolicy.PpoPolicyApplication policyApplication)
     {
         var report = new PpoRolloutExecutionReport
         {
             ReproductionResult = reproduction.Clone(),
             SpeciationResult = speciation.Clone(),
-            ProvenanceJson = CreateRunProvenanceJson(run, request, parents, candidates)
+            ProvenanceJson = CreateRunProvenanceJson(run, request, parents, candidates, policyApplication),
+            PolicyStateJson = policyApplication.PolicyStateJson
         };
         report.ObservedParents.AddRange(parents.Select(parent => parent.Clone()));
 
@@ -294,7 +301,10 @@ public sealed partial class PpoManagerActor
                 ChildDef = candidate.ChildDef.Clone(),
                 ReproductionReport = candidate.Report?.Clone(),
                 MutationSummary = candidate.Summary?.Clone(),
-                SpeciationDecision = decision?.Clone()
+                SpeciationDecision = decision?.Clone(),
+                OldLogProbability = policyApplication.Action.OldLogProbability,
+                ValueEstimate = policyApplication.Action.ValueEstimate,
+                ActionJson = policyApplication.Action.ActionJson
             });
         }
 
@@ -305,7 +315,8 @@ public sealed partial class PpoManagerActor
         PpoRunDescriptor run,
         PpoStartRunRequest request,
         IReadOnlyList<PpoObservedParent> parents,
-        CandidateArtifact candidate)
+        CandidateArtifact candidate,
+        PpoControllerPolicy.PpoPolicyApplication policyApplication)
         => JsonSerializer.Serialize(new
         {
             source = "ppo",
@@ -317,6 +328,9 @@ public sealed partial class PpoManagerActor
             candidate_run_index = candidate.RunIndex,
             candidate_seed = candidate.Seed,
             candidate_artifact = ArtifactMetadata(candidate.ChildDef),
+            policy_action = JsonDocument.Parse(policyApplication.Action.ActionJson).RootElement,
+            old_log_probability = policyApplication.Action.OldLogProbability,
+            value_estimate = policyApplication.Action.ValueEstimate,
             observation_source = "io_request_snapshot",
             post_deliver_output_fence = false,
             observed_parents = parents.Select(ParentMetadata).ToArray(),
@@ -327,7 +341,8 @@ public sealed partial class PpoManagerActor
         PpoRunDescriptor run,
         PpoStartRunRequest request,
         IReadOnlyList<PpoObservedParent> parents,
-        IReadOnlyList<CandidateArtifact> candidates)
+        IReadOnlyList<CandidateArtifact> candidates,
+        PpoControllerPolicy.PpoPolicyApplication policyApplication)
         => JsonSerializer.Serialize(new
         {
             source = "ppo",
@@ -340,6 +355,7 @@ public sealed partial class PpoManagerActor
             speciation_apply_mode = "commit",
             parent_count = parents.Count,
             candidate_count = candidates.Count,
+            policy_state = JsonDocument.Parse(policyApplication.PolicyStateJson).RootElement,
             observed_parents = parents.Select(ParentMetadata).ToArray()
         });
 
@@ -380,7 +396,7 @@ public sealed partial class PpoManagerActor
     private static bool HasArtifactRef(ArtifactRef? artifact)
         => artifact?.Sha256?.Value is { Length: 32 };
 
-    private sealed record CandidateArtifact(
+    internal sealed record CandidateArtifact(
         uint RunIndex,
         ulong Seed,
         ArtifactRef ChildDef,

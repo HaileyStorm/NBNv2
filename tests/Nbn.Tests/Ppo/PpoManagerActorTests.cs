@@ -223,6 +223,151 @@ public sealed class PpoManagerActorTests
     }
 
     [Fact]
+    public async Task RecordRewards_UpdatesPolicyAndNextRunUsesUpdatedMutationKnobs()
+    {
+        await using var system = new ActorSystem();
+        var parentA = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var parentB = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var child = CreateArtifact("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "child");
+        var ioProbe = system.Root.Spawn(Props.FromProducer(() => new PpoIoProbe(parentA, parentB)));
+        var reproductionProbe = system.Root.Spawn(Props.FromProducer(() => new PpoReproductionProbe(child)));
+        var speciationProbe = system.Root.Spawn(Props.FromProducer(() => new PpoSpeciationProbe()));
+        var manager = system.Root.Spawn(
+            Props.FromProducer(() => new PpoManagerActor(
+                ioProbe,
+                reproductionProbe,
+                speciationProbe)));
+
+        var firstRun = CreateValidStartRequest(parentA, parentB, "ppo-policy-run-1");
+        var firstStarted = await system.Root.RequestAsync<PpoStartRunResponse>(
+            manager,
+            firstRun,
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(firstStarted.Accepted);
+        await AsyncTestHelpers.WaitForAsync(
+            async () =>
+            {
+                var current = await system.Root.RequestAsync<PpoStatusResponse>(
+                    manager,
+                    new PpoStatusRequest(),
+                    TimeSpan.FromSeconds(5));
+                return current.LastRun?.State == PpoRunState.Completed;
+            },
+            timeoutMs: 5000,
+            failureMessage: "Initial PPO rollout did not complete.");
+
+        var beforeUpdate = await system.Root.RequestAsync<PpoReproductionProbe.Snapshot>(
+            reproductionProbe,
+            new PpoReproductionProbe.GetSnapshot(),
+            TimeSpan.FromSeconds(5));
+        Assert.NotNull(beforeUpdate.LastRequest);
+        var initialAddAxonProbability = beforeUpdate.LastRequest.Config.ProbAddAxon;
+
+        var feedback = await system.Root.RequestAsync<PpoRecordRewardsResponse>(
+            manager,
+            new PpoRecordRewardsRequest
+            {
+                ObjectiveName = "multiplication",
+                RewardSignal = "basics.fitness",
+                Hyperparameters = new PpoHyperparameters
+                {
+                    RewardSignal = "basics.fitness",
+                    RolloutTickCount = 32,
+                    RolloutBatchCount = 1,
+                    ClipEpsilon = 0.2f,
+                    DiscountGamma = 0.99f,
+                    GaeLambda = 0.95f,
+                    LearningRate = 0.05f,
+                    OptimizationEpochCount = 32,
+                    MinibatchSize = 1,
+                    Seed = 7
+                },
+                Samples =
+                {
+                    new PpoRewardSample
+                    {
+                        RunId = "ppo-policy-run-1",
+                        RunIndex = 0,
+                        ChildDef = child.Clone(),
+                        Reward = 0.85f,
+                        Accuracy = 0.75f,
+                        Fitness = 0.85f,
+                        Generation = 2
+                    }
+                }
+            },
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(feedback.Accepted);
+        Assert.Equal(PpoFailureReason.PpoFailureNone, feedback.FailureReason);
+        Assert.Equal(1u, feedback.Update.AcceptedSampleCount);
+        Assert.Equal(1UL, feedback.Update.UpdateIndex);
+        Assert.Contains("add_axon", feedback.Update.PolicyStateJson);
+
+        var secondStarted = await system.Root.RequestAsync<PpoStartRunResponse>(
+            manager,
+            CreateValidStartRequest(parentA, parentB, "ppo-policy-run-2"),
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(secondStarted.Accepted);
+        await AsyncTestHelpers.WaitForAsync(
+            async () =>
+            {
+                var current = await system.Root.RequestAsync<PpoStatusResponse>(
+                    manager,
+                    new PpoStatusRequest(),
+                    TimeSpan.FromSeconds(5));
+                return current.LastRun?.RunId == "ppo-policy-run-2"
+                       && current.LastRun.State == PpoRunState.Completed;
+            },
+            timeoutMs: 5000,
+            failureMessage: "Second PPO rollout did not complete.");
+
+        var afterUpdate = await system.Root.RequestAsync<PpoReproductionProbe.Snapshot>(
+            reproductionProbe,
+            new PpoReproductionProbe.GetSnapshot(),
+            TimeSpan.FromSeconds(5));
+        Assert.NotNull(afterUpdate.LastRequest);
+        Assert.True(afterUpdate.LastRequest.Config.ProbAddAxon > initialAddAxonProbability);
+
+        var status = await system.Root.RequestAsync<PpoStatusResponse>(
+            manager,
+            new PpoStatusRequest(),
+            TimeSpan.FromSeconds(5));
+        Assert.Equal(1UL, status.LastPolicyUpdate.UpdateIndex);
+    }
+
+    [Fact]
+    public async Task RecordRewards_RejectsNonFiniteReward()
+    {
+        await using var system = new ActorSystem();
+        var manager = system.Root.Spawn(Props.FromProducer(() => new PpoManagerActor()));
+
+        var feedback = await system.Root.RequestAsync<PpoRecordRewardsResponse>(
+            manager,
+            new PpoRecordRewardsRequest
+            {
+                Samples =
+                {
+                    new PpoRewardSample
+                    {
+                        RunId = "ppo-policy-run",
+                        RunIndex = 0,
+                        Reward = float.NaN,
+                        Accuracy = 0f,
+                        Fitness = 0f
+                    }
+                }
+            },
+            TimeSpan.FromSeconds(5));
+
+        Assert.False(feedback.Accepted);
+        Assert.Equal(PpoFailureReason.PpoFailureInvalidRequest, feedback.FailureReason);
+        Assert.Equal("ppo_reward_non_finite", feedback.FailureDetail);
+    }
+
+    [Fact]
     public async Task StopRun_RejectsMissingOrMismatchedRun()
     {
         await using var system = new ActorSystem();

@@ -56,6 +56,23 @@ public sealed partial class IoGatewayActor
             operationName: nameof(PpoStopRun));
     }
 
+    private void HandlePpoRecordRewards(IContext context, PpoRecordRewards message)
+    {
+        var request = message.Request ?? new ProtoPpo.PpoRecordRewardsRequest();
+        ForwardPpoRequest(
+            context,
+            request,
+            static response => new PpoRecordRewardsResult { Response = response },
+            static (reason, detail) => new ProtoPpo.PpoRecordRewardsResponse
+            {
+                FailureReason = reason,
+                FailureDetail = detail,
+                Accepted = false,
+                Update = new ProtoPpo.PpoPolicyUpdateReport()
+            },
+            operationName: nameof(PpoRecordRewards));
+    }
+
     private void ForwardPpoRequest<TRequest, TResponse, TResult>(
         IContext context,
         TRequest request,

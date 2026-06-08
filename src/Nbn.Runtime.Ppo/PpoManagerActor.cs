@@ -20,6 +20,7 @@ public sealed partial class PpoManagerActor : IActor
     private CancellationTokenSource? _activeRunCancellation;
     private RunExecutionState? _activeRunExecutionState;
     private ulong _completedRunCount;
+    private readonly PpoControllerPolicy _policy = new();
 
     public PpoManagerActor(PID? reproductionPid = null, PID? speciationPid = null)
         : this(null, reproductionPid, speciationPid)
@@ -49,6 +50,9 @@ public sealed partial class PpoManagerActor : IActor
             case PpoStopRunRequest message:
                 context.Respond(StopRun(message));
                 break;
+            case PpoRecordRewardsRequest message:
+                context.Respond(_policy.RecordRewards(message));
+                break;
             case DependencyPidsConfigured message:
                 ApplyConfiguredDependencyPids(message);
                 break;
@@ -70,7 +74,8 @@ public sealed partial class PpoManagerActor : IActor
             Dependencies = CreateDependencyStatus(),
             ActiveRun = _activeRun?.Clone(),
             LastRun = _lastRun?.Clone(),
-            CompletedRunCount = _completedRunCount
+            CompletedRunCount = _completedRunCount,
+            LastPolicyUpdate = _policy.LastUpdate
         };
 
     public sealed record DependencyPidsConfigured(PID? IoPid, PID? ReproductionPid, PID? SpeciationPid);

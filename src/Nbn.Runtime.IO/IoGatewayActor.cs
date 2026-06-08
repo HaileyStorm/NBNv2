@@ -217,6 +217,9 @@ public sealed partial class IoGatewayActor : IActor
                 case PpoStopRun message:
                     HandlePpoStopRun(context, message);
                     break;
+                case PpoRecordRewards message:
+                    HandlePpoRecordRewards(context, message);
+                    break;
                 case SpeciationStatus message:
                     HandleSpeciationStatus(context, message);
                     break;
