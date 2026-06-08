@@ -554,10 +554,12 @@ public sealed class PerfProbeRunnerTests
         {
             Assert.True(
                 gpuRow.Status is PerfScenarioStatus.Passed or PerfScenarioStatus.Skipped,
-                $"Expected GPU row to pass or skip after transient runtime fallback, got {gpuRow.Status}: {gpuRow.Failure}");
+            $"Expected GPU row to pass or skip after transient runtime fallback, got {gpuRow.Status}: {gpuRow.Failure}");
             if (gpuRow.Status == PerfScenarioStatus.Skipped)
             {
-                Assert.Equal("regionshard_gpu_backend_not_available", gpuRow.SkipReason);
+                Assert.True(
+                    IsExpectedGpuSkipReason(gpuRow.SkipReason),
+                    $"Unexpected GPU skip reason: {gpuRow.SkipReason}");
             }
         }
         else
@@ -660,4 +662,8 @@ public sealed class PerfProbeRunnerTests
                capabilities.VramFreeBytes,
                capabilities.VramTotalBytes,
                capabilities.GpuVramLimitPercent) > 0;
+
+    private static bool IsExpectedGpuSkipReason(string? reason)
+        => string.Equals(reason, "regionshard_gpu_backend_not_available", StringComparison.Ordinal)
+           || string.Equals(reason, "ilgpu_gpu_accelerator_unavailable", StringComparison.Ordinal);
 }

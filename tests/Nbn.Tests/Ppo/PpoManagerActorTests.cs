@@ -204,6 +204,12 @@ public sealed class PpoManagerActorTests
         Assert.NotNull(reproduction.LastRequest);
         Assert.Equal(ProtoRepro.SpawnChildPolicy.SpawnChildNever, reproduction.LastRequest.Config.SpawnChild);
         Assert.True(reproduction.LastRequest.Config.ProtectIoRegionNeuronCounts);
+        Assert.False(reproduction.LastRequest.Config.StrengthTransformEnabled);
+        Assert.Equal(0f, reproduction.LastRequest.Config.ProbMutate);
+        Assert.Equal(0f, reproduction.LastRequest.Config.ProbStrengthMutate);
+        Assert.Equal(0f, reproduction.LastRequest.Config.ProbAddAxon);
+        Assert.Equal(0f, reproduction.LastRequest.Config.ProbRemoveAxon);
+        Assert.Equal(0f, reproduction.LastRequest.Config.ProbRerouteAxon);
         Assert.Equal(4u, reproduction.LastRequest.RunCount);
         Assert.Equal("artifact://ppo/parent-a.nbn", reproduction.LastRequest.ParentADef.StoreUri);
         Assert.Equal("artifact://ppo/parent-a.nbs", reproduction.LastRequest.ParentAState.StoreUri);
@@ -239,6 +245,7 @@ public sealed class PpoManagerActorTests
                 speciationProbe)));
 
         var firstRun = CreateValidStartRequest(parentA, parentB, "ppo-policy-run-1");
+        firstRun.ReproduceConfig.ProbAddAxon = 0.03f;
         var firstStarted = await system.Root.RequestAsync<PpoStartRunResponse>(
             manager,
             firstRun,
@@ -307,7 +314,7 @@ public sealed class PpoManagerActorTests
 
         var secondStarted = await system.Root.RequestAsync<PpoStartRunResponse>(
             manager,
-            CreateValidStartRequest(parentA, parentB, "ppo-policy-run-2"),
+            CreateValidStartRequestWithAddAxon(parentA, parentB, "ppo-policy-run-2", 0.03f),
             TimeSpan.FromSeconds(5));
 
         Assert.True(secondStarted.Accepted);
@@ -703,6 +710,17 @@ public sealed class PpoManagerActorTests
         };
         request.ParentBrainIds.Add(parentA.ToProtoUuid());
         request.ParentBrainIds.Add(parentB.ToProtoUuid());
+        return request;
+    }
+
+    private static PpoStartRunRequest CreateValidStartRequestWithAddAxon(
+        Guid parentA,
+        Guid parentB,
+        string runId,
+        float addAxonProbability)
+    {
+        var request = CreateValidStartRequest(parentA, parentB, runId);
+        request.ReproduceConfig.ProbAddAxon = addAxonProbability;
         return request;
     }
 

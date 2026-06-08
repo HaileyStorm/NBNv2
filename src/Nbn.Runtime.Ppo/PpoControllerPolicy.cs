@@ -7,7 +7,7 @@ namespace Nbn.Runtime.Ppo;
 
 internal sealed class PpoControllerPolicy
 {
-    private const float MinimumProbability = 0.005f;
+    private const float MinimumLogProbability = 0.000001f;
     private const float MaximumProbability = 0.45f;
     private readonly Dictionary<string, PendingAction> _pending = new(StringComparer.Ordinal);
     private readonly object _gate = new();
@@ -244,25 +244,31 @@ internal sealed class PpoControllerPolicy
     private static void ApplyProbabilities(ProtoRepro.ReproduceConfig config, ActionProbabilities probabilities)
     {
         config.ProbMutate = BlendProbability(config.ProbMutate, probabilities.ParameterMutation);
-        config.ProbStrengthMutate = BlendProbability(config.ProbStrengthMutate, probabilities.StrengthMutation);
+        if (config.StrengthTransformEnabled)
+        {
+            config.ProbStrengthMutate = BlendProbability(config.ProbStrengthMutate, probabilities.StrengthMutation);
+        }
+
         config.ProbAddAxon = BlendProbability(config.ProbAddAxon, probabilities.AddAxon);
         config.ProbRemoveAxon = BlendProbability(config.ProbRemoveAxon, probabilities.RemoveAxon);
         config.ProbRerouteAxon = BlendProbability(config.ProbRerouteAxon, probabilities.RerouteAxon);
-        config.StrengthTransformEnabled = true;
     }
 
     private static float BlendProbability(float configured, float policy)
-        => ClampProbability(configured <= 0f ? policy : (0.60f * configured) + (0.40f * policy));
+        => configured <= 0f ? 0f : ClampProbability((0.60f * configured) + (0.40f * policy));
 
     private static float ClampProbability(float value)
-        => Math.Clamp(float.IsFinite(value) ? value : MinimumProbability, MinimumProbability, MaximumProbability);
+        => Math.Clamp(float.IsFinite(value) ? value : 0f, 0f, MaximumProbability);
+
+    private static float ClampLogProbability(float value)
+        => Math.Clamp(float.IsFinite(value) ? value : MinimumLogProbability, MinimumLogProbability, MaximumProbability);
 
     private static float EstimateActionLogProbability(ActionProbabilities probabilities)
-        => MathF.Log(ClampProbability(probabilities.ParameterMutation))
-           + MathF.Log(ClampProbability(probabilities.StrengthMutation))
-           + MathF.Log(ClampProbability(probabilities.AddAxon))
-           + MathF.Log(ClampProbability(probabilities.RemoveAxon))
-           + MathF.Log(ClampProbability(probabilities.RerouteAxon));
+        => MathF.Log(ClampLogProbability(probabilities.ParameterMutation))
+           + MathF.Log(ClampLogProbability(probabilities.StrengthMutation))
+           + MathF.Log(ClampLogProbability(probabilities.AddAxon))
+           + MathF.Log(ClampLogProbability(probabilities.RemoveAxon))
+           + MathF.Log(ClampLogProbability(probabilities.RerouteAxon));
 
     private string SerializePolicyStateLocked()
         => JsonSerializer.Serialize(new
@@ -342,7 +348,13 @@ internal sealed class PpoControllerPolicy
 
         private static float ResolveProbability(float configured, float weight, float fallback)
         {
-            var baseline = configured > 0f ? configured : fallback;
+            _ = fallback;
+            if (configured <= 0f || !float.IsFinite(configured))
+            {
+                return 0f;
+            }
+
+            var baseline = configured;
             var shifted = baseline * MathF.Exp(Math.Clamp(weight, -2.5f, 2.5f));
             return ClampProbability(shifted);
         }
@@ -378,6 +390,11 @@ internal sealed class PpoControllerPolicy
         private static float BernoulliEntropy(float p)
         {
             p = ClampProbability(p);
+            if (p <= 0f || p >= 1f)
+            {
+                return 0f;
+            }
+
             return (-p * MathF.Log(p)) - ((1f - p) * MathF.Log(1f - p));
         }
     }
