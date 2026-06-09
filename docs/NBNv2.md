@@ -861,6 +861,7 @@ When a brain terminates (energy exhaustion, explicit kill from External World or
 
 * accepts client connections, subscriptions, and control messages
 * forwards brain-level requests to HiveMind and/or ReproductionManager
+* forwards Speciation and PPO manager requests through SettingsMonitor-discovered endpoints, refreshing stale service roots before returning stable unavailable/failure responses
 * forwards placement-ready worker capacity queries to HiveMind and returns the placement-filtered worker inventory through the IO contract
 * spawns per-brain `InputCoordinator` and `OutputCoordinator` actors
 

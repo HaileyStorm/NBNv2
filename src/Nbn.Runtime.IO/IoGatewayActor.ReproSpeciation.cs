@@ -266,33 +266,17 @@ public sealed partial class IoGatewayActor
         where TResponse : class
         where TResult : class
     {
-        if (_speciationPid is null)
-        {
-            context.Respond(
-                wrapResponse(
-                    createFailureResponse(
-                        ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceUnavailable,
-                        $"{operationName} failed: speciation manager endpoint is not configured.")));
-            return;
-        }
-
-        var requestTask = context.RequestAsync<TResponse>(_speciationPid, request, SpeciationRequestTimeout);
+        var requestTask = RequestSpeciationAsync(
+            context,
+            request,
+            wrapResponse,
+            createFailureResponse,
+            operationName);
         context.ReenterAfter(requestTask, completed =>
         {
             if (completed.IsCompletedSuccessfully)
             {
-                var response = completed.Result;
-                if (response is null)
-                {
-                    context.Respond(
-                        wrapResponse(
-                            createFailureResponse(
-                                ProtoSpec.SpeciationFailureReason.SpeciationFailureEmptyResponse,
-                                $"{operationName} failed: speciation manager returned an empty response.")));
-                    return Task.CompletedTask;
-                }
-
-                context.Respond(wrapResponse(response));
+                context.Respond(completed.Result);
                 return Task.CompletedTask;
             }
 
@@ -305,6 +289,72 @@ public sealed partial class IoGatewayActor
                         $"{operationName} failed: forwarding request to speciation manager failed ({detail}).")));
             return Task.CompletedTask;
         });
+    }
+
+    private async Task<TResult> RequestSpeciationAsync<TRequest, TResponse, TResult>(
+        IContext context,
+        TRequest request,
+        Func<TResponse, TResult> wrapResponse,
+        Func<ProtoSpec.SpeciationFailureReason, string, TResponse> createFailureResponse,
+        string operationName)
+        where TRequest : class
+        where TResponse : class
+        where TResult : class
+    {
+        var speciationPid = _speciationPid;
+        if (speciationPid is null)
+        {
+            await TryRefreshSpeciationEndpointAsync(context, operationName).ConfigureAwait(false);
+            speciationPid = _speciationPid;
+            if (speciationPid is null)
+            {
+                return wrapResponse(
+                    createFailureResponse(
+                        ProtoSpec.SpeciationFailureReason.SpeciationFailureServiceUnavailable,
+                        $"{operationName} failed: speciation manager endpoint is not configured."));
+            }
+        }
+
+        try
+        {
+            var response = await context.RequestAsync<TResponse>(
+                    speciationPid,
+                    request,
+                    SpeciationRequestTimeout)
+                .ConfigureAwait(false);
+            return response is null
+                ? wrapResponse(
+                    createFailureResponse(
+                        ProtoSpec.SpeciationFailureReason.SpeciationFailureEmptyResponse,
+                        $"{operationName} failed: speciation manager returned an empty response."))
+                : wrapResponse(response);
+        }
+        catch (Exception ex) when (IsStaleServiceEndpointFailure(ex))
+        {
+            var refreshed = await TryRefreshSpeciationEndpointAsync(context, operationName, ex).ConfigureAwait(false);
+            var retryPid = _speciationPid;
+            if (!refreshed || retryPid is null)
+            {
+                return wrapResponse(
+                    createFailureResponse(
+                        ProtoSpec.SpeciationFailureReason.SpeciationFailureRequestFailed,
+                        $"{operationName} failed: forwarding request to speciation manager failed ({ex.GetBaseException().Message})."));
+            }
+
+            Console.WriteLine(
+                $"[WARN] IO retrying {operationName} after Speciation endpoint refresh: previous={PidLabel(speciationPid)} current={PidLabel(retryPid)} failure={ex.GetBaseException().Message}");
+            var response = await context.RequestAsync<TResponse>(
+                    retryPid,
+                    request,
+                    SpeciationRequestTimeout)
+                .ConfigureAwait(false);
+            return response is null
+                ? wrapResponse(
+                    createFailureResponse(
+                        ProtoSpec.SpeciationFailureReason.SpeciationFailureEmptyResponse,
+                        $"{operationName} failed: speciation manager returned an empty response."))
+                : wrapResponse(response);
+        }
     }
 
     private static ProtoSpec.SpeciationStatusResponse CreateSpeciationStatusFailure(

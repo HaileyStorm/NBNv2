@@ -459,6 +459,185 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task SpeciationGetConfig_RefreshesSpeciationEndpoint_WhenEndpointWasPublishedBeforeRequest()
+    {
+        using var databaseScope = TempDirectoryScope.Create("nbn-io-speciation-refresh", clearSqlitePools: true);
+        var store = new SettingsMonitorStore(databaseScope.GetPath("settings.db"));
+        await store.InitializeAsync();
+
+        var settingsPort = GetFreePort();
+        var gatewayPort = GetFreePort();
+        var settingsSystem = new ActorSystem();
+        settingsSystem.WithRemote(RemoteConfig.BindToLocalhost(settingsPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            ProtoSettings.NbnSettingsReflection.Descriptor));
+        await settingsSystem.Remote().StartAsync();
+        settingsSystem.Root.SpawnNamed(
+            Props.FromProducer(() => new SettingsMonitorActor(store)),
+            "SettingsMonitor");
+
+        var gatewaySystem = new ActorSystem();
+        gatewaySystem.WithRemote(RemoteConfig.BindToLocalhost(gatewayPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            ProtoControl.NbnControlReflection.Descriptor,
+            NbnIoReflection.Descriptor,
+            ProtoSpec.NbnSpeciationReflection.Descriptor,
+            ProtoSettings.NbnSettingsReflection.Descriptor));
+        await gatewaySystem.Remote().StartAsync();
+
+        try
+        {
+            var root = gatewaySystem.Root;
+            var expected = new ProtoSpec.SpeciationGetConfigResponse
+            {
+                FailureReason = ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
+                FailureDetail = string.Empty,
+                Config = new ProtoSpec.SpeciationRuntimeConfig
+                {
+                    PolicyVersion = "policy-refresh",
+                    ConfigSnapshotJson = "{\"mode\":\"refresh\"}",
+                    DefaultSpeciesId = "species.refresh",
+                    DefaultSpeciesDisplayName = "Refresh Species",
+                    StartupReconcileDecisionReason = "refresh_probe"
+                },
+                CurrentEpoch = new ProtoSpec.SpeciationEpochInfo
+                {
+                    EpochId = 19,
+                    PolicyVersion = "policy-refresh",
+                    ConfigSnapshotJson = "{\"mode\":\"refresh\"}"
+                }
+            };
+            var speciationProbe = root.SpawnNamed(
+                Props.FromProducer(() => new SpeciationGetConfigResponseProbe(expected)),
+                $"speciation-refresh-{Guid.NewGuid():N}");
+
+            var discovery = new ServiceEndpointDiscoveryClient(
+                gatewaySystem,
+                new PID($"127.0.0.1:{settingsPort}", "SettingsMonitor"));
+            await discovery.PublishAsync(
+                ServiceEndpointSettings.SpeciationManagerKey,
+                new ServiceEndpoint(gatewaySystem.Address, speciationProbe.Id));
+            await discovery.DisposeAsync();
+
+            var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(
+                CreateOptions(settingsHost: "127.0.0.1", settingsPort: settingsPort))));
+
+            var result = await root.RequestAsync<SpeciationGetConfigResult>(
+                gateway,
+                new SpeciationGetConfig
+                {
+                    Request = new ProtoSpec.SpeciationGetConfigRequest()
+                },
+                TimeSpan.FromSeconds(5));
+
+            Assert.NotNull(result.Response);
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, result.Response.FailureReason);
+            Assert.Equal("species.refresh", result.Response.Config.DefaultSpeciesId);
+            Assert.Equal((ulong)19, result.Response.CurrentEpoch.EpochId);
+        }
+        finally
+        {
+            await gatewaySystem.Remote().ShutdownAsync(true);
+            await gatewaySystem.ShutdownAsync();
+            await settingsSystem.Remote().ShutdownAsync(true);
+            await settingsSystem.ShutdownAsync();
+        }
+    }
+
+    [Fact]
+    public async Task SpeciationGetConfig_RefreshesSpeciationEndpoint_AndRetries_WhenCachedPidIsStale()
+    {
+        using var databaseScope = TempDirectoryScope.Create("nbn-io-stale-speciation", clearSqlitePools: true);
+        var store = new SettingsMonitorStore(databaseScope.GetPath("settings.db"));
+        await store.InitializeAsync();
+
+        var settingsPort = GetFreePort();
+        var gatewayPort = GetFreePort();
+        var settingsSystem = new ActorSystem();
+        settingsSystem.WithRemote(RemoteConfig.BindToLocalhost(settingsPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            ProtoSettings.NbnSettingsReflection.Descriptor));
+        await settingsSystem.Remote().StartAsync();
+        settingsSystem.Root.SpawnNamed(
+            Props.FromProducer(() => new SettingsMonitorActor(store)),
+            "SettingsMonitor");
+
+        var gatewaySystem = new ActorSystem();
+        gatewaySystem.WithRemote(RemoteConfig.BindToLocalhost(gatewayPort).WithProtoMessages(
+            NbnCommonReflection.Descriptor,
+            ProtoControl.NbnControlReflection.Descriptor,
+            NbnIoReflection.Descriptor,
+            ProtoSpec.NbnSpeciationReflection.Descriptor,
+            ProtoSettings.NbnSettingsReflection.Descriptor));
+        await gatewaySystem.Remote().StartAsync();
+
+        try
+        {
+            var root = gatewaySystem.Root;
+            var staleSpeciation = root.SpawnNamed(
+                Props.FromProducer(() => new SpeciationGetConfigResponseProbe(new ProtoSpec.SpeciationGetConfigResponse())),
+                $"stale-speciation-{Guid.NewGuid():N}");
+            root.Stop(staleSpeciation);
+            await Task.Delay(50);
+
+            var expected = new ProtoSpec.SpeciationGetConfigResponse
+            {
+                FailureReason = ProtoSpec.SpeciationFailureReason.SpeciationFailureNone,
+                FailureDetail = string.Empty,
+                Config = new ProtoSpec.SpeciationRuntimeConfig
+                {
+                    PolicyVersion = "policy-stale-refresh",
+                    ConfigSnapshotJson = "{\"mode\":\"stale-refresh\"}",
+                    DefaultSpeciesId = "species.stale.refresh",
+                    DefaultSpeciesDisplayName = "Stale Refresh Species",
+                    StartupReconcileDecisionReason = "stale_refresh_probe"
+                },
+                CurrentEpoch = new ProtoSpec.SpeciationEpochInfo
+                {
+                    EpochId = 23,
+                    PolicyVersion = "policy-stale-refresh",
+                    ConfigSnapshotJson = "{\"mode\":\"stale-refresh\"}"
+                }
+            };
+            var liveSpeciation = root.SpawnNamed(
+                Props.FromProducer(() => new SpeciationGetConfigResponseProbe(expected)),
+                $"live-speciation-{Guid.NewGuid():N}");
+
+            var discovery = new ServiceEndpointDiscoveryClient(
+                gatewaySystem,
+                new PID($"127.0.0.1:{settingsPort}", "SettingsMonitor"));
+            await discovery.PublishAsync(
+                ServiceEndpointSettings.SpeciationManagerKey,
+                new ServiceEndpoint(gatewaySystem.Address, liveSpeciation.Id));
+            await discovery.DisposeAsync();
+
+            var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(
+                CreateOptions(settingsHost: "127.0.0.1", settingsPort: settingsPort),
+                speciationPid: staleSpeciation)));
+
+            var result = await root.RequestAsync<SpeciationGetConfigResult>(
+                gateway,
+                new SpeciationGetConfig
+                {
+                    Request = new ProtoSpec.SpeciationGetConfigRequest()
+                },
+                TimeSpan.FromSeconds(5));
+
+            Assert.NotNull(result.Response);
+            Assert.Equal(ProtoSpec.SpeciationFailureReason.SpeciationFailureNone, result.Response.FailureReason);
+            Assert.Equal("species.stale.refresh", result.Response.Config.DefaultSpeciesId);
+            Assert.Equal((ulong)23, result.Response.CurrentEpoch.EpochId);
+        }
+        finally
+        {
+            await gatewaySystem.Remote().ShutdownAsync(true);
+            await gatewaySystem.ShutdownAsync();
+            await settingsSystem.Remote().ShutdownAsync(true);
+            await settingsSystem.ShutdownAsync();
+        }
+    }
+
+    [Fact]
     public async Task SpawnBrainViaIO_Forwards_ExplicitIoWidths_To_HiveMind()
     {
         var system = new ActorSystem();
@@ -4088,6 +4267,26 @@ public class IoGatewayArtifactReferenceTests
         public Task ReceiveAsync(IContext context)
         {
             if (context.Message is ProtoSpec.SpeciationStatusRequest)
+            {
+                context.Respond(_response.Clone());
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class SpeciationGetConfigResponseProbe : IActor
+    {
+        private readonly ProtoSpec.SpeciationGetConfigResponse _response;
+
+        public SpeciationGetConfigResponseProbe(ProtoSpec.SpeciationGetConfigResponse response)
+        {
+            _response = response;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is ProtoSpec.SpeciationGetConfigRequest)
             {
                 context.Respond(_response.Clone());
             }
