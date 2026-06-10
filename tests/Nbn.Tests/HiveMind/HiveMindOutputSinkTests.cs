@@ -109,6 +109,77 @@ public class HiveMindOutputSinkTests
     }
 
     [Fact]
+    public async Task RegisterOutputSink_SameSink_Is_Deduped_But_New_OutputShard_Still_Gets_Sink()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(CreateOptions())));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var outputSink = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        var shardA = ShardId32.From(NbnConstants.OutputRegionId, 0);
+        var shardAProbe = new CountingOutputSinkProbe(shardA);
+        var shardAPid = root.Spawn(Props.FromProducer(() => shardAProbe));
+
+        await root.RequestAsync<SendMessageAck>(shardAPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardA.RegionId,
+            ShardIndex = (uint)shardA.ShardIndex,
+            ShardPid = PidLabel(shardAPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterOutputSink
+        {
+            BrainId = brainId.ToProtoUuid(),
+            OutputPid = PidLabel(outputSink)
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var firstUpdate = await shardAProbe.WaitForCountAsync(1, cts.Token);
+        Assert.Equal(PidLabel(outputSink), firstUpdate.OutputPid);
+
+        for (var i = 0; i < 3; i++)
+        {
+            await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterOutputSink
+            {
+                BrainId = brainId.ToProtoUuid(),
+                OutputPid = PidLabel(outputSink)
+            }));
+        }
+
+        await Task.Delay(100, cts.Token);
+        Assert.Equal(1, shardAProbe.Count);
+
+        var shardB = ShardId32.From(NbnConstants.OutputRegionId, 1);
+        var shardBUpdateTcs = new TaskCompletionSource<UpdateShardOutputSink>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardBPid = root.Spawn(Props.FromProducer(() => new OutputSinkProbe(shardB, shardBUpdateTcs)));
+        await root.RequestAsync<SendMessageAck>(shardBPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardB.RegionId,
+            ShardIndex = (uint)shardB.ShardIndex,
+            ShardPid = PidLabel(shardBPid),
+            NeuronStart = 1,
+            NeuronCount = 1
+        }));
+
+        var shardBUpdate = await shardBUpdateTcs.Task.WaitAsync(cts.Token);
+        Assert.Equal(PidLabel(outputSink), shardBUpdate.OutputPid);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RegisterOutputSink_Senderless_Overwrite_Is_Ignored()
     {
         using var metrics = new MeterCollector(HiveMindTelemetry.MeterNameValue);
@@ -3287,6 +3358,69 @@ public class HiveMindOutputSinkTests
                     context.Send(_pendingSender, response);
                     _pendingSender = null;
                     break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class CountingOutputSinkProbe : IActor
+    {
+        private readonly ShardId32 _shardId;
+        private readonly object _lock = new();
+        private readonly SortedDictionary<int, TaskCompletionSource<UpdateShardOutputSink>> _waiters = new();
+        private UpdateShardOutputSink? _lastUpdate;
+
+        public CountingOutputSinkProbe(ShardId32 shardId)
+        {
+            _shardId = shardId;
+        }
+
+        public int Count { get; private set; }
+
+        public Task<UpdateShardOutputSink> WaitForCountAsync(int count, CancellationToken cancellationToken)
+        {
+            lock (_lock)
+            {
+                if (Count >= count && _lastUpdate is not null)
+                {
+                    return Task.FromResult(_lastUpdate);
+                }
+
+                var waiter = new TaskCompletionSource<UpdateShardOutputSink>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _waiters[count] = waiter;
+                cancellationToken.Register(() => waiter.TrySetCanceled(cancellationToken));
+                return waiter.Task;
+            }
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is SendMessage send)
+            {
+                context.Request(send.Target, send.Message);
+                context.Respond(new SendMessageAck());
+            }
+            else if (context.Message is UpdateShardOutputSink update
+                     && update.RegionId == (uint)_shardId.RegionId
+                     && update.ShardIndex == (uint)_shardId.ShardIndex)
+            {
+                List<TaskCompletionSource<UpdateShardOutputSink>> ready = new();
+                lock (_lock)
+                {
+                    Count++;
+                    _lastUpdate = update;
+                    foreach (var waiter in _waiters.Where(entry => Count >= entry.Key).ToArray())
+                    {
+                        ready.Add(waiter.Value);
+                        _waiters.Remove(waiter.Key);
+                    }
+                }
+
+                foreach (var waiter in ready)
+                {
+                    waiter.TrySetResult(update);
+                }
             }
 
             return Task.CompletedTask;

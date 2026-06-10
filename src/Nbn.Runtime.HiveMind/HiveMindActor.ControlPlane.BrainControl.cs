@@ -66,6 +66,11 @@ public sealed partial class HiveMindActor
             outputPid = parsed;
         }
 
+        if (OutputSinkPidEquals(brain.OutputSinkPid, outputPid))
+        {
+            return;
+        }
+
         brain.OutputSinkPid = outputPid;
         UpdateOutputSinks(context, brain);
         if (outputPid is null)
@@ -76,6 +81,17 @@ public sealed partial class HiveMindActor
         {
             Log($"Output sink registered for brain {brainId}: {PidLabel(outputPid)}");
         }
+    }
+
+    private static bool OutputSinkPidEquals(PID? left, PID? right)
+    {
+        if (left is null || right is null)
+        {
+            return left is null && right is null;
+        }
+
+        return string.Equals(left.Address ?? string.Empty, right.Address ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(left.Id ?? string.Empty, right.Id ?? string.Empty, StringComparison.Ordinal);
     }
 
     private void HandleSetBrainVisualization(IContext context, ProtoControl.SetBrainVisualization message)
