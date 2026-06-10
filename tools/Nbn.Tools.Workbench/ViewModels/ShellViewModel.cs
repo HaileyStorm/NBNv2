@@ -61,6 +61,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         Debug = new DebugPanelViewModel(_client, _dispatcher, Connections);
         Debug.SubscriptionSettingsChanged += UpdateObservabilitySubscriptions;
         Repro = new ReproPanelViewModel(_client, Connections, _artifactPublisher);
+        Ppo = new PpoPanelViewModel(_client, Connections);
         Speciation = new SpeciationPanelViewModel(
             _dispatcher,
             Connections,
@@ -77,6 +78,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
             new("Designer", "Build + import", "S", Designer),
             new("Energy + Plasticity", "System policy controls", "I", Io),
             new("Reproduction", "Spawn variants", "R", Repro),
+            new("PPO", "Reward policy", "P", Ppo),
             new("Speciation", "Taxonomy + simulation", "T", Speciation),
             new("Debug", "Logs & filters", "D", Debug)
         };
@@ -104,6 +106,8 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
     public VizPanelViewModel Viz { get; }
 
     public ReproPanelViewModel Repro { get; }
+
+    public PpoPanelViewModel Ppo { get; }
 
     public SpeciationPanelViewModel Speciation { get; }
 
@@ -350,6 +354,7 @@ public sealed class ShellViewModel : ViewModelBase, IWorkbenchEventSink, IAsyncD
         {
             Viz.SetBrains(snapshot);
             Repro.UpdateActiveBrains(snapshot);
+            Ppo.UpdateActiveBrains(snapshot);
             Speciation.UpdateActiveBrains(snapshot);
             var active = snapshot
                 .Where(entry => !string.Equals(entry.State, "Dead", StringComparison.OrdinalIgnoreCase))

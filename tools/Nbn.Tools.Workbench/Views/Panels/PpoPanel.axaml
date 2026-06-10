@@ -1,0 +1,347 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:shapes="clr-namespace:Avalonia.Controls.Shapes;assembly=Avalonia.Controls"
+             xmlns:vm="clr-namespace:Nbn.Tools.Workbench.ViewModels"
+             x:Class="Nbn.Tools.Workbench.Views.Panels.PpoPanel"
+             x:DataType="vm:PpoPanelViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Spacing="16">
+      <Border Classes="card">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+          <StackPanel Spacing="8">
+            <TextBlock Text="PPO" Classes="card-title" />
+            <TextBlock Text="Reward-policy rollout control and candidate feedback over artifact reproduction." Classes="card-subtitle" />
+            <TextBlock Text="{Binding Status}" Classes="muted" TextWrapping="Wrap" />
+          </StackPanel>
+          <StackPanel Grid.Column="1" Spacing="8" MinWidth="260">
+            <Border Classes="chip"
+                    Background="{Binding Connections.PpoChipBackground}"
+                    BorderBrush="{Binding Connections.PpoChipBorder}">
+              <TextBlock Text="{Binding Connections.PpoStatusLabel}" />
+            </Border>
+            <TextBlock Text="{Binding Connections.PpoEndpointDisplay}" Classes="muted" TextWrapping="Wrap" />
+            <Button Content="Refresh Status" Command="{Binding RefreshStatusCommand}" HorizontalAlignment="Right" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <Grid ColumnDefinitions="1.2*,0.8*" ColumnSpacing="16">
+        <Border Classes="card">
+          <StackPanel Spacing="12">
+            <TextBlock Text="Run Setup" Classes="card-title" />
+            <TextBlock Text="Parent snapshots are captured through IO and candidate artifacts are committed through Speciation." Classes="card-subtitle" />
+
+            <TextBlock Text="Parents" Classes="muted row-title" />
+            <Grid ColumnDefinitions="Auto,*,Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+              <TextBlock Text="Parent A" Classes="muted" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="1" ItemsSource="{Binding ActiveBrains}" SelectedItem="{Binding SelectedParentABrain}" MinWidth="220">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:PpoBrainOption">
+                    <TextBlock Text="{Binding Label}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <TextBlock Grid.Column="2" Text="Parent B" Classes="muted" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="3" ItemsSource="{Binding ActiveBrains}" SelectedItem="{Binding SelectedParentBBrain}" MinWidth="220">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:PpoBrainOption">
+                    <TextBlock Text="{Binding Label}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+
+              <TextBlock Grid.Row="1" Text="A GUID" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ParentAGuidText}" Watermark="Fallback GUID" />
+              <TextBlock Grid.Row="1" Grid.Column="2" Text="B GUID" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding ParentBGuidText}" Watermark="Fallback GUID" />
+            </Grid>
+
+            <TextBlock Text="Objective" Classes="muted row-title" />
+            <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+              <TextBlock Text="Run ID" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Column="1" Text="{Binding RunIdText}" Watermark="auto" />
+              <TextBlock Grid.Column="2" Text="Objective" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Column="3" Text="{Binding ObjectiveName}" />
+              <TextBlock Grid.Column="4" Text="Reward signal" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Column="5" Text="{Binding RewardSignal}" />
+
+              <TextBlock Grid.Row="1" Text="Metadata" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="5" Text="{Binding MetadataJson}" />
+            </Grid>
+
+            <TextBlock Text="Hyperparameters" Classes="muted row-title" />
+            <Grid ColumnDefinitions="Auto,*,Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+              <TextBlock Text="Rollout ticks" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Column="1" Text="{Binding RolloutTickCountText}" Width="110" />
+              <TextBlock Grid.Column="2" Text="Batch count" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Column="3" Text="{Binding RolloutBatchCountText}" Width="110" />
+              <TextBlock Grid.Column="4" Text="Seed" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Column="5" Text="{Binding SeedText}" Watermark="auto" Width="130" />
+
+              <TextBlock Grid.Row="1" Text="Clip epsilon" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding ClipEpsilonText}" Width="110" />
+              <TextBlock Grid.Row="1" Grid.Column="2" Text="Gamma" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding DiscountGammaText}" Width="110" />
+              <TextBlock Grid.Row="1" Grid.Column="4" Text="GAE lambda" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Row="1" Grid.Column="5" Text="{Binding GaeLambdaText}" Width="110" />
+
+              <TextBlock Grid.Row="2" Text="Learning rate" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding LearningRateText}" Width="110" />
+              <TextBlock Grid.Row="2" Grid.Column="2" Text="Epochs" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Row="2" Grid.Column="3" Text="{Binding OptimizationEpochCountText}" Width="110" />
+              <TextBlock Grid.Row="2" Grid.Column="4" Text="Minibatch" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Grid.Row="2" Grid.Column="5" Text="{Binding MinibatchSizeText}" Width="110" />
+            </Grid>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Strength" Classes="muted" VerticalAlignment="Center" />
+              <ComboBox ItemsSource="{Binding StrengthSources}" SelectedItem="{Binding SelectedStrengthSource}" Width="150">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:StrengthSourceOption">
+                    <TextBlock Text="{Binding Label}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <Button Content="Submit Rollout" Command="{Binding SubmitRunCommand}" Classes="accent" />
+              <Button Content="Cancel Run" Command="{Binding CancelRunCommand}" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <StackPanel Grid.Column="1" Spacing="16">
+          <Border Classes="card">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Run State" Classes="card-title" />
+              <TextBlock Text="{Binding RunSummary}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding CandidateSummary}" Classes="muted" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
+          <Border Classes="card">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Reward Feedback" Classes="card-title" />
+              <TextBlock Text="{Binding PolicySummary}" Classes="muted" TextWrapping="Wrap" />
+              <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+                <TextBlock Text="Reward" Classes="muted" VerticalAlignment="Center" />
+                <TextBox Grid.Column="1" Text="{Binding RewardText}" />
+                <TextBlock Grid.Row="1" Text="Accuracy" Classes="muted" VerticalAlignment="Center" />
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding AccuracyText}" />
+                <TextBlock Grid.Row="2" Text="Fitness" Classes="muted" VerticalAlignment="Center" />
+                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding FitnessText}" />
+                <TextBlock Grid.Row="3" Text="Generation" Classes="muted" VerticalAlignment="Center" />
+                <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding GenerationText}" />
+                <TextBlock Grid.Row="4" Text="Metadata" Classes="muted" VerticalAlignment="Center" />
+                <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding RewardMetadataJson}" Watermark="optional JSON" />
+              </Grid>
+              <CheckBox Content="Terminal sample" IsChecked="{Binding RewardTerminal}" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Record Selected Reward" Command="{Binding RecordRewardCommand}" Classes="accent" />
+                <Button Content="Clear Chart History" Command="{Binding ClearHistoryCommand}" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Grid>
+
+      <Grid ColumnDefinitions="*,*,*" ColumnSpacing="16">
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Rewards" Classes="card-title" />
+            <Grid ColumnDefinitions="42,*" RowDefinitions="Auto,Auto" ColumnSpacing="6">
+              <Grid RowDefinitions="Auto,*,Auto">
+                <TextBlock Text="{Binding RewardChartTopLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" />
+                <TextBlock Grid.Row="1" Text="{Binding RewardChartMidLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="2" Text="{Binding RewardChartBottomLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+              </Grid>
+              <Grid Grid.Column="1" Width="{Binding ChartPlotWidth}" Height="{Binding ChartPlotHeight}" ClipToBounds="True">
+                <shapes:Line StartPoint="0,10" EndPoint="340,10" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <shapes:Line StartPoint="0,65" EndPoint="340,65" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <shapes:Line StartPoint="0,120" EndPoint="340,120" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <ItemsControl ItemsSource="{Binding RewardChartSeries}">
+                  <ItemsControl.ItemsPanel><ItemsPanelTemplate><Grid /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:PpoChartSeriesItem">
+                      <shapes:Path Data="{Binding PathData}" Stroke="{Binding Stroke}" StrokeThickness="1.8" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Grid>
+              <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding RewardChartRangeLabel}" Classes="muted" FontSize="10" />
+            </Grid>
+            <ItemsControl ItemsSource="{Binding RewardChartSeries}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PpoChartSeriesItem">
+                  <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,10,1">
+                    <Border Width="12" Height="2" Background="{Binding Stroke}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
+                  </StackPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card" Grid.Column="1">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Losses" Classes="card-title" />
+            <Grid ColumnDefinitions="42,*" RowDefinitions="Auto,Auto" ColumnSpacing="6">
+              <Grid RowDefinitions="Auto,*,Auto">
+                <TextBlock Text="{Binding LossChartTopLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" />
+                <TextBlock Grid.Row="1" Text="{Binding LossChartMidLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="2" Text="{Binding LossChartBottomLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+              </Grid>
+              <Grid Grid.Column="1" Width="{Binding ChartPlotWidth}" Height="{Binding ChartPlotHeight}" ClipToBounds="True">
+                <shapes:Line StartPoint="0,10" EndPoint="340,10" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <shapes:Line StartPoint="0,65" EndPoint="340,65" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <shapes:Line StartPoint="0,120" EndPoint="340,120" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <ItemsControl ItemsSource="{Binding LossChartSeries}">
+                  <ItemsControl.ItemsPanel><ItemsPanelTemplate><Grid /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:PpoChartSeriesItem">
+                      <shapes:Path Data="{Binding PathData}" Stroke="{Binding Stroke}" StrokeThickness="1.8" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Grid>
+              <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding LossChartRangeLabel}" Classes="muted" FontSize="10" />
+            </Grid>
+            <ItemsControl ItemsSource="{Binding LossChartSeries}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PpoChartSeriesItem">
+                  <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,10,1">
+                    <Border Width="12" Height="2" Background="{Binding Stroke}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
+                  </StackPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card" Grid.Column="2">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Entropy + KL" Classes="card-title" />
+            <Grid ColumnDefinitions="42,*" RowDefinitions="Auto,Auto" ColumnSpacing="6">
+              <Grid RowDefinitions="Auto,*,Auto">
+                <TextBlock Text="{Binding TrustChartTopLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" />
+                <TextBlock Grid.Row="1" Text="{Binding TrustChartMidLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                <TextBlock Grid.Row="2" Text="{Binding TrustChartBottomLabel}" Classes="muted" FontSize="9" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+              </Grid>
+              <Grid Grid.Column="1" Width="{Binding ChartPlotWidth}" Height="{Binding ChartPlotHeight}" ClipToBounds="True">
+                <shapes:Line StartPoint="0,10" EndPoint="340,10" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <shapes:Line StartPoint="0,65" EndPoint="340,65" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <shapes:Line StartPoint="0,120" EndPoint="340,120" Stroke="{DynamicResource NbnBorderBrush}" StrokeThickness="1" />
+                <ItemsControl ItemsSource="{Binding TrustChartSeries}">
+                  <ItemsControl.ItemsPanel><ItemsPanelTemplate><Grid /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:PpoChartSeriesItem">
+                      <shapes:Path Data="{Binding PathData}" Stroke="{Binding Stroke}" StrokeThickness="1.8" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Grid>
+              <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding TrustChartRangeLabel}" Classes="muted" FontSize="10" />
+            </Grid>
+            <ItemsControl ItemsSource="{Binding TrustChartSeries}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PpoChartSeriesItem">
+                  <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,1,10,1">
+                    <Border Width="12" Height="2" Background="{Binding Stroke}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Label}" Classes="muted" FontSize="10" />
+                  </StackPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Candidate Actions" Classes="card-title" />
+            <TextBlock Text="{Binding ActionBarsSummary}" Classes="muted" TextWrapping="Wrap" />
+            <ItemsControl ItemsSource="{Binding ActionBars}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PpoBarItem">
+                  <Grid ColumnDefinitions="170,190,Auto" ColumnSpacing="8" Margin="0,3">
+                    <TextBlock Text="{Binding Label}" Classes="muted" TextTrimming="CharacterEllipsis" />
+                    <Border Grid.Column="1" Height="12" Background="{DynamicResource NbnSurfaceAltBrush}" CornerRadius="4">
+                      <Border Width="{Binding Width}" Background="{Binding Fill}" CornerRadius="4" HorizontalAlignment="Left" />
+                    </Border>
+                    <TextBlock Grid.Column="2" Text="{Binding ValueLabel}" Classes="muted" />
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card" Grid.Column="1">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Candidate Similarity" Classes="card-title" />
+            <TextBlock Text="{Binding CandidateBarsSummary}" Classes="muted" TextWrapping="Wrap" />
+            <ItemsControl ItemsSource="{Binding CandidateMetricBars}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PpoBarItem">
+                  <Grid ColumnDefinitions="70,190,Auto" ColumnSpacing="8" Margin="0,3">
+                    <TextBlock Text="{Binding Label}" Classes="muted" />
+                    <Border Grid.Column="1" Height="12" Background="{DynamicResource NbnSurfaceAltBrush}" CornerRadius="4">
+                      <Border Width="{Binding Width}" Background="{Binding Fill}" CornerRadius="4" HorizontalAlignment="Left" />
+                    </Border>
+                    <TextBlock Grid.Column="2" Text="{Binding ValueLabel}" Classes="muted" />
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <Grid ColumnDefinitions="1.5*,1*" ColumnSpacing="16">
+        <Border Classes="card">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Rollout Candidates" Classes="card-title" />
+            <ListBox ItemsSource="{Binding Candidates}" SelectedItem="{Binding SelectedCandidate}" MaxHeight="300">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:PpoCandidateRow">
+                  <Border Classes="row">
+                    <Grid ColumnDefinitions="70,110,100,110,*,150" ColumnSpacing="8">
+                      <TextBlock Text="{Binding RunIndex}" Classes="muted" />
+                      <TextBlock Grid.Column="1" Text="{Binding SimilarityLabel}" />
+                      <TextBlock Grid.Column="2" Text="{Binding CompatibleLabel}" />
+                      <TextBlock Grid.Column="3" Text="{Binding ChildSha}" Classes="muted" />
+                      <TextBlock Grid.Column="4" Text="{Binding MutationLabel}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Column="5" Text="{Binding SpeciesLabel}" Classes="muted" TextTrimming="CharacterEllipsis" />
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card" Grid.Column="1">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Observed Parents" Classes="card-title" />
+            <ItemsControl ItemsSource="{Binding ObservedParents}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PpoObservedParentRow">
+                  <Border Classes="row">
+                    <StackPanel Spacing="3">
+                      <TextBlock Text="{Binding BrainId}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding SnapshotTick, StringFormat='tick {0}'}" Classes="muted" />
+                      <TextBlock Text="{Binding SnapshotSource}" Classes="muted" />
+                      <TextBlock Text="{Binding DefinitionSha, StringFormat='def {0}'}" Classes="muted" />
+                      <TextBlock Text="{Binding SnapshotSha, StringFormat='state {0}'}" Classes="muted" />
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+      </Grid>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

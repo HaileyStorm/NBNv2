@@ -29,6 +29,7 @@
   - `dotnet run --project tools/Nbn.Tools.Workbench -c Release`
   - In `Orchestrator`, use `Start All`, then in `Designer` use `Generate Random Brain` and `Spawn Brain`
   - Start optional PPO from `Orchestrator` Local Launch only when running optimization flows; it is discoverable through SettingsMonitor but not part of `Start All`
+  - Use the top-level `PPO` pane for rollout submission/cancellation, reward feedback, candidate inspection, and policy-update chart review
 - Operator runbooks:
   - `docs/runbooks/reproduction_operator_runbook.md`
   - `docs/runbooks/speciation_operator_runbook.md`
