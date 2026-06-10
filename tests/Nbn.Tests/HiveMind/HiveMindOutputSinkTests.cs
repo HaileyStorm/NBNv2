@@ -1689,6 +1689,263 @@ public class HiveMindOutputSinkTests
     }
 
     [Fact]
+    public async Task DirectRuntimeRewardControl_AllRuntimeConfigSurfaces_UpdateExpectedFields_AndEchoResponse()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var ioName = $"io-{Guid.NewGuid():N}";
+        var ioPid = root.SpawnNamed(
+            Props.FromProducer(() => new DirectRuntimeRewardControlClient()),
+            ioName);
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(),
+            ioPid: new PID(string.Empty, ioName))));
+        root.Send(hiveMind, new ProtoSettings.SettingChanged
+        {
+            Key = CostEnergySettingsKeys.SystemEnabledKey,
+            Value = "true",
+            UpdatedMs = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        });
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var shard = ShardId32.From(9, 0);
+        var shardPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigHistoryProbe(shard)));
+        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shard.RegionId,
+            ShardIndex = (uint)shard.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        await WaitForRuntimeConfigCount(root, shardPid, 1, cts.Token);
+
+        var cases = DirectRuntimeRewardControlSurfaceCases().ToArray();
+        for (var i = 0; i < cases.Length; i++)
+        {
+            var surfaceCase = cases[i];
+            var actionId = $"surface-{i}";
+            var request = BuildDirectRuntimeRewardControlRequest(
+                brainId,
+                actionId,
+                0,
+                1,
+                surfaceCase.ValidControlValue,
+                surfaceCase.Surface);
+            request.Reward = 1.5f + i;
+
+            var response = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+                ioPid,
+                new RequestDirectRuntimeRewardControl(hiveMind, request),
+                cancellationToken: cts.Token);
+
+            Assert.True(response.Accepted, $"{surfaceCase.Surface}: {response.FailureReasonCode} {response.Message}");
+            Assert.Equal(string.Empty, response.FailureReasonCode);
+            Assert.True(response.BrainId.TryToGuid(out var responseBrainId) && responseBrainId == brainId);
+            Assert.Equal(request.ControllerId, response.ControllerId);
+            Assert.Equal(actionId, response.ActionId);
+            Assert.Equal(surfaceCase.Surface, response.Surface);
+            Assert.Equal(1UL, response.AppliedTickFloor);
+            Assert.Equal(request.Reward, response.Reward);
+            Assert.Equal(surfaceCase.ValidControlValue, response.ControlValue);
+
+            var snapshot = await WaitForRuntimeConfigCount(root, shardPid, i + 2, cts.Token);
+            var update = snapshot.Updates.Last();
+            surfaceCase.AssertApplied(update);
+
+            await AssertRejectedWithoutRuntimeConfigUpdate(
+                root,
+                ioPid,
+                hiveMind,
+                shardPid,
+                BuildDirectRuntimeRewardControlRequest(
+                    brainId,
+                    $"surface-invalid-{i}",
+                    0,
+                    1,
+                    surfaceCase.InvalidControlValue,
+                    surfaceCase.Surface),
+                "control_value_out_of_range",
+                i + 2,
+                cts.Token);
+        }
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task DirectRuntimeRewardControl_RejectedRequests_DoNotUpdateRuntimeConfig()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var ioName = $"io-{Guid.NewGuid():N}";
+        var ioPid = root.SpawnNamed(
+            Props.FromProducer(() => new DirectRuntimeRewardControlClient()),
+            ioName);
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(),
+            ioPid: new PID(string.Empty, ioName))));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var shard = ShardId32.From(9, 0);
+        var shardPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigHistoryProbe(shard)));
+        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shard.RegionId,
+            ShardIndex = (uint)shard.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        await WaitForRuntimeConfigCount(root, shardPid, 1, cts.Token);
+
+        var foreignSender = root.Spawn(Props.FromProducer(() => new DirectRuntimeRewardControlClient()));
+        await AssertRejectedWithoutRuntimeConfigUpdate(
+            root,
+            foreignSender,
+            hiveMind,
+            shardPid,
+            BuildDirectRuntimeRewardControlRequest(brainId, "action-unauthorized", 0, 1, 0.2f),
+            "sender_not_trusted_io",
+            1,
+            cts.Token);
+
+        await AssertRejectedWithoutRuntimeConfigUpdate(
+            root,
+            ioPid,
+            hiveMind,
+            shardPid,
+            BuildDirectRuntimeRewardControlRequest(
+                brainId,
+                "action-future",
+                0,
+                2,
+                0.2f,
+                DirectRuntimeRewardControlSurface.HomeostasisBaseProbability),
+            "action_tick_not_next",
+            1,
+            cts.Token);
+
+        var nonFiniteReward = BuildDirectRuntimeRewardControlRequest(brainId, "action-nonfinite-reward", 0, 1, 0.2f);
+        nonFiniteReward.Reward = float.PositiveInfinity;
+        await AssertRejectedWithoutRuntimeConfigUpdate(
+            root,
+            ioPid,
+            hiveMind,
+            shardPid,
+            nonFiniteReward,
+            "reward_non_finite",
+            1,
+            cts.Token);
+
+        var nonFiniteControl = BuildDirectRuntimeRewardControlRequest(brainId, "action-nonfinite-control", 0, 1, 0.2f);
+        nonFiniteControl.ControlValue = float.NaN;
+        await AssertRejectedWithoutRuntimeConfigUpdate(
+            root,
+            ioPid,
+            hiveMind,
+            shardPid,
+            nonFiniteControl,
+            "control_value_non_finite",
+            1,
+            cts.Token);
+
+        await AssertRejectedWithoutRuntimeConfigUpdate(
+            root,
+            ioPid,
+            hiveMind,
+            shardPid,
+            BuildDirectRuntimeRewardControlRequest(
+                brainId,
+                "action-out-of-range",
+                0,
+                1,
+                2f,
+                DirectRuntimeRewardControlSurface.OutputVectorSource),
+            "control_value_out_of_range",
+            1,
+            cts.Token);
+
+        await AssertRejectedWithoutRuntimeConfigUpdate(
+            root,
+            ioPid,
+            hiveMind,
+            shardPid,
+            BuildDirectRuntimeRewardControlRequest(
+                brainId,
+                "action-unsupported",
+                0,
+                1,
+                0.2f,
+                (DirectRuntimeRewardControlSurface)999),
+            "unsupported_surface",
+            1,
+            cts.Token);
+
+        var acceptedRequest = BuildDirectRuntimeRewardControlRequest(
+            brainId,
+            "action-accepted",
+            0,
+            1,
+            0.44f,
+            DirectRuntimeRewardControlSurface.HomeostasisBaseProbability);
+        var accepted = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, acceptedRequest),
+            cancellationToken: cts.Token);
+        Assert.True(accepted.Accepted, accepted.Message);
+        await WaitForRuntimeConfigCount(root, shardPid, 2, cts.Token);
+
+        await AssertRejectedWithoutRuntimeConfigUpdate(
+            root,
+            ioPid,
+            hiveMind,
+            shardPid,
+            acceptedRequest,
+            "duplicate_action",
+            2,
+            cts.Token);
+
+        await AssertRejectedWithoutRuntimeConfigUpdate(
+            root,
+            ioPid,
+            hiveMind,
+            shardPid,
+            BuildDirectRuntimeRewardControlRequest(
+                brainId,
+                "action-surface-conflict",
+                0,
+                1,
+                0.55f,
+                DirectRuntimeRewardControlSurface.HomeostasisBaseProbability),
+            "surface_action_tick_conflict",
+            2,
+            cts.Token);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SynchronizeBrainRuntimeConfig_WaitsForShardAcks()
     {
         var system = new ActorSystem();
@@ -2737,6 +2994,133 @@ public class HiveMindOutputSinkTests
     private sealed record SendMessage(PID Target, object Message);
     private sealed record SendMessageAck;
     private sealed record RequestDirectRuntimeRewardControl(PID Target, DirectRuntimeRewardControlRequest Message);
+    private sealed record GetRuntimeConfigHistorySnapshot;
+    private sealed record RuntimeConfigHistorySnapshot(IReadOnlyList<UpdateShardRuntimeConfig> Updates);
+    private sealed record DirectRuntimeRewardControlSurfaceCase(
+        DirectRuntimeRewardControlSurface Surface,
+        float ValidControlValue,
+        float InvalidControlValue,
+        Action<UpdateShardRuntimeConfig> AssertApplied);
+
+    private static IEnumerable<DirectRuntimeRewardControlSurfaceCase> DirectRuntimeRewardControlSurfaceCases()
+    {
+        yield return new(
+            DirectRuntimeRewardControlSurface.PlasticityRate,
+            0.2f,
+            1.01f,
+            update => Assert.Equal(0.2f, update.PlasticityRate));
+        yield return new(
+            DirectRuntimeRewardControlSurface.HomeostasisBaseProbability,
+            0.25f,
+            -0.01f,
+            update => Assert.Equal(0.25f, update.HomeostasisBaseProbability));
+        yield return new(
+            DirectRuntimeRewardControlSurface.CostEnergyEnabled,
+            1f,
+            0.5f,
+            update =>
+            {
+                Assert.True(update.CostEnabled);
+                Assert.True(update.EnergyEnabled);
+            });
+        yield return new(
+            DirectRuntimeRewardControlSurface.PlasticityEnabled,
+            0f,
+            0.5f,
+            update => Assert.False(update.PlasticityEnabled));
+        yield return new(
+            DirectRuntimeRewardControlSurface.PlasticityProbabilisticUpdates,
+            0f,
+            0.5f,
+            update => Assert.False(update.ProbabilisticUpdates));
+        yield return new(
+            DirectRuntimeRewardControlSurface.PlasticityDelta,
+            0.31f,
+            -0.01f,
+            update => Assert.Equal(0.31f, update.PlasticityDelta));
+        yield return new(
+            DirectRuntimeRewardControlSurface.PlasticityRebaseThresholdPct,
+            0.41f,
+            1.01f,
+            update => Assert.Equal(0.41f, update.PlasticityRebaseThresholdPct));
+        yield return new(
+            DirectRuntimeRewardControlSurface.HomeostasisEnabled,
+            0f,
+            0.5f,
+            update => Assert.False(update.HomeostasisEnabled));
+        yield return new(
+            DirectRuntimeRewardControlSurface.HomeostasisEnergyCouplingEnabled,
+            1f,
+            0.5f,
+            update => Assert.True(update.HomeostasisEnergyCouplingEnabled));
+        yield return new(
+            DirectRuntimeRewardControlSurface.HomeostasisEnergyTargetScale,
+            2.5f,
+            4.01f,
+            update => Assert.Equal(2.5f, update.HomeostasisEnergyTargetScale));
+        yield return new(
+            DirectRuntimeRewardControlSurface.HomeostasisEnergyProbabilityScale,
+            3.5f,
+            -0.01f,
+            update => Assert.Equal(3.5f, update.HomeostasisEnergyProbabilityScale));
+        yield return new(
+            DirectRuntimeRewardControlSurface.OutputVectorSource,
+            1f,
+            0.5f,
+            update => Assert.Equal(OutputVectorSource.Buffer, update.OutputVectorSource));
+    }
+
+    private static async Task<RuntimeConfigHistorySnapshot> WaitForRuntimeConfigCount(
+        IRootContext root,
+        PID probe,
+        int expectedCount,
+        CancellationToken cancellationToken)
+    {
+        RuntimeConfigHistorySnapshot? last = null;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            last = await root.RequestAsync<RuntimeConfigHistorySnapshot>(probe, new GetRuntimeConfigHistorySnapshot());
+            if (last.Updates.Count >= expectedCount)
+            {
+                return last;
+            }
+
+            await Task.Delay(20, cancellationToken);
+        }
+
+        throw new TimeoutException($"Timed out waiting for runtime config count {expectedCount}. Last count={last?.Updates.Count ?? 0}.");
+    }
+
+    private static async Task AssertRejectedWithoutRuntimeConfigUpdate(
+        IRootContext root,
+        PID sender,
+        PID hiveMind,
+        PID historyProbe,
+        DirectRuntimeRewardControlRequest request,
+        string expectedReason,
+        int expectedRuntimeConfigCount,
+        CancellationToken cancellationToken)
+    {
+        var response = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            sender,
+            new RequestDirectRuntimeRewardControl(hiveMind, request),
+            cancellationToken: cancellationToken);
+        Assert.False(response.Accepted);
+        Assert.Equal(expectedReason, response.FailureReasonCode);
+        Assert.True(response.BrainId.TryToGuid(out var responseBrainId));
+        Assert.Equal(request.BrainId.TryToGuid(out var requestBrainId) ? requestBrainId : Guid.Empty, responseBrainId);
+        Assert.Equal(request.ControllerId, response.ControllerId);
+        Assert.Equal(request.ActionId, response.ActionId);
+        Assert.Equal(request.Surface, response.Surface);
+        Assert.Equal(request.Reward, response.Reward);
+        Assert.Equal(request.ControlValue, response.ControlValue);
+
+        var snapshot = await root.RequestAsync<RuntimeConfigHistorySnapshot>(
+            historyProbe,
+            new GetRuntimeConfigHistorySnapshot(),
+            cancellationToken: cancellationToken);
+        Assert.Equal(expectedRuntimeConfigCount, snapshot.Updates.Count);
+    }
 
     private static DirectRuntimeRewardControlRequest BuildDirectRuntimeRewardControlRequest(
         Guid brainId,
@@ -2990,6 +3374,51 @@ public class HiveMindOutputSinkTests
                     Message = "applied"
                 });
             }
+        }
+    }
+
+    private sealed class RuntimeConfigHistoryProbe : IActor
+    {
+        private readonly ShardId32 _shardId;
+        private readonly List<UpdateShardRuntimeConfig> _updates = new();
+
+        public RuntimeConfigHistoryProbe(ShardId32 shardId)
+        {
+            _shardId = shardId;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case SendMessage send:
+                    context.Request(send.Target, send.Message);
+                    context.Respond(new SendMessageAck());
+                    break;
+                case UpdateShardRuntimeConfig update:
+                    if (update.RegionId == (uint)_shardId.RegionId && update.ShardIndex == (uint)_shardId.ShardIndex)
+                    {
+                        _updates.Add(update.Clone());
+                    }
+
+                    if (context.Sender is not null)
+                    {
+                        context.Respond(new UpdateShardRuntimeConfigAck
+                        {
+                            BrainId = update.BrainId?.Clone(),
+                            RegionId = update.RegionId,
+                            ShardIndex = update.ShardIndex,
+                            Success = true,
+                            Message = "applied"
+                        });
+                    }
+                    break;
+                case GetRuntimeConfigHistorySnapshot:
+                    context.Respond(new RuntimeConfigHistorySnapshot(_updates.Select(static update => update.Clone()).ToArray()));
+                    break;
+            }
+
+            return Task.CompletedTask;
         }
     }
 

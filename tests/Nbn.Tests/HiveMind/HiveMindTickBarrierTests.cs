@@ -415,6 +415,86 @@ public class HiveMindTickBarrierTests
     }
 
     [Fact]
+    public async Task DirectRuntimeRewardControl_ActiveBrain_DeliverTimeoutRejectsWithoutApplying()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions(deliverTimeoutMs: 150);
+
+        var root = system.Root;
+        var ioPid = root.Spawn(Props.FromProducer(() => new DirectRuntimeRewardControlClient()));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options, ioPid: ioPid)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, hiveMind)));
+        var router = await WaitForSignalRouter(root, brainRoot, TimeSpan.FromSeconds(2));
+
+        await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
+
+        var shardId = ShardId32.From(1, 0);
+        var deliverObserved = new TaskCompletionSource<ulong>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var controlledRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardPid = root.Spawn(Props.FromProducer(() => new ControlledDirectRuntimeRewardShardActor(
+            brainId,
+            shardId,
+            router,
+            deliverObserved,
+            controlledRuntime)));
+        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new ProtoControl.RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));
+        root.Send(hiveMind, new StartTickLoop());
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        await deliverObserved.Task.WaitAsync(timeoutCts.Token);
+
+        var request = new DirectRuntimeRewardControlRequest
+        {
+            BrainId = brainId.ToProtoUuid(),
+            ControllerId = "workbench",
+            ActionId = "homeostasis-live-timeout",
+            ObjectiveName = "stability",
+            RewardSignal = "operator",
+            ObservationTickId = 0,
+            ActionTickId = 2,
+            Surface = DirectRuntimeRewardControlSurface.HomeostasisBaseProbability,
+            Reward = 2f,
+            ControlValue = 0.23f
+        };
+        var response = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, request),
+            cancellationToken: timeoutCts.Token);
+
+        Assert.False(response.Accepted);
+        Assert.Equal("deliver_timeout", response.FailureReasonCode);
+        Assert.True(response.BrainId.TryToGuid(out var responseBrainId) && responseBrainId == brainId);
+        Assert.Equal(request.ControllerId, response.ControllerId);
+        Assert.Equal(request.ActionId, response.ActionId);
+        Assert.Equal(request.Surface, response.Surface);
+        Assert.Equal(request.Reward, response.Reward);
+        Assert.Equal(request.ControlValue, response.ControlValue);
+        Assert.Equal(2UL, response.AppliedTickFloor);
+        Assert.False(controlledRuntime.Task.IsCompleted);
+
+        await WaitForStatus(
+            root,
+            hiveMind,
+            status => status.LastCompletedTickId >= 1 && status.PendingDeliver == 0,
+            TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StopTickLoop());
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RequestBrainRuntimeReset_RejectsDuplicatePendingReset_And_AllowsRetryAfterCompletion()
     {
         var system = new ActorSystem();
