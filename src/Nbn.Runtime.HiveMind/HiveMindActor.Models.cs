@@ -217,7 +217,21 @@ public sealed partial class HiveMindActor
         public Dictionary<ShardId32, string> ShardRegistrationAssignmentIds { get; } = new();
         public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
         public PendingRuntimeResetState? PendingRuntimeReset { get; set; }
+        public Dictionary<string, DirectRuntimeRewardControlRecord> DirectRuntimeRewardControlRecords { get; } =
+            new(StringComparer.Ordinal);
     }
+
+    private sealed record DirectRuntimeRewardControlRecord(
+        string ControllerId,
+        string ActionId,
+        string ObjectiveName,
+        string RewardSignal,
+        ulong ObservationTickId,
+        ulong ActionTickId,
+        ProtoControl.DirectRuntimeRewardControlSurface Surface,
+        float Reward,
+        float ControlValue,
+        ulong AppliedTickFloor);
 
     private sealed class PendingSpawnState
     {

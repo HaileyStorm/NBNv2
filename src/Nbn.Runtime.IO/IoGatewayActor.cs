@@ -124,6 +124,9 @@ public sealed partial class IoGatewayActor : IActor
                 case SynchronizeBrainRuntimeConfig message:
                     await HandleSynchronizeBrainRuntimeConfigAsync(context, message);
                     break;
+                case ApplyDirectRuntimeRewardControl message:
+                    await HandleDirectRuntimeRewardControlAsync(context, message);
+                    break;
                 case BrainInfoRequest message:
                     await HandleBrainInfoAsync(context, message);
                     break;

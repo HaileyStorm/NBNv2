@@ -1463,6 +1463,129 @@ public class HiveMindOutputSinkTests
     }
 
     [Fact]
+    public async Task DirectRuntimeRewardControl_PlasticityRate_Is_Paused_Bounded_And_Deduped()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var ioName = $"io-{Guid.NewGuid():N}";
+        var ioPid = root.SpawnNamed(
+            Props.FromProducer(() => new DirectRuntimeRewardControlClient()),
+            ioName);
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(),
+            ioPid: new PID(string.Empty, ioName))));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var shard = ShardId32.From(9, 0);
+        var initialRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var controlledRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(
+            shard,
+            initialRuntime,
+            _ => true,
+            controlledRuntime,
+            update => update.PlasticityEnabled
+                      && Math.Abs(update.PlasticityRate - 0.2f) < 0.000001f)));
+        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shard.RegionId,
+            ShardIndex = (uint)shard.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var initial = await initialRuntime.Task.WaitAsync(cts.Token);
+        Assert.Equal(0.001f, initial.PlasticityRate);
+
+        var foreignSender = root.Spawn(Props.FromProducer(() => new DirectRuntimeRewardControlClient()));
+        var unauthorized = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            foreignSender,
+            new RequestDirectRuntimeRewardControl(hiveMind, BuildDirectRuntimeRewardControlRequest(brainId, "action-unauthorized", 0, 1, 0.2f)),
+            cancellationToken: cts.Token);
+        Assert.False(unauthorized.Accepted);
+        Assert.Equal("sender_not_trusted_io", unauthorized.FailureReasonCode);
+
+        var activeReject = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, BuildDirectRuntimeRewardControlRequest(brainId, "action-active", 0, 1, 0.2f)),
+            cancellationToken: cts.Token);
+        Assert.False(activeReject.Accepted);
+        Assert.Equal("brain_not_paused", activeReject.FailureReasonCode);
+
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new PauseBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "direct_runtime_reward_control_test"
+        }));
+
+        var futureTickRequest = BuildDirectRuntimeRewardControlRequest(brainId, "action-future", 0, 2, 0.2f);
+        futureTickRequest.ObjectiveName = "future-tick";
+        var futureTick = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, futureTickRequest),
+            cancellationToken: cts.Token);
+        Assert.False(futureTick.Accepted);
+        Assert.Equal("action_tick_not_next", futureTick.FailureReasonCode);
+
+        var nonFiniteReward = BuildDirectRuntimeRewardControlRequest(brainId, "action-nonfinite", 0, 1, 0.2f);
+        nonFiniteReward.Reward = float.NaN;
+        var nonFinite = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, nonFiniteReward),
+            cancellationToken: cts.Token);
+        Assert.False(nonFinite.Accepted);
+        Assert.Equal("reward_non_finite", nonFinite.FailureReasonCode);
+
+        var accepted = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, BuildDirectRuntimeRewardControlRequest(brainId, "action-1", 0, 1, 0.2f)),
+            cancellationToken: cts.Token);
+        Assert.True(accepted.Accepted);
+        Assert.Equal(string.Empty, accepted.FailureReasonCode);
+        Assert.Equal(1UL, accepted.AppliedTickFloor);
+        Assert.Equal(DirectRuntimeRewardControlSurface.PlasticityRate, accepted.Surface);
+        Assert.Equal(0.2f, accepted.ControlValue);
+
+        var controlled = await controlledRuntime.Task.WaitAsync(cts.Token);
+        Assert.Equal(0.2f, controlled.PlasticityRate);
+
+        var duplicate = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, BuildDirectRuntimeRewardControlRequest(brainId, "action-1", 0, 1, 0.2f)),
+            cancellationToken: cts.Token);
+        Assert.False(duplicate.Accepted);
+        Assert.Equal("duplicate_action", duplicate.FailureReasonCode);
+
+        var stale = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, BuildDirectRuntimeRewardControlRequest(brainId, "action-2", 0, 1, 0.3f)),
+            cancellationToken: cts.Token);
+        Assert.False(stale.Accepted);
+        Assert.Equal("stale_action", stale.FailureReasonCode);
+
+        var outOfRangeRequest = BuildDirectRuntimeRewardControlRequest(brainId, "action-3", 0, 2, 1.2f);
+        outOfRangeRequest.ObjectiveName = "range-check";
+        var outOfRange = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, outOfRangeRequest),
+            cancellationToken: cts.Token);
+        Assert.False(outOfRange.Accepted);
+        Assert.Equal("control_value_out_of_range", outOfRange.FailureReasonCode);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task SynchronizeBrainRuntimeConfig_WaitsForShardAcks()
     {
         var system = new ActorSystem();
@@ -2510,6 +2633,27 @@ public class HiveMindOutputSinkTests
 
     private sealed record SendMessage(PID Target, object Message);
     private sealed record SendMessageAck;
+    private sealed record RequestDirectRuntimeRewardControl(PID Target, DirectRuntimeRewardControlRequest Message);
+
+    private static DirectRuntimeRewardControlRequest BuildDirectRuntimeRewardControlRequest(
+        Guid brainId,
+        string actionId,
+        ulong observationTickId,
+        ulong actionTickId,
+        float controlValue)
+        => new()
+        {
+            BrainId = brainId.ToProtoUuid(),
+            ControllerId = "workbench",
+            ActionId = actionId,
+            ObjectiveName = "stability",
+            RewardSignal = "operator",
+            ObservationTickId = observationTickId,
+            ActionTickId = actionTickId,
+            Surface = DirectRuntimeRewardControlSurface.PlasticityRate,
+            Reward = 1f,
+            ControlValue = controlValue
+        };
 
     private sealed class OutputSinkProbe : IActor
     {
@@ -2633,6 +2777,28 @@ public class HiveMindOutputSinkTests
             {
                 context.Request(send.Target, send.Message);
                 context.Respond(new SendMessageAck());
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class DirectRuntimeRewardControlClient : IActor
+    {
+        private PID? _pendingSender;
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case RequestDirectRuntimeRewardControl request:
+                    _pendingSender = context.Sender;
+                    context.Request(request.Target, request.Message);
+                    break;
+                case DirectRuntimeRewardControlResponse response when _pendingSender is not null:
+                    context.Send(_pendingSender, response);
+                    _pendingSender = null;
+                    break;
             }
 
             return Task.CompletedTask;

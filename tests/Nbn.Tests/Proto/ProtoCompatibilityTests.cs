@@ -304,6 +304,34 @@ public class ProtoCompatibilityTests
         var syncRuntimeConfig = descriptor.MessageTypes.Single(message => message.Name == "SynchronizeBrainRuntimeConfig");
         AssertField(syncRuntimeConfig, "brain_id", 1, FieldType.Message, "nbn.Uuid");
 
+        var directRewardSurface = descriptor.EnumTypes.Single(@enum => @enum.Name == "DirectRuntimeRewardControlSurface");
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_UNKNOWN", 0);
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_PLASTICITY_RATE", 1);
+
+        var directRewardRequest = descriptor.MessageTypes.Single(message => message.Name == "DirectRuntimeRewardControlRequest");
+        AssertField(directRewardRequest, "brain_id", 1, FieldType.Message, "nbn.Uuid");
+        AssertField(directRewardRequest, "controller_id", 2, FieldType.String);
+        AssertField(directRewardRequest, "action_id", 3, FieldType.String);
+        AssertField(directRewardRequest, "objective_name", 4, FieldType.String);
+        AssertField(directRewardRequest, "reward_signal", 5, FieldType.String);
+        AssertField(directRewardRequest, "observation_tick_id", 6, FieldType.Fixed64);
+        AssertField(directRewardRequest, "action_tick_id", 7, FieldType.Fixed64);
+        AssertField(directRewardRequest, "surface", 8, FieldType.Enum, "nbn.control.DirectRuntimeRewardControlSurface");
+        AssertField(directRewardRequest, "reward", 9, FieldType.Float);
+        AssertField(directRewardRequest, "control_value", 10, FieldType.Float);
+
+        var directRewardResponse = descriptor.MessageTypes.Single(message => message.Name == "DirectRuntimeRewardControlResponse");
+        AssertField(directRewardResponse, "accepted", 1, FieldType.Bool);
+        AssertField(directRewardResponse, "failure_reason_code", 2, FieldType.String);
+        AssertField(directRewardResponse, "message", 3, FieldType.String);
+        AssertField(directRewardResponse, "brain_id", 4, FieldType.Message, "nbn.Uuid");
+        AssertField(directRewardResponse, "controller_id", 5, FieldType.String);
+        AssertField(directRewardResponse, "action_id", 6, FieldType.String);
+        AssertField(directRewardResponse, "surface", 7, FieldType.Enum, "nbn.control.DirectRuntimeRewardControlSurface");
+        AssertField(directRewardResponse, "applied_tick_floor", 8, FieldType.Fixed64);
+        AssertField(directRewardResponse, "reward", 9, FieldType.Float);
+        AssertField(directRewardResponse, "control_value", 10, FieldType.Float);
+
         var inputCoordinatorMode = descriptor.EnumTypes.Single(@enum => @enum.Name == "InputCoordinatorMode");
         AssertEnumValue(inputCoordinatorMode, "INPUT_COORDINATOR_MODE_DIRTY_ON_CHANGE", 0);
         AssertEnumValue(inputCoordinatorMode, "INPUT_COORDINATOR_MODE_REPLAY_LATEST_VECTOR", 1);
@@ -1094,6 +1122,18 @@ public class ProtoCompatibilityTests
 
         var recordRewardsResult = descriptor.MessageTypes.Single(message => message.Name == "PpoRecordRewardsResult");
         AssertField(recordRewardsResult, "response", 1, FieldType.Message, "nbn.ppo.PpoRecordRewardsResponse");
+    }
+
+    [Fact]
+    public void ProtoIo_DirectRuntimeRewardControlWrappers_AreStable()
+    {
+        var descriptor = NbnIoReflection.Descriptor;
+
+        var apply = descriptor.MessageTypes.Single(message => message.Name == "ApplyDirectRuntimeRewardControl");
+        AssertField(apply, "request", 1, FieldType.Message, "nbn.control.DirectRuntimeRewardControlRequest");
+
+        var result = descriptor.MessageTypes.Single(message => message.Name == "ApplyDirectRuntimeRewardControlResult");
+        AssertField(result, "response", 1, FieldType.Message, "nbn.control.DirectRuntimeRewardControlResponse");
     }
 
     [Fact]

@@ -478,6 +478,37 @@ message SetBrainHomeostasis {
   float homeostasis_energy_probability_scale = 9;
 }
 
+enum DirectRuntimeRewardControlSurface {
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_UNKNOWN = 0;
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_PLASTICITY_RATE = 1;
+}
+
+message DirectRuntimeRewardControlRequest {
+  nbn.Uuid brain_id = 1;
+  string controller_id = 2;
+  string action_id = 3;
+  string objective_name = 4;
+  string reward_signal = 5;
+  fixed64 observation_tick_id = 6;
+  fixed64 action_tick_id = 7;
+  DirectRuntimeRewardControlSurface surface = 8;
+  float reward = 9;
+  float control_value = 10;
+}
+
+message DirectRuntimeRewardControlResponse {
+  bool accepted = 1;
+  string failure_reason_code = 2;
+  string message = 3;
+  nbn.Uuid brain_id = 4;
+  string controller_id = 5;
+  string action_id = 6;
+  DirectRuntimeRewardControlSurface surface = 7;
+  fixed64 applied_tick_floor = 8;
+  float reward = 9;
+  float control_value = 10;
+}
+
 enum InputCoordinatorMode {
   INPUT_COORDINATOR_MODE_DIRTY_ON_CHANGE = 0;
   INPUT_COORDINATOR_MODE_REPLAY_LATEST_VECTOR = 1;
@@ -1285,6 +1316,14 @@ message SetHomeostasisEnabled {
   bool homeostasis_energy_coupling_enabled = 7;
   float homeostasis_energy_target_scale = 8;
   float homeostasis_energy_probability_scale = 9;
+}
+
+message ApplyDirectRuntimeRewardControl {
+  nbn.control.DirectRuntimeRewardControlRequest request = 1;
+}
+
+message ApplyDirectRuntimeRewardControlResult {
+  nbn.control.DirectRuntimeRewardControlResponse response = 1;
 }
 
 message IoCommandAck {

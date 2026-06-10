@@ -1165,6 +1165,90 @@ public class IoGatewayArtifactReferenceTests
     }
 
     [Fact]
+    public async Task ApplyDirectRuntimeRewardControl_Forwards_To_HiveMind_And_Preserves_Response()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var forwarded = new TaskCompletionSource<ProtoControl.DirectRuntimeRewardControlRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hiveProbe = root.Spawn(Props.FromProducer(() => new HiveDirectRuntimeRewardControlProbe(forwarded)));
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions(), hiveMindPid: hiveProbe)));
+
+        var response = await root.RequestAsync<ApplyDirectRuntimeRewardControlResult>(
+            gateway,
+            new ApplyDirectRuntimeRewardControl
+            {
+                Request = new ProtoControl.DirectRuntimeRewardControlRequest
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    ControllerId = "workbench",
+                    ActionId = "action-1",
+                    ObjectiveName = "stability",
+                    RewardSignal = "operator",
+                    ObservationTickId = 4,
+                    ActionTickId = 5,
+                    Surface = ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRate,
+                    Reward = 0.75f,
+                    ControlValue = 0.2f
+                }
+            });
+
+        Assert.NotNull(response.Response);
+        Assert.True(response.Response.Accepted);
+        Assert.Equal(string.Empty, response.Response.FailureReasonCode);
+        Assert.Equal("action-1", response.Response.ActionId);
+        Assert.Equal(5UL, response.Response.AppliedTickFloor);
+        Assert.Equal(0.2f, response.Response.ControlValue);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var request = await forwarded.Task.WaitAsync(cts.Token);
+        Assert.True(request.BrainId.TryToGuid(out var forwardedBrainId));
+        Assert.Equal(brainId, forwardedBrainId);
+        Assert.Equal("workbench", request.ControllerId);
+        Assert.Equal("action-1", request.ActionId);
+        Assert.Equal(ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRate, request.Surface);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task ApplyDirectRuntimeRewardControl_NoHiveMind_Returns_Failure_Response()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var brainId = Guid.NewGuid();
+        var gateway = root.Spawn(Props.FromProducer(() => new IoGatewayActor(CreateOptions())));
+
+        var response = await root.RequestAsync<ApplyDirectRuntimeRewardControlResult>(
+            gateway,
+            new ApplyDirectRuntimeRewardControl
+            {
+                Request = new ProtoControl.DirectRuntimeRewardControlRequest
+                {
+                    BrainId = brainId.ToProtoUuid(),
+                    ControllerId = "workbench",
+                    ActionId = "action-1",
+                    ObjectiveName = "stability",
+                    RewardSignal = "operator",
+                    ObservationTickId = 0,
+                    ActionTickId = 1,
+                    Surface = ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRate,
+                    Reward = 1f,
+                    ControlValue = 0.1f
+                }
+            });
+
+        Assert.NotNull(response.Response);
+        Assert.False(response.Response.Accepted);
+        Assert.Equal("hivemind_unavailable", response.Response.FailureReasonCode);
+        Assert.Equal("workbench", response.Response.ControllerId);
+        Assert.Equal("action-1", response.Response.ActionId);
+        Assert.Equal(ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRate, response.Response.Surface);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task ResumeBrain_Forwards_To_HiveMind_And_AcksSuccess()
     {
         var system = new ActorSystem();
@@ -4035,6 +4119,42 @@ public class IoGatewayArtifactReferenceTests
                         Command = "resume_brain",
                         Success = true,
                         Message = "applied"
+                    });
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class HiveDirectRuntimeRewardControlProbe : IActor
+    {
+        private readonly TaskCompletionSource<ProtoControl.DirectRuntimeRewardControlRequest> _request;
+
+        public HiveDirectRuntimeRewardControlProbe(TaskCompletionSource<ProtoControl.DirectRuntimeRewardControlRequest> request)
+        {
+            _request = request;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProtoControl.GetBrainRouting:
+                    context.Respond(new ProtoControl.BrainRoutingInfo());
+                    break;
+                case ProtoControl.DirectRuntimeRewardControlRequest request:
+                    _request.TrySetResult(request);
+                    context.Respond(new ProtoControl.DirectRuntimeRewardControlResponse
+                    {
+                        Accepted = true,
+                        BrainId = request.BrainId?.Clone(),
+                        ControllerId = request.ControllerId,
+                        ActionId = request.ActionId,
+                        Surface = request.Surface,
+                        AppliedTickFloor = request.ActionTickId,
+                        Reward = request.Reward,
+                        ControlValue = request.ControlValue
                     });
                     break;
             }

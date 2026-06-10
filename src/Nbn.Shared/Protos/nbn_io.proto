@@ -190,6 +190,14 @@ message SynchronizeBrainRuntimeConfig {
   nbn.Uuid brain_id = 1;
 }
 
+message ApplyDirectRuntimeRewardControl {
+  nbn.control.DirectRuntimeRewardControlRequest request = 1;
+}
+
+message ApplyDirectRuntimeRewardControlResult {
+  nbn.control.DirectRuntimeRewardControlResponse response = 1;
+}
+
 message SetOutputVectorSourceAck {
   bool success = 1;
   string failure_reason_code = 2;

@@ -46,6 +46,9 @@ public sealed partial class HiveMindActor
             case ProtoControl.SetBrainHomeostasis message:
                 HandleSetBrainHomeostasis(context, message);
                 return true;
+            case ProtoControl.DirectRuntimeRewardControlRequest message:
+                HandleDirectRuntimeRewardControl(context, message);
+                return true;
             case PauseBrainRequest message:
                 HandlePauseBrainRequest(context, message);
                 return true;

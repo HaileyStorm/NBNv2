@@ -253,6 +253,347 @@ public sealed partial class HiveMindActor
         RegisterBrainWithIo(context, brain, force: true);
     }
 
+    private void HandleDirectRuntimeRewardControl(
+        IContext context,
+        ProtoControl.DirectRuntimeRewardControlRequest message)
+    {
+        if (!TryGetGuid(message.BrainId, out var brainId))
+        {
+            context.Respond(CreateDirectRuntimeRewardControlResponse(
+                message,
+                accepted: false,
+                "invalid_brain_id",
+                "Invalid brain id.",
+                appliedTickFloor: _lastCompletedTickId + 1));
+            return;
+        }
+
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            context.Respond(CreateDirectRuntimeRewardControlResponse(
+                message,
+                accepted: false,
+                "brain_not_registered",
+                "Direct runtime reward-control target brain is not registered.",
+                appliedTickFloor: _lastCompletedTickId + 1));
+            return;
+        }
+
+        if (!IsTrustedIoSender(context))
+        {
+            var reason = context.Sender is null ? "trusted_io_sender_missing" : "sender_not_trusted_io";
+            EmitControlPlaneMutationIgnored(context, "control.direct_runtime_reward_control", brainId, reason);
+            context.Respond(CreateDirectRuntimeRewardControlResponse(
+                message,
+                accepted: false,
+                reason,
+                "Direct runtime reward-control requests must enter through the trusted IO gateway.",
+                appliedTickFloor: _lastCompletedTickId + 1));
+            return;
+        }
+
+        if (!TryValidateDirectRuntimeRewardControlShape(message, brain, out var failureReason, out var failureMessage))
+        {
+            context.Respond(CreateDirectRuntimeRewardControlResponse(
+                message,
+                accepted: false,
+                failureReason,
+                failureMessage,
+                appliedTickFloor: _lastCompletedTickId + 1));
+            return;
+        }
+
+        var actionKey = BuildDirectRuntimeRewardControlActionKey(message);
+        if (brain.DirectRuntimeRewardControlRecords.ContainsKey(actionKey))
+        {
+            context.Respond(CreateDirectRuntimeRewardControlResponse(
+                message,
+                accepted: false,
+                "duplicate_action",
+                "Direct runtime reward-control action was already applied for this controller/action id.",
+                appliedTickFloor: _lastCompletedTickId + 1));
+            return;
+        }
+
+        if (HasConflictingDirectRuntimeRewardControlActionId(brain, message))
+        {
+            context.Respond(CreateDirectRuntimeRewardControlResponse(
+                message,
+                accepted: false,
+                "duplicate_action",
+                "Direct runtime reward-control action_id was already used with different reward/action provenance.",
+                appliedTickFloor: _lastCompletedTickId + 1));
+            return;
+        }
+
+        if (HasStaleDirectRuntimeRewardControlAction(brain, message))
+        {
+            context.Respond(CreateDirectRuntimeRewardControlResponse(
+                message,
+                accepted: false,
+                "stale_action",
+                "Direct runtime reward-control action is stale for this controller/objective/reward/surface.",
+                appliedTickFloor: _lastCompletedTickId + 1));
+            return;
+        }
+
+        if (!TryValidateDirectRuntimeRewardControlTiming(message, out failureReason, out failureMessage))
+        {
+            context.Respond(CreateDirectRuntimeRewardControlResponse(
+                message,
+                accepted: false,
+                failureReason,
+                failureMessage,
+                appliedTickFloor: _lastCompletedTickId + 1));
+            return;
+        }
+
+        var appliedTickFloor = Math.Max(_lastCompletedTickId + 1, message.ActionTickId);
+        switch (message.Surface)
+        {
+            case ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRate:
+                ApplyDirectRuntimeRewardControlPlasticityRate(context, brain, message.ControlValue);
+                break;
+            default:
+                context.Respond(CreateDirectRuntimeRewardControlResponse(
+                    message,
+                    accepted: false,
+                    "unsupported_surface",
+                    "Direct runtime reward-control surface is not supported.",
+                    appliedTickFloor));
+                return;
+        }
+
+        brain.DirectRuntimeRewardControlRecords[actionKey] = new DirectRuntimeRewardControlRecord(
+            NormalizeDirectRuntimeRewardControlToken(message.ControllerId),
+            NormalizeDirectRuntimeRewardControlToken(message.ActionId),
+            NormalizeDirectRuntimeRewardControlToken(message.ObjectiveName),
+            NormalizeDirectRuntimeRewardControlToken(message.RewardSignal),
+            message.ObservationTickId,
+            message.ActionTickId,
+            message.Surface,
+            message.Reward,
+            message.ControlValue,
+            appliedTickFloor);
+        TrimDirectRuntimeRewardControlRecords(brain);
+
+        context.Respond(CreateDirectRuntimeRewardControlResponse(
+            message,
+            accepted: true,
+            string.Empty,
+            "accepted",
+            appliedTickFloor));
+    }
+
+    private bool TryValidateDirectRuntimeRewardControlShape(
+        ProtoControl.DirectRuntimeRewardControlRequest message,
+        BrainState brain,
+        out string failureReason,
+        out string failureMessage)
+    {
+        failureReason = string.Empty;
+        failureMessage = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(message.ControllerId))
+        {
+            failureReason = "controller_id_required";
+            failureMessage = "Direct runtime reward-control controller_id is required.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(message.ActionId))
+        {
+            failureReason = "action_id_required";
+            failureMessage = "Direct runtime reward-control action_id is required.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(message.ObjectiveName))
+        {
+            failureReason = "objective_name_required";
+            failureMessage = "Direct runtime reward-control objective_name is required.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(message.RewardSignal))
+        {
+            failureReason = "reward_signal_required";
+            failureMessage = "Direct runtime reward-control reward_signal is required.";
+            return false;
+        }
+
+        if (!float.IsFinite(message.Reward))
+        {
+            failureReason = "reward_non_finite";
+            failureMessage = "Direct runtime reward-control reward must be finite.";
+            return false;
+        }
+
+        if (!float.IsFinite(message.ControlValue))
+        {
+            failureReason = "control_value_non_finite";
+            failureMessage = "Direct runtime reward-control control_value must be finite.";
+            return false;
+        }
+
+        if (!brain.Paused)
+        {
+            failureReason = "brain_not_paused";
+            failureMessage = "Direct runtime reward-control actions are paused-only until a barrier-queued action contract exists.";
+            return false;
+        }
+
+        if (message.Surface != ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRate)
+        {
+            failureReason = "unsupported_surface";
+            failureMessage = "Direct runtime reward-control surface is not supported.";
+            return false;
+        }
+
+        if (message.ControlValue < 0f || message.ControlValue > 1f)
+        {
+            failureReason = "control_value_out_of_range";
+            failureMessage = "Direct runtime reward-control plasticity_rate must be in [0,1].";
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool TryValidateDirectRuntimeRewardControlTiming(
+        ProtoControl.DirectRuntimeRewardControlRequest message,
+        out string failureReason,
+        out string failureMessage)
+    {
+        failureReason = string.Empty;
+        failureMessage = string.Empty;
+
+        if (message.ObservationTickId > _lastCompletedTickId)
+        {
+            failureReason = "observation_tick_not_completed";
+            failureMessage = "Direct runtime reward-control observation_tick_id must refer to a completed tick.";
+            return false;
+        }
+
+        if (message.ActionTickId <= message.ObservationTickId)
+        {
+            failureReason = "action_tick_not_after_observation";
+            failureMessage = "Direct runtime reward-control action_tick_id must be after observation_tick_id.";
+            return false;
+        }
+
+        var nextVisibleTick = _lastCompletedTickId + 1;
+        if (message.ActionTickId < nextVisibleTick)
+        {
+            failureReason = "action_tick_stale";
+            failureMessage = "Direct runtime reward-control action_tick_id must not target a completed tick.";
+            return false;
+        }
+
+        if (message.ActionTickId > nextVisibleTick)
+        {
+            failureReason = "action_tick_not_next";
+            failureMessage = "Direct runtime reward-control action_tick_id must target the next visible tick for the paused-only surface.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private void ApplyDirectRuntimeRewardControlPlasticityRate(
+        IContext context,
+        BrainState brain,
+        float plasticityRate)
+    {
+        brain.PlasticityRate = plasticityRate;
+        brain.PlasticityDelta = ResolvePlasticityDelta(plasticityRate, brain.PlasticityDelta);
+        UpdateShardRuntimeConfig(context, brain);
+        RegisterBrainWithIo(context, brain, force: true);
+    }
+
+    private static ProtoControl.DirectRuntimeRewardControlResponse CreateDirectRuntimeRewardControlResponse(
+        ProtoControl.DirectRuntimeRewardControlRequest request,
+        bool accepted,
+        string failureReason,
+        string message,
+        ulong appliedTickFloor)
+        => new()
+        {
+            Accepted = accepted,
+            FailureReasonCode = failureReason,
+            Message = message,
+            BrainId = request.BrainId?.Clone() ?? new Nbn.Proto.Uuid(),
+            ControllerId = request.ControllerId ?? string.Empty,
+            ActionId = request.ActionId ?? string.Empty,
+            Surface = request.Surface,
+            AppliedTickFloor = appliedTickFloor,
+            Reward = request.Reward,
+            ControlValue = request.ControlValue
+        };
+
+    private static string BuildDirectRuntimeRewardControlActionKey(
+        ProtoControl.DirectRuntimeRewardControlRequest message)
+        => string.Join(
+            "\u001f",
+            NormalizeDirectRuntimeRewardControlToken(message.ControllerId),
+            NormalizeDirectRuntimeRewardControlToken(message.ObjectiveName),
+            NormalizeDirectRuntimeRewardControlToken(message.RewardSignal),
+            NormalizeDirectRuntimeRewardControlToken(message.ActionId),
+            message.ObservationTickId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            message.ActionTickId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ((int)message.Surface).ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+    private static bool HasConflictingDirectRuntimeRewardControlActionId(
+        BrainState brain,
+        ProtoControl.DirectRuntimeRewardControlRequest message)
+    {
+        var controllerId = NormalizeDirectRuntimeRewardControlToken(message.ControllerId);
+        var actionId = NormalizeDirectRuntimeRewardControlToken(message.ActionId);
+        var actionKey = BuildDirectRuntimeRewardControlActionKey(message);
+        return brain.DirectRuntimeRewardControlRecords.Any(
+            record => string.Equals(record.Key, actionKey, StringComparison.Ordinal) is false
+                      && string.Equals(record.Value.ControllerId, controllerId, StringComparison.Ordinal)
+                      && string.Equals(record.Value.ActionId, actionId, StringComparison.Ordinal));
+    }
+
+    private static bool HasStaleDirectRuntimeRewardControlAction(
+        BrainState brain,
+        ProtoControl.DirectRuntimeRewardControlRequest message)
+    {
+        var controllerId = NormalizeDirectRuntimeRewardControlToken(message.ControllerId);
+        var objectiveName = NormalizeDirectRuntimeRewardControlToken(message.ObjectiveName);
+        var rewardSignal = NormalizeDirectRuntimeRewardControlToken(message.RewardSignal);
+        return brain.DirectRuntimeRewardControlRecords.Values.Any(
+            record => string.Equals(record.ControllerId, controllerId, StringComparison.Ordinal)
+                      && string.Equals(record.ObjectiveName, objectiveName, StringComparison.Ordinal)
+                      && string.Equals(record.RewardSignal, rewardSignal, StringComparison.Ordinal)
+                      && record.Surface == message.Surface
+                      && (record.ActionTickId >= message.ActionTickId
+                          || record.ObservationTickId >= message.ObservationTickId));
+    }
+
+    private static string NormalizeDirectRuntimeRewardControlToken(string? value)
+        => (value ?? string.Empty).Trim();
+
+    private static void TrimDirectRuntimeRewardControlRecords(BrainState brain)
+    {
+        const int maxRecords = 1024;
+        if (brain.DirectRuntimeRewardControlRecords.Count <= maxRecords)
+        {
+            return;
+        }
+
+        foreach (var key in brain.DirectRuntimeRewardControlRecords
+                     .OrderBy(static entry => entry.Value.AppliedTickFloor)
+                     .ThenBy(static entry => entry.Key, StringComparer.Ordinal)
+                     .Take(brain.DirectRuntimeRewardControlRecords.Count - maxRecords)
+                     .Select(static entry => entry.Key)
+                     .ToArray())
+        {
+            brain.DirectRuntimeRewardControlRecords.Remove(key);
+        }
+    }
+
     private void HandlePauseBrainControl(IContext context, ProtoControl.PauseBrain message)
     {
         if (!TryGetGuid(message.BrainId, out var brainId))

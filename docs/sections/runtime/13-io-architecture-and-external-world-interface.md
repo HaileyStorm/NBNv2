@@ -143,7 +143,7 @@ The contract is intentionally narrower than "arbitrary training":
 * reward samples must identify the target `brain_id`, controller identity, objective/reward signal, observation tick or explicit observation fence, control action id, and target control surface
 * rewards and action parameters must be finite, bounded, and validated before they reach HiveMind or shard actors
 * stale, duplicate, or mismatched rewards must be rejected deterministically instead of updating controller state twice
-* the supported target surfaces are explicit runtime controls only: bounded neuron state writes/pulses where allowed, plasticity settings, homeostasis settings, cost/energy knobs, output/source mode, and future neuromodulation controls after their ranges and persistence semantics are specified
+* the implemented initial surface is `plasticity_rate`, accepted only while the target Brain is paused and bounded to `[0,1]`; broader surfaces such as bounded neuron state writes/pulses, homeostasis settings, cost/energy knobs, output/source mode, and future neuromodulation controls require explicit ranges, ownership, timing, and persistence semantics before exposure
 * `.nbn` structure, neuron counts, axon topology, function IDs, and artifact lineage remain outside direct reward-control; those changes go through Reproduction/import/export contracts
 * IO-region invariants still apply: direct control may write runtime values for input/output neurons through supported paths, but it may not create illegal region `0` targets, output-to-output axons, duplicate axons, or hidden IO neuron count edits
 
@@ -157,7 +157,7 @@ Mutation timing is part of the safety model:
 
 Direct reward-control and reproduction-action PPO may run in the same deployment only when ownership is explicit. Reproduction-action PPO owns artifact candidate mutation and reward feedback about child artifacts; direct reward-control owns live runtime modulation for a specific Brain. If both are enabled for related brains, the caller must keep reward signals, controller ids, and action provenance separate so one policy cannot consume the other's feedback samples.
 
-A Workbench or demo UI must not expose this as an enableable mode until the proto/API surface, admission rules, barrier timing, persistence classification, and tests for the distinct direct-control path exist.
+The current proto/API surface is `ApplyDirectRuntimeRewardControl` through IO with HiveMind as the authority. Requests carry `controller_id`, `action_id`, `objective_name`, `reward_signal`, observation/action ticks, target surface, finite reward, and finite control value. HiveMind rejects non-IO senders, active-brain actions for the initial paused-only surface, stale or duplicate provenance, unsupported surfaces, non-finite values, out-of-range controls, and action ticks other than the next visible tick using stable reason codes. Accepted actions report `applied_tick_floor`; for the paused-only surface, shard runtime config is updated immediately before resume is allowed. The reward-control ledger is bounded and ephemeral; it is not serialized into `.nbs`.
 
 ### 13.7 Brain death notifications
 

@@ -927,6 +927,43 @@ public partial class WorkbenchClient
         }
     }
 
+    public virtual async Task<DirectRuntimeRewardControlResponse> ApplyDirectRuntimeRewardControlAsync(
+        DirectRuntimeRewardControlRequest? request)
+    {
+        request ??= new DirectRuntimeRewardControlRequest();
+
+        if (_root is null || _ioGatewayPid is null)
+        {
+            _sink.OnIoStatus("Direct runtime reward-control failed: IO gateway is not connected.", false);
+            return BuildDirectRuntimeRewardControlFailure(
+                request,
+                "workbench_offline",
+                "Direct runtime reward-control failed: IO gateway is not connected.");
+        }
+
+        try
+        {
+            var result = await _root.RequestAsync<ApplyDirectRuntimeRewardControlResult>(
+                    _ioGatewayPid,
+                    new ApplyDirectRuntimeRewardControl { Request = request },
+                    DefaultTimeout)
+                .ConfigureAwait(false);
+
+            return result.Response
+                   ?? BuildAndReportDirectRuntimeRewardControlFailure(
+                       request,
+                       "empty_response",
+                       "Direct runtime reward-control failed: IO gateway returned an empty response.");
+        }
+        catch (Exception ex)
+        {
+            return BuildAndReportDirectRuntimeRewardControlFailure(
+                request,
+                "request_failed",
+                $"Direct runtime reward-control failed: {ex.Message}");
+        }
+    }
+
     public void SetHomeostasis(
         Guid brainId,
         bool enabled,
@@ -994,5 +1031,32 @@ public partial class WorkbenchClient
         {
             return new IoCommandResult(brainId, "set_homeostasis", false, $"request_failed:{ex.Message}");
         }
+    }
+
+    private static DirectRuntimeRewardControlResponse BuildDirectRuntimeRewardControlFailure(
+        DirectRuntimeRewardControlRequest request,
+        string reason,
+        string message)
+        => new()
+        {
+            Accepted = false,
+            FailureReasonCode = reason,
+            Message = message,
+            BrainId = request.BrainId?.Clone() ?? new Nbn.Proto.Uuid(),
+            ControllerId = request.ControllerId ?? string.Empty,
+            ActionId = request.ActionId ?? string.Empty,
+            Surface = request.Surface,
+            AppliedTickFloor = request.ActionTickId,
+            Reward = request.Reward,
+            ControlValue = request.ControlValue
+        };
+
+    private DirectRuntimeRewardControlResponse BuildAndReportDirectRuntimeRewardControlFailure(
+        DirectRuntimeRewardControlRequest request,
+        string reason,
+        string message)
+    {
+        _sink.OnIoStatus(message, false);
+        return BuildDirectRuntimeRewardControlFailure(request, reason, message);
     }
 }
