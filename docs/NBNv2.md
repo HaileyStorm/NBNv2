@@ -139,6 +139,8 @@ NBN treats placement as a runtime concern:
 * Requires Reproduction for candidate synthesis/assessment and Speciation for lineage tracking/admission commits
 * Does not participate in HiveMind tick barriers, mutate live RegionShard state, or bypass IO/Reproduction/Speciation ownership
 
+Direct brain/runtime reward-control is a separate runtime-control contract, not a hidden PPO optimizer behavior. External reward controllers must enter through IO, be admitted by HiveMind/runtime ownership, and target only explicitly supported live controls such as bounded runtime state, plasticity, homeostasis, or future neuromodulation settings. They do not own `.nbn` structural mutation; artifact candidate mutation remains Reproduction/PPO/Speciation territory.
+
 ### 3.3 Brain actor topology
 
 For each brain:
@@ -562,6 +564,8 @@ HiveMind also maintains placement telemetry in worker inventory snapshots:
 
 Placement decisions use inter-worker latency as the primary locality signal for shard-to-shard cost. Worker-to-HiveMind latency remains useful for liveness/health checks, but it is not sufficient on its own to score distributed shard placement.
 
+HiveMind's placement worker inventory is the authoritative spawn-eligibility view. A worker can be online in SettingsMonitor and still be excluded from placement. The inventory reports eligible workers separately from `total_workers_seen` and includes exclusion diagnostics with reason codes such as `not_alive`, `not_ready`, `stale_last_seen`, `stale_capabilities`, `not_worker_candidate`, `missing_worker_root_actor`, `pressure_violation`, `no_effective_ram`, `no_effective_storage`, and `no_effective_compute_capacity`. Operator tools should display this filtered eligibility beside ordinary node liveness so `spawn_worker_unavailable` can be diagnosed without guessing from endpoint health alone.
+
 ### 9.3 Placement and rescheduling coordinator
 
 HiveMind runs a `ShardPlacementManager` Actor which:
@@ -700,6 +704,8 @@ Non-goals:
 * no layered predictive-coding training architecture
 * no centralized training loop
 
+Reward-driven direct brain/runtime control may modulate plasticity only through explicit runtime control fields and bounded policy ranges. It must not redefine the shard-local update rule, bypass the system plasticity master setting, or infer a hidden gradient/backprop path from reward feedback. Any reward controller that changes plasticity settings is a live runtime-control caller and must use the IO/HiveMind safety model in Section 13.6.
+
 ### 11.2 Runtime representation
 
 For each axon, maintain:
@@ -817,6 +823,8 @@ Snapshots are taken at tick boundaries to avoid needing to store inbox state.
 
 Any placement or recovery flow that reloads a brain from `.nbn + .nbs` artifacts restores the persisted homeostasis settings when the snapshot header carries them.
 
+Direct reward-control controller state is not implicitly part of a brain snapshot. A future live controller contract must classify each controlled value as persisted in `.nbs`, ephemeral runtime state, or reconstructable controller configuration before that value may participate in recovery semantics. Reward observations for controller updates must refer to a completed tick boundary or an explicit observation fence, not an opportunistic live read.
+
 ### 12.3 Failure recovery
 
 If any RegionShard or placement worker for a brain is lost due to process/node failure:
@@ -852,7 +860,7 @@ When a brain terminates (energy exhaustion, explicit kill from External World or
 * External World does not need to know tick IDs to write inputs or receive outputs.
 * Inputs are applied on the next tick automatically by the IO coordinators and the tick delivery phase.
 * Outputs are delivered with tick correlation, but External World is not required to use it.
-* External World may query placement-ready worker capacity through IO when it needs runtime-sizing hints for environment orchestration; the returned snapshot reflects HiveMind's placement-eligible worker view rather than raw SettingsMonitor rows.
+* External World may query placement-ready worker capacity through IO when it needs runtime-sizing hints for environment orchestration; the returned snapshot reflects HiveMind's placement-eligible worker view rather than raw SettingsMonitor rows and includes exclusion counts/reasons for workers filtered out of spawn planning.
 * External World may explicitly terminate a running brain through IO; it does not need a separate HiveMind control-plane connection for ordinary brain-lifecycle teardown.
 * External World may switch the continuous vector source between `potential` and `buffer` through IO. Requests that include `brain_id` apply only to that Brain; requests without `brain_id` update the runtime default for future and non-overridden Brains. Sparse `OutputEvent` subscriptions remain a separate transport choice.
 
@@ -863,7 +871,7 @@ When a brain terminates (energy exhaustion, explicit kill from External World or
 * accepts client connections, subscriptions, and control messages
 * forwards brain-level requests to HiveMind and/or ReproductionManager
 * forwards Speciation and PPO manager requests through SettingsMonitor-discovered endpoints, refreshing stale service roots before returning stable unavailable/failure responses
-* forwards placement-ready worker capacity queries to HiveMind and returns the placement-filtered worker inventory through the IO contract
+* forwards placement-ready worker capacity queries to HiveMind and returns the placement-filtered worker inventory plus exclusion diagnostics through the IO contract
 * spawns per-brain `InputCoordinator` and `OutputCoordinator` actors
 
 Brain lifecycle control carries backpressure pause metadata:
@@ -980,7 +988,32 @@ Plasticity operator ranges:
 * `plasticity_energy_cost_min_scale`: `[0,1]`
 * `plasticity_energy_cost_max_scale`: `[0,1]` and `>= min_scale`
 
-### 13.6 Brain death notifications
+### 13.6 Direct brain/runtime reward-control contract
+
+Direct brain/runtime reward-control is the NBN-owned path for external reward feedback that modulates a live Brain. It is distinct from the optional PPO optimizer described in Section 3.2 and Section 14: reproduction-action PPO samples candidate artifacts, tunes enabled reproduction mutation probabilities, and commits lineage through Speciation; direct reward-control targets an already-running Brain through the IO runtime-control boundary.
+
+The contract is intentionally narrower than "arbitrary training":
+
+* reward samples must identify the target `brain_id`, controller identity, objective/reward signal, observation tick or explicit observation fence, control action id, and target control surface
+* rewards and action parameters must be finite, bounded, and validated before they reach HiveMind or shard actors
+* stale, duplicate, or mismatched rewards must be rejected deterministically instead of updating controller state twice
+* the supported target surfaces are explicit runtime controls only: bounded neuron state writes/pulses where allowed, plasticity settings, homeostasis settings, cost/energy knobs, output/source mode, and future neuromodulation controls after their ranges and persistence semantics are specified
+* `.nbn` structure, neuron counts, axon topology, function IDs, and artifact lineage remain outside direct reward-control; those changes go through Reproduction/import/export contracts
+* IO-region invariants still apply: direct control may write runtime values for input/output neurons through supported paths, but it may not create illegal region `0` targets, output-to-output axons, duplicate axons, or hidden IO neuron count edits
+
+Mutation timing is part of the safety model:
+
+* controls that affect compute-visible state must be paused-only or queued to a HiveMind-owned deliver-to-compute barrier
+* tick `N` reward/action feedback must not retroactively affect tick `N` compute or delivery
+* output subscriptions are not sufficient observation fences for policy learning unless the subscription contract explicitly states post-deliver ordering for the sampled tick
+* live snapshots used for reward observations must report the completed tick boundary they represent
+* when a control enables runtime features unsupported by the active compute backend, RegionHost must use the existing explicit fallback/unsupported-feature path rather than silently diverging across CPU/GPU execution
+
+Direct reward-control and reproduction-action PPO may run in the same deployment only when ownership is explicit. Reproduction-action PPO owns artifact candidate mutation and reward feedback about child artifacts; direct reward-control owns live runtime modulation for a specific Brain. If both are enabled for related brains, the caller must keep reward signals, controller ids, and action provenance separate so one policy cannot consume the other's feedback samples.
+
+A Workbench or demo UI must not expose this as an enableable mode until the proto/API surface, admission rules, barrier timing, persistence classification, and tests for the distinct direct-control path exist.
+
+### 13.7 Brain death notifications
 
 When a brain terminates, IO publishes:
 
@@ -1037,6 +1070,8 @@ IO-region neuron-count protection and overrides:
 * when protection is disabled, external callers may provide explicit manual add/remove operations for neurons in regions `0` and/or `31`
 * manual operations are supplied on requests via `manual_io_neuron_adds` and `manual_io_neuron_removes` (each item carries `region_id` and `neuron_id`)
 * manual IO-region add/remove operations are caller-directed and are not generated by stochastic mutation probabilities
+
+Reward-policy optimization over reproduction parameters is artifact-oriented. The optional PPO optimizer may modulate enabled reproduction mutation probabilities and submit child artifact requests, but it does not own live Brain runtime-control actions. Direct reward-control over a running Brain is the IO/HiveMind contract in Section 13.6 and must not tunnel structural mutation through live state controls.
 
 ### 14.3 Similarity gating cascade
 
@@ -2522,9 +2557,24 @@ message PlacementWorkerInventoryEntry {
   fixed64 process_ram_used_bytes = 25;
 }
 
+message PlacementWorkerExclusionCount {
+  string reason_code = 1;
+  uint32 count = 2;
+}
+
+message PlacementWorkerExclusionDiagnostic {
+  nbn.Uuid worker_node_id = 1;
+  string worker_address = 2;
+  string worker_root_actor_name = 3;
+  repeated string reason_codes = 4;
+}
+
 message PlacementWorkerInventory {
   repeated PlacementWorkerInventoryEntry workers = 1;
   fixed64 snapshot_ms = 2;
+  uint32 total_workers_seen = 3;
+  repeated PlacementWorkerExclusionCount exclusion_counts = 4;
+  repeated PlacementWorkerExclusionDiagnostic excluded_workers = 5;
 }
 
 message PlacementPeerTarget {
@@ -4101,6 +4151,7 @@ message PpoRecordRewardsResponse {
 - Tick-based runtime orchestration (compute then deliver) is implemented through HiveMind plus Brain/Region actors.
 - Core runtime services are operational: SettingsMonitor, HiveMind, IO, Reproduction, Speciation, PPO, Observability, and Artifacts.
 - Snapshot/recovery, plasticity overlays, reproduction workflows, and PPO reward-policy artifact rollout orchestration are implemented and exercised by tests/tools.
+- The direct brain/runtime reward-control safety model is specified as a separate IO/HiveMind runtime-control contract; the proto/API implementation and Workbench enablement remain future work.
 - Workbench orchestration, designer, debug, and visualization surfaces are implemented for operator workflows.
 - Workbench local launch plus Designer-driven spawn workflows provide repeatable operator validation paths.
 - Documentation assembly pipeline is implemented (`docs/INDEX.md` -> `docs/NBNv2.md`) with CI freshness checks.
