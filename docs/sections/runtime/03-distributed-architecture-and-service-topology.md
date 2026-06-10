@@ -60,7 +60,8 @@ NBN treats placement as a runtime concern:
 
 **PPO optimizer** (optional core service)
 
-* Owns PPO reward-policy run-control and artifact rollout orchestration outside the tick/shard runtime
+* Owns PPO reward-policy run-control and per-candidate reproduction-action artifact rollout orchestration outside the tick/shard runtime
+* Modulates enabled reproduction mutation knobs from evaluated reward feedback; it does not backprop-train live RegionHost brain execution
 * Uses IO live-generated snapshot artifacts for parent observations; it does not treat output subscriptions as post-deliver fences
 * Requires Reproduction for candidate synthesis/assessment and Speciation for lineage tracking/admission commits
 * Does not participate in HiveMind tick barriers, mutate live RegionShard state, or bypass IO/Reproduction/Speciation ownership

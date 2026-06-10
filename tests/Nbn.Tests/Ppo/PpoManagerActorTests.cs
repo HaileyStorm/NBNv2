@@ -186,7 +186,7 @@ public sealed class PpoManagerActorTests
         Assert.NotNull(status.LastRun);
         Assert.Equal(PpoRunState.Completed, status.LastRun.State);
         Assert.Equal("completed", status.LastRun.StatusDetail);
-        Assert.Single(status.LastRun.ExecutionReport.Candidates);
+        Assert.Equal(4, status.LastRun.ExecutionReport.Candidates.Count);
         Assert.Equal(child.StoreUri, status.LastRun.ExecutionReport.Candidates[0].ChildDef.StoreUri);
 
         var ioSnapshot = await system.Root.RequestAsync<PpoIoProbe.Snapshot>(
@@ -202,6 +202,7 @@ public sealed class PpoManagerActorTests
             new PpoReproductionProbe.GetSnapshot(),
             TimeSpan.FromSeconds(5));
         Assert.NotNull(reproduction.LastRequest);
+        Assert.Equal(4, reproduction.RequestCount);
         Assert.Equal(ProtoRepro.SpawnChildPolicy.SpawnChildNever, reproduction.LastRequest.Config.SpawnChild);
         Assert.True(reproduction.LastRequest.Config.ProtectIoRegionNeuronCounts);
         Assert.False(reproduction.LastRequest.Config.StrengthTransformEnabled);
@@ -210,7 +211,7 @@ public sealed class PpoManagerActorTests
         Assert.Equal(0f, reproduction.LastRequest.Config.ProbAddAxon);
         Assert.Equal(0f, reproduction.LastRequest.Config.ProbRemoveAxon);
         Assert.Equal(0f, reproduction.LastRequest.Config.ProbRerouteAxon);
-        Assert.Equal(4u, reproduction.LastRequest.RunCount);
+        Assert.Equal(1u, reproduction.LastRequest.RunCount);
         Assert.Equal("artifact://ppo/parent-a.nbn", reproduction.LastRequest.ParentADef.StoreUri);
         Assert.Equal("artifact://ppo/parent-a.nbs", reproduction.LastRequest.ParentAState.StoreUri);
 
@@ -220,7 +221,8 @@ public sealed class PpoManagerActorTests
             TimeSpan.FromSeconds(5));
         Assert.NotNull(speciation.LastRequest);
         Assert.Equal(ProtoSpec.SpeciationApplyMode.Commit, speciation.LastRequest.ApplyMode);
-        var item = Assert.Single(speciation.LastRequest.Items);
+        Assert.Equal(4, speciation.LastRequest.Items.Count);
+        var item = speciation.LastRequest.Items[0];
         Assert.Equal("ppo-test-run:0", item.ItemId);
         Assert.Equal(child.StoreUri, item.Candidate.ArtifactRef.StoreUri);
         Assert.Contains("\"ppo_run_id\":\"ppo-test-run\"", item.DecisionMetadataJson);
@@ -245,6 +247,7 @@ public sealed class PpoManagerActorTests
                 speciationProbe)));
 
         var firstRun = CreateValidStartRequest(parentA, parentB, "ppo-policy-run-1");
+        firstRun.Hyperparameters.RolloutBatchCount = 1;
         firstRun.ReproduceConfig.ProbAddAxon = 0.03f;
         var firstStarted = await system.Root.RequestAsync<PpoStartRunResponse>(
             manager,
@@ -275,11 +278,11 @@ public sealed class PpoManagerActorTests
             manager,
             new PpoRecordRewardsRequest
             {
-                ObjectiveName = "multiplication",
-                RewardSignal = "basics.fitness",
+                ObjectiveName = "reward",
+                RewardSignal = "output.reward",
                 Hyperparameters = new PpoHyperparameters
                 {
-                    RewardSignal = "basics.fitness",
+                    RewardSignal = "output.reward",
                     RolloutTickCount = 32,
                     RolloutBatchCount = 1,
                     ClipEpsilon = 0.2f,
@@ -314,7 +317,7 @@ public sealed class PpoManagerActorTests
 
         var secondStarted = await system.Root.RequestAsync<PpoStartRunResponse>(
             manager,
-            CreateValidStartRequestWithAddAxon(parentA, parentB, "ppo-policy-run-2", 0.03f),
+            CreateValidStartRequestWithAddAxon(parentA, parentB, "ppo-policy-run-2", 0.03f, rolloutBatchCount: 1),
             TimeSpan.FromSeconds(5));
 
         Assert.True(secondStarted.Accepted);
@@ -343,6 +346,83 @@ public sealed class PpoManagerActorTests
             new PpoStatusRequest(),
             TimeSpan.FromSeconds(5));
         Assert.Equal(1UL, status.LastPolicyUpdate.UpdateIndex);
+    }
+
+    [Fact]
+    public async Task StartRun_AppliesDistinctPolicyActionPerRolloutCandidate()
+    {
+        await using var system = new ActorSystem();
+        var parentA = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var parentB = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var child = CreateArtifact("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "child");
+        var ioProbe = system.Root.Spawn(Props.FromProducer(() => new PpoIoProbe(parentA, parentB)));
+        var reproductionProbe = system.Root.Spawn(Props.FromProducer(() => new PpoReproductionProbe(child)));
+        var speciationProbe = system.Root.Spawn(Props.FromProducer(() => new PpoSpeciationProbe()));
+        var manager = system.Root.Spawn(
+            Props.FromProducer(() => new PpoManagerActor(
+                ioProbe,
+                reproductionProbe,
+                speciationProbe)));
+
+        var request = CreateValidStartRequest(parentA, parentB, "ppo-batch-actions");
+        request.ReproduceConfig.StrengthTransformEnabled = true;
+        request.ReproduceConfig.ProbMutate = 0.05f;
+        request.ReproduceConfig.ProbStrengthMutate = 0.05f;
+        request.ReproduceConfig.ProbMutateFunc = 0.03f;
+        request.ReproduceConfig.ProbAddAxon = 0.04f;
+        request.ReproduceConfig.ProbRemoveAxon = 0.02f;
+        request.ReproduceConfig.ProbRerouteAxon = 0.03f;
+        request.ReproduceConfig.ProbDisableNeuron = 0.02f;
+        request.ReproduceConfig.ProbReactivateNeuron = 0.03f;
+
+        var started = await system.Root.RequestAsync<PpoStartRunResponse>(
+            manager,
+            request,
+            TimeSpan.FromSeconds(5));
+
+        Assert.True(started.Accepted);
+        await AsyncTestHelpers.WaitForAsync(
+            async () =>
+            {
+                var current = await system.Root.RequestAsync<PpoStatusResponse>(
+                    manager,
+                    new PpoStatusRequest(),
+                    TimeSpan.FromSeconds(5));
+                return current.LastRun?.RunId == "ppo-batch-actions"
+                       && current.LastRun.State == PpoRunState.Completed;
+            },
+            timeoutMs: 5000,
+            failureMessage: "Batched PPO rollout did not complete.");
+
+        var reproduction = await system.Root.RequestAsync<PpoReproductionProbe.Snapshot>(
+            reproductionProbe,
+            new PpoReproductionProbe.GetSnapshot(),
+            TimeSpan.FromSeconds(5));
+        Assert.Equal(4, reproduction.RequestCount);
+        Assert.All(reproduction.Requests, request => Assert.Equal(1u, request.RunCount));
+        Assert.Equal(new ulong[] { 42, 43, 44, 45 }, reproduction.Requests.Select(request => request.Seed));
+
+        var status = await system.Root.RequestAsync<PpoStatusResponse>(
+            manager,
+            new PpoStatusRequest(),
+            TimeSpan.FromSeconds(5));
+        Assert.NotNull(status.LastRun);
+        Assert.Equal(4, status.LastRun.ExecutionReport.Candidates.Count);
+        Assert.True(status.LastRun.ExecutionReport.Candidates.Select(candidate => candidate.ActionJson).Distinct().Count() > 1);
+        Assert.All(status.LastRun.ExecutionReport.Candidates, candidate =>
+        {
+            Assert.Contains("function_mutation", candidate.ActionJson);
+            Assert.Contains("disable_neuron", candidate.ActionJson);
+        });
+
+        var speciation = await system.Root.RequestAsync<PpoSpeciationProbe.Snapshot>(
+            speciationProbe,
+            new PpoSpeciationProbe.GetSnapshot(),
+            TimeSpan.FromSeconds(5));
+        Assert.NotNull(speciation.LastRequest);
+        Assert.Equal(4, speciation.LastRequest.Items.Count);
+        Assert.Equal(new[] { "ppo-batch-actions:0", "ppo-batch-actions:1", "ppo-batch-actions:2", "ppo-batch-actions:3" },
+            speciation.LastRequest.Items.Select(item => item.ItemId));
     }
 
     [Fact]
@@ -717,9 +797,11 @@ public sealed class PpoManagerActorTests
         Guid parentA,
         Guid parentB,
         string runId,
-        float addAxonProbability)
+        float addAxonProbability,
+        uint rolloutBatchCount = 4)
     {
         var request = CreateValidStartRequest(parentA, parentB, runId);
+        request.Hyperparameters.RolloutBatchCount = rolloutBatchCount;
         request.ReproduceConfig.ProbAddAxon = addAxonProbability;
         return request;
     }
@@ -811,6 +893,7 @@ public sealed class PpoManagerActorTests
     {
         private readonly Nbn.Proto.ArtifactRef _child;
         private readonly TimeSpan _responseDelay;
+        private readonly List<ProtoRepro.ReproduceByArtifactsRequest> _requests = [];
         private ProtoRepro.ReproduceByArtifactsRequest? _lastRequest;
 
         public PpoReproductionProbe(Nbn.Proto.ArtifactRef child, TimeSpan responseDelay = default)
@@ -825,11 +908,13 @@ public sealed class PpoManagerActorTests
             {
                 case ProtoRepro.ReproduceByArtifactsRequest request:
                     _lastRequest = request.Clone();
+                    _requests.Add(request.Clone());
                     if (_responseDelay > TimeSpan.Zero)
                     {
                         await Task.Delay(_responseDelay).ConfigureAwait(false);
                     }
 
+                    var child = ResolveChild(_requests.Count - 1);
                     context.Respond(new ProtoRepro.ReproduceResult
                     {
                         Report = new ProtoRepro.SimilarityReport
@@ -842,7 +927,7 @@ public sealed class PpoManagerActorTests
                         {
                             AxonsAdded = 1
                         },
-                        ChildDef = _child.Clone(),
+                        ChildDef = child.Clone(),
                         RequestedRunCount = request.RunCount,
                         Runs =
                         {
@@ -850,7 +935,7 @@ public sealed class PpoManagerActorTests
                             {
                                 RunIndex = 0,
                                 Seed = request.Seed,
-                                ChildDef = _child.Clone(),
+                                ChildDef = child.Clone(),
                                 Report = new ProtoRepro.SimilarityReport
                                 {
                                     Compatible = true,
@@ -866,14 +951,24 @@ public sealed class PpoManagerActorTests
                     });
                     break;
                 case GetSnapshot:
-                    context.Respond(new Snapshot(_lastRequest?.Clone()));
+                    context.Respond(new Snapshot(_lastRequest?.Clone(), _requests.Select(static request => request.Clone()).ToArray()));
                     break;
             }
         }
 
+        private Nbn.Proto.ArtifactRef ResolveChild(int requestIndex)
+            => requestIndex == 0
+                ? _child.Clone()
+                : CreateArtifact($"{requestIndex + 1:x64}", $"child-{requestIndex}");
+
         public sealed record GetSnapshot;
 
-        public sealed record Snapshot(ProtoRepro.ReproduceByArtifactsRequest? LastRequest);
+        public sealed record Snapshot(
+            ProtoRepro.ReproduceByArtifactsRequest? LastRequest,
+            IReadOnlyList<ProtoRepro.ReproduceByArtifactsRequest> Requests)
+        {
+            public int RequestCount => Requests.Count;
+        }
     }
 
     private sealed class PpoSpeciationProbe : IActor

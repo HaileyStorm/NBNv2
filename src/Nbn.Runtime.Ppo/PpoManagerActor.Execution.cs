@@ -45,30 +45,45 @@ public sealed partial class PpoManagerActor
                 .ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
-            var reproductionRequest = CreateReproductionRequest(run, request, observedParents, out var policyApplication);
-            var reproduction = await context
-                .RequestAsync<ProtoRepro.ReproduceResult>(
-                    reproductionPid,
-                    reproductionRequest,
-                    RolloutRequestTimeout)
-                .ConfigureAwait(false);
-
-            if (reproduction is null)
+            var rollouts = new List<CandidateRollout>();
+            var reproductionResults = new List<ProtoRepro.ReproduceResult>();
+            var rolloutBatchCount = (uint)Math.Max(1UL, request.Hyperparameters?.RolloutBatchCount ?? 1UL);
+            for (var rolloutIndex = 0u; rolloutIndex < rolloutBatchCount; rolloutIndex++)
             {
-                return CreateTerminalRun(run, PpoRunState.Failed, "ppo_reproduction_empty_response");
+                cancellationToken.ThrowIfCancellationRequested();
+                var reproductionRequest = CreateReproductionRequest(run, request, observedParents, rolloutIndex, out var policyApplication);
+                var reproductionResult = await context
+                    .RequestAsync<ProtoRepro.ReproduceResult>(
+                        reproductionPid,
+                        reproductionRequest,
+                        RolloutRequestTimeout)
+                    .ConfigureAwait(false);
+
+                if (reproductionResult is null)
+                {
+                    return CreateTerminalRun(run, PpoRunState.Failed, "ppo_reproduction_empty_response");
+                }
+
+                reproductionResults.Add(reproductionResult.Clone());
+                var candidates = ResolveCandidateArtifacts(reproductionResult, rolloutIndex);
+                foreach (var candidate in candidates)
+                {
+                    var rollout = new CandidateRollout(candidate, policyApplication);
+                    rollouts.Add(rollout);
+                    _policy.RegisterCandidates(run.RunId, [candidate], policyApplication);
+                }
             }
 
-            var candidates = ResolveCandidateArtifacts(reproduction);
-            if (candidates.Count == 0)
+            if (rollouts.Count == 0)
             {
+                var lastReproduction = reproductionResults.LastOrDefault();
                 return CreateTerminalRun(
                     run,
                     PpoRunState.Failed,
-                    string.IsNullOrWhiteSpace(reproduction.Report?.AbortReason)
+                    string.IsNullOrWhiteSpace(lastReproduction?.Report?.AbortReason)
                         ? "ppo_reproduction_candidate_missing"
-                        : reproduction.Report.AbortReason);
+                        : lastReproduction.Report.AbortReason);
             }
-            _policy.RegisterCandidates(run.RunId, candidates, policyApplication);
 
             cancellationToken.ThrowIfCancellationRequested();
             if (!executionState.TryMarkCommitDispatched())
@@ -76,7 +91,7 @@ public sealed partial class PpoManagerActor
                 return CreateTerminalRun(run, PpoRunState.Cancelled, "ppo_run_cancelled");
             }
 
-            var speciationRequest = CreateSpeciationRequest(run, request, observedParents, candidates, policyApplication);
+            var speciationRequest = CreateSpeciationRequest(run, request, observedParents, rollouts);
             var speciation = await context
                 .RequestAsync<ProtoSpec.SpeciationBatchEvaluateApplyResponse>(
                     speciationPid,
@@ -89,10 +104,11 @@ public sealed partial class PpoManagerActor
                 return CreateTerminalRun(run, PpoRunState.Failed, "ppo_speciation_empty_response");
             }
 
-            var report = CreateExecutionReport(run, request, observedParents, reproduction, speciation, candidates, policyApplication);
+            var reproduction = CombineReproductionResults(reproductionResults, rolloutBatchCount);
+            var report = CreateExecutionReport(run, request, observedParents, reproduction, speciation, rollouts);
             var success = speciation.FailureReason == ProtoSpec.SpeciationFailureReason.SpeciationFailureNone
-                          && speciation.ProcessedCount == candidates.Count
-                          && speciation.CommittedCount == candidates.Count;
+                          && speciation.ProcessedCount == rollouts.Count
+                          && speciation.CommittedCount == rollouts.Count;
             var detail = success
                 ? "completed"
                 : string.IsNullOrWhiteSpace(speciation.FailureDetail)
@@ -177,12 +193,13 @@ public sealed partial class PpoManagerActor
         PpoRunDescriptor run,
         PpoStartRunRequest request,
         IReadOnlyList<PpoObservedParent> parents,
+        uint rolloutIndex,
         out PpoControllerPolicy.PpoPolicyApplication policyApplication)
     {
         var config = request.ReproduceConfig?.Clone() ?? new ProtoRepro.ReproduceConfig();
         config.SpawnChild = ProtoRepro.SpawnChildPolicy.SpawnChildNever;
         config.ProtectIoRegionNeuronCounts = true;
-        policyApplication = _policy.Apply(run.RunId, request, config);
+        policyApplication = _policy.Apply(run.RunId, request, config, rolloutIndex);
 
         return new ProtoRepro.ReproduceByArtifactsRequest
         {
@@ -192,12 +209,14 @@ public sealed partial class PpoManagerActor
             ParentBState = parents[1].Snapshot.Clone(),
             StrengthSource = request.StrengthSource,
             Config = config,
-            Seed = request.Hyperparameters?.Seed ?? 0,
-            RunCount = (uint)Math.Max(1UL, request.Hyperparameters?.RolloutBatchCount ?? 1UL)
+            Seed = (request.Hyperparameters?.Seed ?? 0) + rolloutIndex,
+            RunCount = 1
         };
     }
 
-    private static IReadOnlyList<CandidateArtifact> ResolveCandidateArtifacts(ProtoRepro.ReproduceResult reproduction)
+    private static IReadOnlyList<CandidateArtifact> ResolveCandidateArtifacts(
+        ProtoRepro.ReproduceResult reproduction,
+        uint rolloutIndex)
     {
         var candidates = new List<CandidateArtifact>();
         foreach (var run in reproduction.Runs)
@@ -208,7 +227,7 @@ public sealed partial class PpoManagerActor
             }
 
             candidates.Add(new CandidateArtifact(
-                run.RunIndex,
+                rolloutIndex,
                 run.Seed,
                 run.ChildDef.Clone(),
                 run.Report?.Clone(),
@@ -218,7 +237,7 @@ public sealed partial class PpoManagerActor
         if (candidates.Count == 0 && HasArtifactRef(reproduction.ChildDef))
         {
             candidates.Add(new CandidateArtifact(
-                0,
+                rolloutIndex,
                 reproduction.Runs.Count > 0 ? reproduction.Runs[0].Seed : 0,
                 reproduction.ChildDef.Clone(),
                 reproduction.Report?.Clone(),
@@ -228,20 +247,50 @@ public sealed partial class PpoManagerActor
         return candidates;
     }
 
+    private static ProtoRepro.ReproduceResult CombineReproductionResults(
+        IReadOnlyList<ProtoRepro.ReproduceResult> results,
+        uint requestedRunCount)
+    {
+        var aggregate = new ProtoRepro.ReproduceResult
+        {
+            RequestedRunCount = requestedRunCount
+        };
+
+        var runIndex = 0u;
+        foreach (var result in results)
+        {
+            foreach (var run in result.Runs)
+            {
+                var cloned = run.Clone();
+                cloned.RunIndex = runIndex++;
+                aggregate.Runs.Add(cloned);
+            }
+
+            if (!HasArtifactRef(aggregate.ChildDef) && HasArtifactRef(result.ChildDef))
+            {
+                aggregate.ChildDef = result.ChildDef.Clone();
+                aggregate.Report = result.Report?.Clone();
+                aggregate.Summary = result.Summary?.Clone();
+            }
+        }
+
+        return aggregate;
+    }
+
     private static ProtoSpec.SpeciationBatchEvaluateApplyRequest CreateSpeciationRequest(
         PpoRunDescriptor run,
         PpoStartRunRequest request,
         IReadOnlyList<PpoObservedParent> parents,
-        IReadOnlyList<CandidateArtifact> candidates,
-        PpoControllerPolicy.PpoPolicyApplication policyApplication)
+        IReadOnlyList<CandidateRollout> rollouts)
     {
         var speciation = new ProtoSpec.SpeciationBatchEvaluateApplyRequest
         {
             ApplyMode = ProtoSpec.SpeciationApplyMode.Commit
         };
 
-        foreach (var candidate in candidates)
+        foreach (var rollout in rollouts)
         {
+            var candidate = rollout.Candidate;
             var item = new ProtoSpec.SpeciationBatchItem
             {
                 ItemId = $"{run.RunId}:{candidate.RunIndex}",
@@ -250,7 +299,7 @@ public sealed partial class PpoManagerActor
                     ArtifactRef = candidate.ChildDef.Clone()
                 },
                 DecisionReason = "ppo_rollout_candidate",
-                DecisionMetadataJson = CreateCandidateMetadataJson(run, request, parents, candidate, policyApplication),
+                DecisionMetadataJson = CreateCandidateMetadataJson(run, request, parents, rollout),
                 DecisionTimeMs = CurrentUnixTimeMs(),
                 HasDecisionTimeMs = true
             };
@@ -275,20 +324,20 @@ public sealed partial class PpoManagerActor
         IReadOnlyList<PpoObservedParent> parents,
         ProtoRepro.ReproduceResult reproduction,
         ProtoSpec.SpeciationBatchEvaluateApplyResponse speciation,
-        IReadOnlyList<CandidateArtifact> candidates,
-        PpoControllerPolicy.PpoPolicyApplication policyApplication)
+        IReadOnlyList<CandidateRollout> rollouts)
     {
         var report = new PpoRolloutExecutionReport
         {
             ReproductionResult = reproduction.Clone(),
             SpeciationResult = speciation.Clone(),
-            ProvenanceJson = CreateRunProvenanceJson(run, request, parents, candidates, policyApplication),
-            PolicyStateJson = policyApplication.PolicyStateJson
+            ProvenanceJson = CreateRunProvenanceJson(run, request, parents, rollouts),
+            PolicyStateJson = rollouts.Count == 0 ? string.Empty : rollouts[^1].PolicyApplication.PolicyStateJson
         };
         report.ObservedParents.AddRange(parents.Select(parent => parent.Clone()));
 
-        foreach (var candidate in candidates)
+        foreach (var rollout in rollouts)
         {
+            var candidate = rollout.Candidate;
             var itemId = $"{run.RunId}:{candidate.RunIndex}";
             var decision = speciation.Results
                 .FirstOrDefault(result => string.Equals(result.ItemId, itemId, StringComparison.Ordinal))
@@ -302,9 +351,9 @@ public sealed partial class PpoManagerActor
                 ReproductionReport = candidate.Report?.Clone(),
                 MutationSummary = candidate.Summary?.Clone(),
                 SpeciationDecision = decision?.Clone(),
-                OldLogProbability = policyApplication.Action.OldLogProbability,
-                ValueEstimate = policyApplication.Action.ValueEstimate,
-                ActionJson = policyApplication.Action.ActionJson
+                OldLogProbability = rollout.PolicyApplication.Action.OldLogProbability,
+                ValueEstimate = rollout.PolicyApplication.Action.ValueEstimate,
+                ActionJson = rollout.PolicyApplication.Action.ActionJson
             });
         }
 
@@ -315,9 +364,11 @@ public sealed partial class PpoManagerActor
         PpoRunDescriptor run,
         PpoStartRunRequest request,
         IReadOnlyList<PpoObservedParent> parents,
-        CandidateArtifact candidate,
-        PpoControllerPolicy.PpoPolicyApplication policyApplication)
-        => JsonSerializer.Serialize(new
+        CandidateRollout rollout)
+    {
+        var candidate = rollout.Candidate;
+        var policyApplication = rollout.PolicyApplication;
+        return JsonSerializer.Serialize(new
         {
             source = "ppo",
             ppo_run_id = run.RunId,
@@ -336,13 +387,13 @@ public sealed partial class PpoManagerActor
             observed_parents = parents.Select(ParentMetadata).ToArray(),
             request_metadata_json = request.MetadataJson ?? string.Empty
         });
+    }
 
     private static string CreateRunProvenanceJson(
         PpoRunDescriptor run,
         PpoStartRunRequest request,
         IReadOnlyList<PpoObservedParent> parents,
-        IReadOnlyList<CandidateArtifact> candidates,
-        PpoControllerPolicy.PpoPolicyApplication policyApplication)
+        IReadOnlyList<CandidateRollout> rollouts)
         => JsonSerializer.Serialize(new
         {
             source = "ppo",
@@ -354,8 +405,10 @@ public sealed partial class PpoManagerActor
             reproduction_spawn_child = "spawn_child_never",
             speciation_apply_mode = "commit",
             parent_count = parents.Count,
-            candidate_count = candidates.Count,
-            policy_state = JsonDocument.Parse(policyApplication.PolicyStateJson).RootElement,
+            candidate_count = rollouts.Count,
+            policy_state = rollouts.Count == 0
+                ? JsonDocument.Parse("{}").RootElement
+                : JsonDocument.Parse(rollouts[^1].PolicyApplication.PolicyStateJson).RootElement,
             observed_parents = parents.Select(ParentMetadata).ToArray()
         });
 
@@ -402,4 +455,8 @@ public sealed partial class PpoManagerActor
         ArtifactRef ChildDef,
         ProtoRepro.SimilarityReport? Report,
         ProtoRepro.MutationSummary? Summary);
+
+    private sealed record CandidateRollout(
+        CandidateArtifact Candidate,
+        PpoControllerPolicy.PpoPolicyApplication PolicyApplication);
 }

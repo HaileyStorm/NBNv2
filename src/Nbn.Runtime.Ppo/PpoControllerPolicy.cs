@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
+using Nbn.Proto;
 using Nbn.Proto.Ppo;
+using Nbn.Shared;
 using ProtoRepro = Nbn.Proto.Repro;
 
 namespace Nbn.Runtime.Ppo;
@@ -8,7 +10,8 @@ namespace Nbn.Runtime.Ppo;
 internal sealed class PpoControllerPolicy
 {
     private const float MinimumLogProbability = 0.000001f;
-    private const float MaximumProbability = 0.45f;
+    private const float MaximumProbability = 0.60f;
+    private const float ExplorationLogScale = 0.65f;
     private readonly Dictionary<string, PendingAction> _pending = new(StringComparer.Ordinal);
     private readonly object _gate = new();
     private ControllerWeights _weights = ControllerWeights.Default;
@@ -18,7 +21,8 @@ internal sealed class PpoControllerPolicy
     public PpoPolicyApplication Apply(
         string runId,
         PpoStartRunRequest request,
-        ProtoRepro.ReproduceConfig config)
+        ProtoRepro.ReproduceConfig config,
+        uint rolloutIndex)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(runId);
         ArgumentNullException.ThrowIfNull(request);
@@ -26,7 +30,8 @@ internal sealed class PpoControllerPolicy
 
         lock (_gate)
         {
-            var probabilities = _weights.ToProbabilities(config);
+            var baseline = _weights.ToProbabilities(config);
+            var probabilities = SampleActionProbabilities(baseline, runId, rolloutIndex, request.Hyperparameters);
             ApplyProbabilities(config, probabilities);
             var actionJson = CreateActionJson(probabilities);
             var logProbability = EstimateActionLogProbability(probabilities);
@@ -37,6 +42,9 @@ internal sealed class PpoControllerPolicy
                 logProbability,
                 valueEstimate,
                 actionJson,
+                request.ObjectiveName?.Trim() ?? string.Empty,
+                request.Hyperparameters?.RewardSignal?.Trim() ?? string.Empty,
+                string.Empty,
                 request.Hyperparameters?.Clone());
 
             return new PpoPolicyApplication(action, SerializePolicyStateLocked());
@@ -52,7 +60,10 @@ internal sealed class PpoControllerPolicy
         {
             foreach (var candidate in candidates)
             {
-                _pending[BuildKey(runId, candidate.RunIndex)] = application.Action;
+                _pending[BuildKey(runId, candidate.RunIndex)] = application.Action with
+                {
+                    ChildDefSha = TryArtifactSha(candidate.ChildDef)
+                };
             }
         }
     }
@@ -73,7 +84,11 @@ internal sealed class PpoControllerPolicy
                 return CreateRecordFailure(failure);
             }
 
-            samples.Add(new RewardSample(sample.RunId.Trim(), sample.RunIndex, sample.Reward));
+            samples.Add(new RewardSample(
+                sample.RunId.Trim(),
+                sample.RunIndex,
+                sample.Reward,
+                TryArtifactSha(sample.ChildDef)));
         }
 
         lock (_gate)
@@ -81,7 +96,8 @@ internal sealed class PpoControllerPolicy
             var accepted = new List<(RewardSample Sample, PendingAction Action)>(samples.Count);
             foreach (var sample in samples)
             {
-                if (_pending.TryGetValue(BuildKey(sample.RunId, sample.RunIndex), out var action))
+                if (_pending.TryGetValue(BuildKey(sample.RunId, sample.RunIndex), out var action)
+                    && RewardSampleMatchesPendingAction(sample, action, request))
                 {
                     accepted.Add((sample, action));
                 }
@@ -241,6 +257,102 @@ internal sealed class PpoControllerPolicy
         return true;
     }
 
+    private static bool RewardSampleMatchesPendingAction(
+        RewardSample sample,
+        PendingAction action,
+        PpoRecordRewardsRequest request)
+    {
+        if (!string.IsNullOrWhiteSpace(action.ChildDefSha)
+            && !string.Equals(sample.ChildDefSha, action.ChildDefSha, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(action.ObjectiveName)
+            && !string.IsNullOrWhiteSpace(request.ObjectiveName)
+            && !string.Equals(action.ObjectiveName, request.ObjectiveName.Trim(), StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(action.RewardSignal)
+            && !string.IsNullOrWhiteSpace(request.RewardSignal)
+            && !string.Equals(action.RewardSignal, request.RewardSignal.Trim(), StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static ActionProbabilities SampleActionProbabilities(
+        ActionProbabilities baseline,
+        string runId,
+        uint rolloutIndex,
+        PpoHyperparameters? hyperparameters)
+    {
+        if ((hyperparameters?.RolloutBatchCount ?? 1) <= 1)
+        {
+            return baseline;
+        }
+
+        var state = CreateExplorationSeed(runId, rolloutIndex, hyperparameters);
+        return new ActionProbabilities(
+            PerturbProbability(baseline.ParameterMutation, ref state),
+            PerturbProbability(baseline.StrengthMutation, ref state),
+            PerturbProbability(baseline.FunctionMutation, ref state),
+            PerturbProbability(baseline.AddAxon, ref state),
+            PerturbProbability(baseline.RemoveAxon, ref state),
+            PerturbProbability(baseline.RerouteAxon, ref state),
+            PerturbProbability(baseline.DisableNeuron, ref state),
+            PerturbProbability(baseline.ReactivateNeuron, ref state),
+            PerturbProbability(baseline.AddNeuronToEmptyRegion, ref state),
+            PerturbProbability(baseline.RemoveLastNeuronFromRegion, ref state),
+            PerturbProbability(baseline.RerouteInboundAxonOnDelete, ref state));
+    }
+
+    private static ulong CreateExplorationSeed(string runId, uint rolloutIndex, PpoHyperparameters? hyperparameters)
+    {
+        unchecked
+        {
+            var state = 1469598103934665603UL;
+            foreach (var ch in runId.AsSpan())
+            {
+                state ^= ch;
+                state *= 1099511628211UL;
+            }
+
+            state ^= hyperparameters?.Seed ?? 0UL;
+            state *= 1099511628211UL;
+            state ^= rolloutIndex + 0x9E3779B9UL;
+            state *= 1099511628211UL;
+            return state == 0UL ? 0xD1B54A32D192ED03UL : state;
+        }
+    }
+
+    private static float PerturbProbability(float baseline, ref ulong state)
+    {
+        if (baseline <= 0f || !float.IsFinite(baseline))
+        {
+            return 0f;
+        }
+
+        var noise = (NextUnitFloat(ref state) * 2f) - 1f;
+        return ClampProbability(baseline * MathF.Exp(noise * ExplorationLogScale));
+    }
+
+    private static float NextUnitFloat(ref ulong state)
+    {
+        unchecked
+        {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            var value = state * 2685821657736338717UL;
+            return (value >> 40) / (float)(1u << 24);
+        }
+    }
+
     private static void ApplyProbabilities(ProtoRepro.ReproduceConfig config, ActionProbabilities probabilities)
     {
         config.ProbMutate = BlendProbability(config.ProbMutate, probabilities.ParameterMutation);
@@ -249,13 +361,19 @@ internal sealed class PpoControllerPolicy
             config.ProbStrengthMutate = BlendProbability(config.ProbStrengthMutate, probabilities.StrengthMutation);
         }
 
+        config.ProbMutateFunc = BlendProbability(config.ProbMutateFunc, probabilities.FunctionMutation);
         config.ProbAddAxon = BlendProbability(config.ProbAddAxon, probabilities.AddAxon);
         config.ProbRemoveAxon = BlendProbability(config.ProbRemoveAxon, probabilities.RemoveAxon);
         config.ProbRerouteAxon = BlendProbability(config.ProbRerouteAxon, probabilities.RerouteAxon);
+        config.ProbDisableNeuron = BlendProbability(config.ProbDisableNeuron, probabilities.DisableNeuron);
+        config.ProbReactivateNeuron = BlendProbability(config.ProbReactivateNeuron, probabilities.ReactivateNeuron);
+        config.ProbAddNeuronToEmptyRegion = BlendProbability(config.ProbAddNeuronToEmptyRegion, probabilities.AddNeuronToEmptyRegion);
+        config.ProbRemoveLastNeuronFromRegion = BlendProbability(config.ProbRemoveLastNeuronFromRegion, probabilities.RemoveLastNeuronFromRegion);
+        config.ProbRerouteInboundAxonOnDelete = BlendProbability(config.ProbRerouteInboundAxonOnDelete, probabilities.RerouteInboundAxonOnDelete);
     }
 
     private static float BlendProbability(float configured, float policy)
-        => configured <= 0f ? 0f : ClampProbability((0.60f * configured) + (0.40f * policy));
+        => configured <= 0f ? 0f : ClampProbability((0.35f * configured) + (0.65f * policy));
 
     private static float ClampProbability(float value)
         => Math.Clamp(float.IsFinite(value) ? value : 0f, 0f, MaximumProbability);
@@ -266,9 +384,15 @@ internal sealed class PpoControllerPolicy
     private static float EstimateActionLogProbability(ActionProbabilities probabilities)
         => MathF.Log(ClampLogProbability(probabilities.ParameterMutation))
            + MathF.Log(ClampLogProbability(probabilities.StrengthMutation))
+           + MathF.Log(ClampLogProbability(probabilities.FunctionMutation))
            + MathF.Log(ClampLogProbability(probabilities.AddAxon))
            + MathF.Log(ClampLogProbability(probabilities.RemoveAxon))
-           + MathF.Log(ClampLogProbability(probabilities.RerouteAxon));
+           + MathF.Log(ClampLogProbability(probabilities.RerouteAxon))
+           + MathF.Log(ClampLogProbability(probabilities.DisableNeuron))
+           + MathF.Log(ClampLogProbability(probabilities.ReactivateNeuron))
+           + MathF.Log(ClampLogProbability(probabilities.AddNeuronToEmptyRegion))
+           + MathF.Log(ClampLogProbability(probabilities.RemoveLastNeuronFromRegion))
+           + MathF.Log(ClampLogProbability(probabilities.RerouteInboundAxonOnDelete));
 
     private string SerializePolicyStateLocked()
         => JsonSerializer.Serialize(new
@@ -285,6 +409,11 @@ internal sealed class PpoControllerPolicy
         => string.Create(
             CultureInfo.InvariantCulture,
             $"{runId.Trim()}:{runIndex}");
+
+    private static string TryArtifactSha(ArtifactRef? artifact)
+        => artifact is not null && artifact.TryToSha256Hex(out var sha)
+            ? sha
+            : string.Empty;
 
     private static PpoRecordRewardsResponse CreateRecordFailure(string detail)
         => new()
@@ -303,36 +432,57 @@ internal sealed class PpoControllerPolicy
         float OldLogProbability,
         float ValueEstimate,
         string ActionJson,
+        string ObjectiveName,
+        string RewardSignal,
+        string ChildDefSha,
         PpoHyperparameters? Hyperparameters);
 
-    private sealed record RewardSample(string RunId, uint RunIndex, float Reward);
+    private sealed record RewardSample(string RunId, uint RunIndex, float Reward, string ChildDefSha);
 
     internal readonly record struct ControllerWeights(
         float ParameterMutation,
         float StrengthMutation,
+        float FunctionMutation,
         float AddAxon,
         float RemoveAxon,
         float RerouteAxon,
+        float DisableNeuron,
+        float ReactivateNeuron,
+        float AddNeuronToEmptyRegion,
+        float RemoveLastNeuronFromRegion,
+        float RerouteInboundAxonOnDelete,
         float ValueBias)
     {
-        public static ControllerWeights Default => new(0f, 0f, 0f, -0.15f, 0f, 0f);
+        public static ControllerWeights Default => new(0f, 0f, -0.05f, 0f, -0.15f, 0f, -0.10f, 0f, -0.05f, -0.20f, 0f, 0f);
 
         public ControllerWeights Add(ControllerWeights other)
             => new(
                 ParameterMutation + other.ParameterMutation,
                 StrengthMutation + other.StrengthMutation,
+                FunctionMutation + other.FunctionMutation,
                 AddAxon + other.AddAxon,
                 RemoveAxon + other.RemoveAxon,
                 RerouteAxon + other.RerouteAxon,
+                DisableNeuron + other.DisableNeuron,
+                ReactivateNeuron + other.ReactivateNeuron,
+                AddNeuronToEmptyRegion + other.AddNeuronToEmptyRegion,
+                RemoveLastNeuronFromRegion + other.RemoveLastNeuronFromRegion,
+                RerouteInboundAxonOnDelete + other.RerouteInboundAxonOnDelete,
                 ValueBias + other.ValueBias);
 
         public ControllerWeights Scale(float scale)
             => new(
                 ParameterMutation * scale,
                 StrengthMutation * scale,
+                FunctionMutation * scale,
                 AddAxon * scale,
                 RemoveAxon * scale,
                 RerouteAxon * scale,
+                DisableNeuron * scale,
+                ReactivateNeuron * scale,
+                AddNeuronToEmptyRegion * scale,
+                RemoveLastNeuronFromRegion * scale,
+                RerouteInboundAxonOnDelete * scale,
                 ValueBias * scale);
 
         public ControllerWeights WithValueBias(float valueBias)
@@ -342,9 +492,15 @@ internal sealed class PpoControllerPolicy
             => new(
                 ResolveProbability(config.ProbMutate, ParameterMutation, 0.045f),
                 ResolveProbability(config.ProbStrengthMutate, StrengthMutation, 0.045f),
+                ResolveProbability(config.ProbMutateFunc, FunctionMutation, 0.025f),
                 ResolveProbability(config.ProbAddAxon, AddAxon, 0.035f),
                 ResolveProbability(config.ProbRemoveAxon, RemoveAxon, 0.018f),
-                ResolveProbability(config.ProbRerouteAxon, RerouteAxon, 0.035f));
+                ResolveProbability(config.ProbRerouteAxon, RerouteAxon, 0.035f),
+                ResolveProbability(config.ProbDisableNeuron, DisableNeuron, 0.012f),
+                ResolveProbability(config.ProbReactivateNeuron, ReactivateNeuron, 0.018f),
+                ResolveProbability(config.ProbAddNeuronToEmptyRegion, AddNeuronToEmptyRegion, 0.012f),
+                ResolveProbability(config.ProbRemoveLastNeuronFromRegion, RemoveLastNeuronFromRegion, 0.008f),
+                ResolveProbability(config.ProbRerouteInboundAxonOnDelete, RerouteInboundAxonOnDelete, 0.030f));
 
         private static float ResolveProbability(float configured, float weight, float fallback)
         {
@@ -363,28 +519,58 @@ internal sealed class PpoControllerPolicy
     internal readonly record struct ActionProbabilities(
         float ParameterMutation,
         float StrengthMutation,
+        float FunctionMutation,
         float AddAxon,
         float RemoveAxon,
-        float RerouteAxon)
+        float RerouteAxon,
+        float DisableNeuron,
+        float ReactivateNeuron,
+        float AddNeuronToEmptyRegion,
+        float RemoveLastNeuronFromRegion,
+        float RerouteInboundAxonOnDelete)
     {
         public float Entropy
             => BernoulliEntropy(ParameterMutation)
                + BernoulliEntropy(StrengthMutation)
+               + BernoulliEntropy(FunctionMutation)
                + BernoulliEntropy(AddAxon)
                + BernoulliEntropy(RemoveAxon)
-               + BernoulliEntropy(RerouteAxon);
+               + BernoulliEntropy(RerouteAxon)
+               + BernoulliEntropy(DisableNeuron)
+               + BernoulliEntropy(ReactivateNeuron)
+               + BernoulliEntropy(AddNeuronToEmptyRegion)
+               + BernoulliEntropy(RemoveLastNeuronFromRegion)
+               + BernoulliEntropy(RerouteInboundAxonOnDelete);
 
         public ControllerWeights AsGradient()
-            => new(ParameterMutation, StrengthMutation, AddAxon, RemoveAxon, RerouteAxon, 0f);
+            => new(
+                ParameterMutation,
+                StrengthMutation,
+                FunctionMutation,
+                AddAxon,
+                RemoveAxon,
+                RerouteAxon,
+                DisableNeuron,
+                ReactivateNeuron,
+                AddNeuronToEmptyRegion,
+                RemoveLastNeuronFromRegion,
+                RerouteInboundAxonOnDelete,
+                0f);
 
         public object ToSerializable()
             => new
             {
                 parameter_mutation = ParameterMutation,
                 strength_mutation = StrengthMutation,
+                function_mutation = FunctionMutation,
                 add_axon = AddAxon,
                 remove_axon = RemoveAxon,
-                reroute_axon = RerouteAxon
+                reroute_axon = RerouteAxon,
+                disable_neuron = DisableNeuron,
+                reactivate_neuron = ReactivateNeuron,
+                add_neuron_to_empty_region = AddNeuronToEmptyRegion,
+                remove_last_neuron_from_region = RemoveLastNeuronFromRegion,
+                reroute_inbound_axon_on_delete = RerouteInboundAxonOnDelete
             };
 
         private static float BernoulliEntropy(float p)
