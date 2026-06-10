@@ -23,6 +23,8 @@ Snapshots are taken at tick boundaries to avoid needing to store inbox state.
 
 Any placement or recovery flow that reloads a brain from `.nbn + .nbs` artifacts restores the persisted homeostasis settings when the snapshot header carries them.
 
+Direct reward-control controller state is not implicitly part of a brain snapshot. A future live controller contract must classify each controlled value as persisted in `.nbs`, ephemeral runtime state, or reconstructable controller configuration before that value may participate in recovery semantics. Reward observations for controller updates must refer to a completed tick boundary or an explicit observation fence, not an opportunistic live read.
+
 ### 12.3 Failure recovery
 
 If any RegionShard or placement worker for a brain is lost due to process/node failure:

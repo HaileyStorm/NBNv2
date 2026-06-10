@@ -215,6 +215,10 @@
             <StackPanel Spacing="8">
               <TextBlock Text="Workers" Classes="card-title" />
               <TextBlock Text="{Binding WorkerEndpointSummary}" Classes="muted" />
+              <TextBlock Text="{Binding PlacementEligibilitySummary}"
+                         Classes="muted"
+                         TextWrapping="Wrap"
+                         ToolTip.Tip="Online worker nodes are SettingsMonitor liveness. Placement eligibility is HiveMind's filtered inventory used for spawn planning." />
               <ScrollViewer MaxHeight="320" HorizontalScrollBarVisibility="Disabled">
                 <ItemsControl ItemsSource="{Binding WorkerNodeGroups}">
                   <ItemsControl.ItemTemplate>

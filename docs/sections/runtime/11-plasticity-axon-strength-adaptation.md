@@ -57,6 +57,8 @@ Non-goals:
 * no layered predictive-coding training architecture
 * no centralized training loop
 
+Reward-driven direct brain/runtime control may modulate plasticity only through explicit runtime control fields and bounded policy ranges. It must not redefine the shard-local update rule, bypass the system plasticity master setting, or infer a hidden gradient/backprop path from reward feedback. Any reward controller that changes plasticity settings is a live runtime-control caller and must use the IO/HiveMind safety model in Section 13.6.
+
 ### 11.2 Runtime representation
 
 For each axon, maintain:

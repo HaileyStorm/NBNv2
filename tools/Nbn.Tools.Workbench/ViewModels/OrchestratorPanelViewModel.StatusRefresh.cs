@@ -55,12 +55,14 @@ public sealed partial class OrchestratorPanelViewModel
             var workerInventoryResponseTask = _client.ListWorkerInventorySnapshotAsync();
             var settingsResponseTask = _client.ListSettingsAsync();
             var hiveMindStatusTask = _client.GetHiveMindStatusAsync();
+            var placementWorkerInventoryTask = _client.GetPlacementWorkerInventoryAsync();
 
             var nodesResponse = await nodesResponseTask.ConfigureAwait(false);
             var brainsResponse = await brainsResponseTask.ConfigureAwait(false);
             var workerInventoryResponse = await workerInventoryResponseTask.ConfigureAwait(false);
             var settingsResponse = await settingsResponseTask.ConfigureAwait(false);
             var hiveMindStatus = await hiveMindStatusTask.ConfigureAwait(false);
+            var placementWorkerInventory = await placementWorkerInventoryTask.ConfigureAwait(false);
 
             var nodes = nodesResponse?.Nodes?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.NodeStatus>();
             var brains = brainsResponse?.Brains?.ToArray() ?? Array.Empty<Nbn.Proto.Settings.BrainStatus>();
@@ -108,6 +110,7 @@ public sealed partial class OrchestratorPanelViewModel
             var workerEndpointState = BuildWorkerEndpointState(
                 sortedNodes,
                 workerInventory,
+                placementWorkerInventory,
                 actorRowsResult.WorkerBrainHints,
                 actorRowsResult.WorkerBrainBackends,
                 workerNowMs);
@@ -184,6 +187,7 @@ public sealed partial class OrchestratorPanelViewModel
                 WorkerEndpointSummary = BuildWorkerCardSummary(
                     workerEndpointState.SummaryText,
                     activeWorkerBrainCount);
+                PlacementEligibilitySummary = workerEndpointState.PlacementEligibilitySummary;
                 SetHostedActorRenderState(
                     brainRenderSelection.VisibleBrainCount,
                     brainRenderSelection.TotalBrainCount,
@@ -501,6 +505,7 @@ public sealed partial class OrchestratorPanelViewModel
             ActorNodeGroups.Clear();
             SetHostedActorRenderState(0, 0, canShowMore: false);
             WorkerEndpointSummary = "No active nodes.";
+            PlacementEligibilitySummary = "Placement eligibility: unavailable until SettingsMonitor and HiveMind are connected.";
             SystemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
             SystemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
             SystemLoadTickSummary = "Tick health: awaiting HiveMind status.";

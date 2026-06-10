@@ -81,6 +81,7 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     private string _lastSeededPullSettingsPortText = string.Empty;
     private string _lastSeededPullSettingsName = string.Empty;
     private string _workerEndpointSummary = "No active nodes.";
+    private string _placementEligibilitySummary = "Placement eligibility: awaiting HiveMind inventory.";
     private string _hostedActorSummary = "Hosted actors: awaiting current brain state.";
     private string _systemLoadResourceSummary = "Resource usage: awaiting worker telemetry.";
     private string _systemLoadPressureSummary = "Pressure: awaiting HiveMind telemetry.";
@@ -325,6 +326,12 @@ public sealed partial class OrchestratorPanelViewModel : ViewModelBase
     {
         get => _workerEndpointSummary;
         set => SetProperty(ref _workerEndpointSummary, value);
+    }
+
+    public string PlacementEligibilitySummary
+    {
+        get => _placementEligibilitySummary;
+        set => SetProperty(ref _placementEligibilitySummary, value);
     }
 
     public string HostedActorSummary

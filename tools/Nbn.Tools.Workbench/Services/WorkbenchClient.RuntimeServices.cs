@@ -63,21 +63,35 @@ public partial class WorkbenchClient
 
     public virtual async Task<PlacementWorkerInventory?> GetPlacementWorkerInventoryAsync()
     {
-        if (_root is null || _hiveMindPid is null)
+        if (_root is null || _ioGatewayPid is null)
         {
             return null;
         }
 
         try
         {
-            return await _root.RequestAsync<PlacementWorkerInventory>(
-                    _hiveMindPid,
-                    new PlacementWorkerInventoryRequest(),
+            var result = await _root.RequestAsync<PlacementWorkerInventoryResult>(
+                    _ioGatewayPid,
+                    new GetPlacementWorkerInventory(),
                     DefaultTimeout)
                 .ConfigureAwait(false);
+            if (result.Success)
+            {
+                return result.Inventory;
+            }
+
+            var reason = string.IsNullOrWhiteSpace(result.FailureReasonCode)
+                ? "unknown"
+                : result.FailureReasonCode;
+            var message = string.IsNullOrWhiteSpace(result.FailureMessage)
+                ? $"Placement worker inventory unavailable: {reason}."
+                : result.FailureMessage;
+            _sink.OnHiveMindStatus(message, false);
+            return result.Inventory;
         }
-        catch
+        catch (Exception ex)
         {
+            _sink.OnHiveMindStatus($"Placement worker inventory failed: {ex.Message}", false);
             return null;
         }
     }

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using Nbn.Proto.Debug;
+using Nbn.Proto.Io;
 using Nbn.Tools.Workbench.Models;
 using Nbn.Tools.Workbench.Services;
 using Proto;
@@ -126,6 +127,26 @@ public sealed class WorkbenchClientObservabilityTests
         Assert.Equal(1, subscribeCount);
     }
 
+    [Fact]
+    public async Task GetPlacementWorkerInventoryAsync_DoesNotMarkHiveMindConnected_WhenIoReportsFailure()
+    {
+        var sink = new RecordingSink();
+        var clientPort = ReserveFreePort();
+
+        await using var client = new WorkbenchClient(sink);
+        await client.EnsureStartedAsync("127.0.0.1", clientPort);
+
+        var system = GetPrivateField<ActorSystem>(client, "_system");
+        var ioPid = system.Root.Spawn(Props.FromProducer(static () => new PlacementInventoryFailureActor()));
+        SetPrivateField(client, "_ioGatewayPid", ioPid);
+
+        var inventory = await client.GetPlacementWorkerInventoryAsync();
+
+        Assert.NotNull(inventory);
+        Assert.False(sink.LastHiveMindConnected);
+        Assert.Contains("HiveMind unavailable", sink.LastHiveMindStatus ?? string.Empty, StringComparison.Ordinal);
+    }
+
     private static int ReserveFreePort()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -172,11 +193,34 @@ public sealed class WorkbenchClientObservabilityTests
         }
     }
 
+    private sealed class PlacementInventoryFailureActor : IActor
+    {
+        public Task ReceiveAsync(IContext context)
+        {
+            if (context.Message is GetPlacementWorkerInventory)
+            {
+                context.Respond(new PlacementWorkerInventoryResult
+                {
+                    Success = false,
+                    FailureReasonCode = "capacity_unavailable",
+                    FailureMessage = "HiveMind unavailable.",
+                    Inventory = new Nbn.Proto.Control.PlacementWorkerInventory()
+                });
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class RecordingSink : IWorkbenchEventSink
     {
         public string? LastObsStatus { get; private set; }
 
         public bool LastObsConnected { get; private set; }
+
+        public string? LastHiveMindStatus { get; private set; }
+
+        public bool LastHiveMindConnected { get; private set; }
 
         public void OnOutputEvent(OutputEventItem item) { }
 
@@ -198,7 +242,11 @@ public sealed class WorkbenchClientObservabilityTests
 
         public void OnSettingsStatus(string status, bool connected) { }
 
-        public void OnHiveMindStatus(string status, bool connected) { }
+        public void OnHiveMindStatus(string status, bool connected)
+        {
+            LastHiveMindStatus = status;
+            LastHiveMindConnected = connected;
+        }
 
         public void OnSettingChanged(SettingItem item) { }
     }

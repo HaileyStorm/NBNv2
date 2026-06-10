@@ -1927,6 +1927,76 @@ public class OrchestratorPanelViewModelTests
     }
 
     [Fact]
+    public async Task RefreshSettingsAsync_WorkerEndpoints_ShowHiveMindPlacementEligibilityExclusions()
+    {
+        var connections = new ConnectionViewModel();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var workerId = Guid.NewGuid();
+        var workerAddress = $"{connections.WorkerHost}:{connections.WorkerPortText}";
+        var workerReadiness = BuildWorkerReadiness(workerId, connections.WorkerLogicalName, workerAddress, connections.WorkerRootName, nowMs);
+        workerReadiness.Capabilities!.CpuLimitPercent = 100;
+        workerReadiness.Capabilities.RamLimitPercent = 100;
+        workerReadiness.Capabilities.StorageLimitPercent = 100;
+        var client = new FakeWorkbenchClient
+        {
+            NodesResponse = new NodeListResponse
+            {
+                Nodes =
+                {
+                    BuildNodeStatus(workerId, connections.WorkerLogicalName, workerAddress, connections.WorkerRootName, nowMs)
+                }
+            },
+            WorkerInventoryResponse = new WorkerInventorySnapshotResponse
+            {
+                SnapshotMs = (ulong)nowMs,
+                Workers =
+                {
+                    workerReadiness
+                }
+            },
+            PlacementWorkerInventoryResponse = new PlacementWorkerInventory
+            {
+                SnapshotMs = (ulong)nowMs,
+                TotalWorkersSeen = 1,
+                ExclusionCounts =
+                {
+                    new PlacementWorkerExclusionCount { ReasonCode = "pressure_violation", Count = 1 },
+                    new PlacementWorkerExclusionCount { ReasonCode = "stale_capabilities", Count = 1 }
+                },
+                ExcludedWorkers =
+                {
+                    new PlacementWorkerExclusionDiagnostic
+                    {
+                        WorkerNodeId = workerId.ToProtoUuid(),
+                        WorkerAddress = workerAddress,
+                        WorkerRootActorName = connections.WorkerRootName,
+                        ReasonCodes = { "pressure_violation", "stale_capabilities" }
+                    }
+                }
+            },
+            BrainsResponse = new BrainListResponse(),
+            SettingsResponse = new SettingListResponse()
+        };
+
+        var vm = CreateViewModel(connections, client);
+        connections.SettingsConnected = true;
+
+        await vm.RefreshSettingsAsync();
+
+        var endpoint = Assert.Single(vm.WorkerEndpoints);
+        Assert.Equal("limited", endpoint.Status);
+        Assert.Contains("SettingsMonitor readiness passed", endpoint.PlacementDetail, StringComparison.Ordinal);
+        Assert.Contains(
+            "HiveMind placement excluded: pressure violation, stale capabilities.",
+            endpoint.PlacementDetail,
+            StringComparison.Ordinal);
+        Assert.Equal("1 limited node", vm.WorkerEndpointSummary);
+        Assert.Contains("0 eligible / 1 seen", vm.PlacementEligibilitySummary, StringComparison.Ordinal);
+        Assert.Contains("pressure violation 1", vm.PlacementEligibilitySummary, StringComparison.Ordinal);
+        Assert.Contains("stale capabilities 1", vm.PlacementEligibilitySummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RefreshSettingsAsync_WorkerEndpoints_UseSettingsSnapshotTime_ForCachedRemoteWorkerExpiry()
     {
         var connections = new ConnectionViewModel();

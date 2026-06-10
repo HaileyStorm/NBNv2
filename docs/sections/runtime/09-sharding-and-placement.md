@@ -36,6 +36,8 @@ HiveMind also maintains placement telemetry in worker inventory snapshots:
 
 Placement decisions use inter-worker latency as the primary locality signal for shard-to-shard cost. Worker-to-HiveMind latency remains useful for liveness/health checks, but it is not sufficient on its own to score distributed shard placement.
 
+HiveMind's placement worker inventory is the authoritative spawn-eligibility view. A worker can be online in SettingsMonitor and still be excluded from placement. The inventory reports eligible workers separately from `total_workers_seen` and includes exclusion diagnostics with reason codes such as `not_alive`, `not_ready`, `stale_last_seen`, `stale_capabilities`, `not_worker_candidate`, `missing_worker_root_actor`, `pressure_violation`, `no_effective_ram`, `no_effective_storage`, and `no_effective_compute_capacity`. Operator tools should display this filtered eligibility beside ordinary node liveness so `spawn_worker_unavailable` can be diagnosed without guessing from endpoint health alone.
+
 ### 9.3 Placement and rescheduling coordinator
 
 HiveMind runs a `ShardPlacementManager` Actor which:

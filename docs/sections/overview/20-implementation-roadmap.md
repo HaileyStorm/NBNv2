@@ -7,6 +7,7 @@
 - Tick-based runtime orchestration (compute then deliver) is implemented through HiveMind plus Brain/Region actors.
 - Core runtime services are operational: SettingsMonitor, HiveMind, IO, Reproduction, Speciation, PPO, Observability, and Artifacts.
 - Snapshot/recovery, plasticity overlays, reproduction workflows, and PPO reward-policy artifact rollout orchestration are implemented and exercised by tests/tools.
+- The direct brain/runtime reward-control safety model is specified as a separate IO/HiveMind runtime-control contract; the proto/API implementation and Workbench enablement remain future work.
 - Workbench orchestration, designer, debug, and visualization surfaces are implemented for operator workflows.
 - Workbench local launch plus Designer-driven spawn workflows provide repeatable operator validation paths.
 - Documentation assembly pipeline is implemented (`docs/INDEX.md` -> `docs/NBNv2.md`) with CI freshness checks.

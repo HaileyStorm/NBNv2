@@ -43,10 +43,12 @@ public sealed partial class OrchestratorPanelViewModel
     private WorkerEndpointState BuildWorkerEndpointState(
         IReadOnlyList<Nbn.Proto.Settings.NodeStatus> nodes,
         IReadOnlyList<Nbn.Proto.Settings.WorkerReadinessCapability> inventory,
+        Nbn.Proto.Control.PlacementWorkerInventory? placementInventory,
         IReadOnlyDictionary<Guid, HashSet<Guid>> workerBrainHints,
         IReadOnlyDictionary<(Guid NodeId, Guid BrainId), WorkerBrainBackendHint> workerBrainBackends,
         long nowMs)
     {
+        var placementDiagnostics = BuildPlacementEligibilityDiagnostics(placementInventory);
         foreach (var worker in inventory)
         {
             if (worker.NodeId is null || !worker.NodeId.TryToGuid(out var nodeId))
@@ -115,6 +117,13 @@ public sealed partial class OrchestratorPanelViewModel
                 continue;
             }
 
+            var placementDetail = AppendPlacementEligibilityDetail(
+                entry.PlacementDetail,
+                placementDiagnostics,
+                entry.NodeId,
+                entry.Address,
+                entry.RootActorName);
+            status = ResolvePlacementAwareWorkerStatus(status, placementDiagnostics, entry.NodeId, entry.Address, entry.RootActorName);
             var brainHints = DescribeWorkerBrainHints(workerBrainHints, workerBrainBackends, entry.NodeId);
             var capabilityChips = DescribeWorkerCapabilityChips(entry);
             displayEntries.Add(new WorkerEndpointDisplayEntry(
@@ -137,7 +146,7 @@ public sealed partial class OrchestratorPanelViewModel
                     brainHints.Preview,
                     FormatUpdated(entry.LastSeenMs),
                     status,
-                    entry.PlacementDetail,
+                    placementDetail,
                     capabilityChips.CpuCapability,
                     capabilityChips.GpuCapability,
                     brainHints.Count)));
@@ -198,7 +207,15 @@ public sealed partial class OrchestratorPanelViewModel
             degradedCount,
             failedCount,
             displayEntries.Count);
-        return new WorkerEndpointState(orderedRows, orderedGroups, activeCount, limitedCount, degradedCount, failedCount, summary);
+        return new WorkerEndpointState(
+            orderedRows,
+            orderedGroups,
+            activeCount,
+            limitedCount,
+            degradedCount,
+            failedCount,
+            summary,
+            placementDiagnostics.Summary);
     }
 
     private WorkbenchSystemLoadSummary BuildSystemLoadState(
@@ -492,6 +509,183 @@ public sealed partial class OrchestratorPanelViewModel
             : $"{summary} ({brainLabel})";
     }
 
+    private static PlacementEligibilityDiagnostics BuildPlacementEligibilityDiagnostics(
+        Nbn.Proto.Control.PlacementWorkerInventory? inventory)
+    {
+        if (inventory is null)
+        {
+            return new PlacementEligibilityDiagnostics(
+                "Placement eligibility: unavailable until HiveMind inventory is reachable.",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
+        }
+
+        var eligibleKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var worker in inventory.Workers)
+        {
+            foreach (var key in BuildPlacementWorkerKeys(
+                         worker.WorkerNodeId?.TryToGuid(out var nodeId) == true ? nodeId : Guid.Empty,
+                         worker.WorkerAddress,
+                         worker.WorkerRootActorName))
+            {
+                eligibleKeys.Add(key);
+            }
+        }
+
+        var excludedReasonsByKey = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var worker in inventory.ExcludedWorkers)
+        {
+            var reasons = worker.ReasonCodes
+                .Where(static reason => !string.IsNullOrWhiteSpace(reason))
+                .Select(static reason => reason.Trim())
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static reason => reason, StringComparer.Ordinal)
+                .ToArray();
+            foreach (var key in BuildPlacementWorkerKeys(
+                         worker.WorkerNodeId?.TryToGuid(out var nodeId) == true ? nodeId : Guid.Empty,
+                         worker.WorkerAddress,
+                         worker.WorkerRootActorName))
+            {
+                excludedReasonsByKey[key] = reasons;
+            }
+        }
+
+        var totalSeen = Math.Max((int)inventory.TotalWorkersSeen, inventory.Workers.Count + inventory.ExcludedWorkers.Count);
+        var eligibleCount = inventory.Workers.Count;
+        var excludedCount = Math.Max(0, totalSeen - eligibleCount);
+        var summary = $"Placement eligibility: {eligibleCount} eligible / {totalSeen} seen";
+        if (excludedCount > 0)
+        {
+            summary += $"; {excludedCount} excluded";
+        }
+
+        if (inventory.ExclusionCounts.Count > 0)
+        {
+            var reasons = inventory.ExclusionCounts
+                .Where(static entry => entry.Count > 0 && !string.IsNullOrWhiteSpace(entry.ReasonCode))
+                .OrderByDescending(static entry => entry.Count)
+                .ThenBy(static entry => entry.ReasonCode, StringComparer.Ordinal)
+                .Select(static entry => $"{FormatPlacementExclusionReason(entry.ReasonCode)} {entry.Count}")
+                .ToArray();
+            if (reasons.Length > 0)
+            {
+                summary += $" ({string.Join(", ", reasons)})";
+            }
+        }
+
+        summary += ".";
+        return new PlacementEligibilityDiagnostics(summary, eligibleKeys, excludedReasonsByKey);
+    }
+
+    private static string AppendPlacementEligibilityDetail(
+        string placementDetail,
+        PlacementEligibilityDiagnostics diagnostics,
+        Guid nodeId,
+        string address,
+        string rootActorName)
+    {
+        var keys = BuildPlacementWorkerKeys(nodeId, address, rootActorName);
+        if (keys.Any(diagnostics.EligibleKeys.Contains))
+        {
+            return AppendDetail(placementDetail, "HiveMind placement eligible.");
+        }
+
+        var reasons = ResolvePlacementExclusionReasons(diagnostics, keys);
+        if (reasons.Length == 0)
+        {
+            return placementDetail;
+        }
+
+        var formatted = string.Join(", ", reasons.Select(FormatPlacementExclusionReason));
+        if (string.Equals(placementDetail?.Trim(), "Placement ready.", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"SettingsMonitor readiness passed. HiveMind placement excluded: {formatted}.";
+        }
+
+        return AppendDetail(placementDetail ?? string.Empty, $"HiveMind placement excluded: {formatted}.");
+    }
+
+    private static string ResolvePlacementAwareWorkerStatus(
+        string status,
+        PlacementEligibilityDiagnostics diagnostics,
+        Guid nodeId,
+        string address,
+        string rootActorName)
+    {
+        if (!string.Equals(status, "active", StringComparison.OrdinalIgnoreCase))
+        {
+            return status;
+        }
+
+        var keys = BuildPlacementWorkerKeys(nodeId, address, rootActorName);
+        return ResolvePlacementExclusionReasons(diagnostics, keys).Length > 0 ? "limited" : status;
+    }
+
+    private static string[] ResolvePlacementExclusionReasons(
+        PlacementEligibilityDiagnostics diagnostics,
+        IReadOnlyList<string> keys)
+    {
+        foreach (var key in keys)
+        {
+            if (diagnostics.ExcludedReasonsByKey.TryGetValue(key, out var reasons))
+            {
+                return reasons.ToArray();
+            }
+        }
+
+        return Array.Empty<string>();
+    }
+
+    private static IReadOnlyList<string> BuildPlacementWorkerKeys(Guid nodeId, string? address, string? rootActorName)
+    {
+        var keys = new List<string>();
+        if (nodeId != Guid.Empty)
+        {
+            keys.Add($"node:{nodeId:D}");
+        }
+
+        var normalizedAddress = (address ?? string.Empty).Trim();
+        var normalizedRoot = (rootActorName ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(normalizedAddress) || !string.IsNullOrWhiteSpace(normalizedRoot))
+        {
+            keys.Add($"pid:{normalizedAddress}/{normalizedRoot}");
+        }
+
+        return keys;
+    }
+
+    private static string AppendDetail(string current, string addition)
+    {
+        if (string.IsNullOrWhiteSpace(addition))
+        {
+            return current;
+        }
+
+        if (string.IsNullOrWhiteSpace(current) || string.Equals(current, "none", StringComparison.OrdinalIgnoreCase))
+        {
+            return addition;
+        }
+
+        return current.EndsWith(".", StringComparison.Ordinal) ? $"{current} {addition}" : $"{current}. {addition}";
+    }
+
+    private static string FormatPlacementExclusionReason(string reasonCode)
+        => (reasonCode ?? string.Empty).Trim() switch
+        {
+            "missing_worker_root_actor" => "missing worker root",
+            "no_effective_compute_capacity" => "no effective compute",
+            "no_effective_ram" => "no effective RAM",
+            "no_effective_storage" => "no effective storage",
+            "not_alive" => "not alive",
+            "not_ready" => "not ready",
+            "not_worker_candidate" => "not a worker candidate",
+            "pressure_violation" => "pressure violation",
+            "stale_capabilities" => "stale capabilities",
+            "stale_last_seen" => "stale last seen",
+            var other when string.IsNullOrWhiteSpace(other) => "unknown",
+            var other => other.Replace('_', ' ')
+        };
+
     private static string DescribeWorkerPlacementStatus(Nbn.Proto.Settings.WorkerReadinessCapability worker, out string detail)
     {
         detail = string.Empty;
@@ -729,7 +923,13 @@ public sealed partial class OrchestratorPanelViewModel
         int LimitedCount,
         int DegradedCount,
         int FailedCount,
-        string SummaryText);
+        string SummaryText,
+        string PlacementEligibilitySummary);
+
+    private sealed record PlacementEligibilityDiagnostics(
+        string Summary,
+        IReadOnlySet<string> EligibleKeys,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> ExcludedReasonsByKey);
 
     private sealed record WorkerBrainHintSummary(
         int Count,
