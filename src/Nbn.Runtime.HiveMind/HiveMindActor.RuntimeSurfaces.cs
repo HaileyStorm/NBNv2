@@ -153,6 +153,12 @@ public sealed partial class HiveMindActor
             return;
         }
 
+        if (brain.PendingDirectRuntimeRewardControls.Count > 0)
+        {
+            context.Respond(BuildRuntimeResetAck(message.BrainId, success: false, "barrier_work_already_pending"));
+            return;
+        }
+
         var pending = new PendingRuntimeResetState(message.BrainId, message.ResetBuffer, message.ResetAccumulator);
         brain.PendingRuntimeReset = pending;
         context.ReenterAfter(
@@ -180,7 +186,7 @@ public sealed partial class HiveMindActor
 
     private bool ShouldApplyRuntimeResetImmediately(BrainState brain)
     {
-        if (_pendingBarrierResets.Contains(brain.BrainId))
+        if (_pendingBarrierWorkBrains.Contains(brain.BrainId))
         {
             return false;
         }
@@ -201,7 +207,7 @@ public sealed partial class HiveMindActor
     private void StartPendingRuntimeReset(IContext context, BrainState brain)
     {
         var pending = brain.PendingRuntimeReset;
-        if (pending is null || !_pendingBarrierResets.Add(brain.BrainId) || _ioPid is null)
+        if (pending is null || !_pendingBarrierWorkBrains.Add(brain.BrainId) || _ioPid is null)
         {
             return;
         }
@@ -236,7 +242,7 @@ public sealed partial class HiveMindActor
 
     private void CompletePendingRuntimeReset(IContext context, Guid brainId, Task<ProtoIo.IoCommandAck> task)
     {
-        _pendingBarrierResets.Remove(brainId);
+        _pendingBarrierWorkBrains.Remove(brainId);
         if (!_brains.TryGetValue(brainId, out var brain))
         {
             return;
@@ -266,7 +272,7 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        if (_tickLoopEnabled && !_rescheduleInProgress && _phase == TickPhase.Idle && _pendingBarrierResets.Count == 0)
+        if (_tickLoopEnabled && !_rescheduleInProgress && _phase == TickPhase.Idle && _pendingBarrierWorkBrains.Count == 0)
         {
             ScheduleNextTick(context, TimeSpan.Zero);
         }

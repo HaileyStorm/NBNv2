@@ -332,6 +332,89 @@ public class HiveMindTickBarrierTests
     }
 
     [Fact]
+    public async Task DirectRuntimeRewardControl_ActiveBrain_WaitsForDeliverBarrier_BeforeApplying()
+    {
+        var system = new ActorSystem();
+        var options = CreateOptions();
+
+        var root = system.Root;
+        var ioPid = root.Spawn(Props.FromProducer(() => new DirectRuntimeRewardControlClient()));
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(options, ioPid: ioPid)));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new BrainRootActor(brainId, hiveMind)));
+        var router = await WaitForSignalRouter(root, brainRoot, TimeSpan.FromSeconds(2));
+
+        await WaitForStatus(root, hiveMind, status => status.RegisteredBrains == 1, TimeSpan.FromSeconds(2));
+
+        var shardId = ShardId32.From(1, 0);
+        var deliverObserved = new TaskCompletionSource<ulong>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var controlledRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardPid = root.Spawn(Props.FromProducer(() => new ControlledDirectRuntimeRewardShardActor(
+            brainId,
+            shardId,
+            router,
+            deliverObserved,
+            controlledRuntime)));
+        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new ProtoControl.RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shardId.RegionId,
+            ShardIndex = (uint)shardId.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        await WaitForRoutingTable(root, router, table => table.Count == 1, TimeSpan.FromSeconds(2));
+        root.Send(hiveMind, new StartTickLoop());
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        await deliverObserved.Task.WaitAsync(timeoutCts.Token);
+
+        var responseTask = root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, new DirectRuntimeRewardControlRequest
+            {
+                BrainId = brainId.ToProtoUuid(),
+                ControllerId = "workbench",
+                ActionId = "homeostasis-live-1",
+                ObjectiveName = "stability",
+                RewardSignal = "operator",
+                ObservationTickId = 0,
+                ActionTickId = 2,
+                Surface = DirectRuntimeRewardControlSurface.HomeostasisBaseProbability,
+                Reward = 1f,
+                ControlValue = 0.23f
+            }),
+            cancellationToken: timeoutCts.Token);
+
+        await Task.Delay(150, timeoutCts.Token);
+        Assert.False(responseTask.IsCompleted);
+        Assert.False(controlledRuntime.Task.IsCompleted);
+
+        root.Send(shardPid, new ControlledDirectRuntimeRewardShardActor.EmitAck());
+
+        var response = await responseTask.WaitAsync(timeoutCts.Token);
+        Assert.True(response.Accepted);
+        Assert.Equal(2UL, response.AppliedTickFloor);
+        Assert.Equal(DirectRuntimeRewardControlSurface.HomeostasisBaseProbability, response.Surface);
+        Assert.Equal(0.23f, response.ControlValue);
+
+        var update = await controlledRuntime.Task.WaitAsync(timeoutCts.Token);
+        Assert.Equal(0.23f, update.HomeostasisBaseProbability);
+
+        await WaitForStatus(
+            root,
+            hiveMind,
+            status => status.LastCompletedTickId >= 1 && status.PendingDeliver == 0,
+            TimeSpan.FromSeconds(2));
+
+        root.Send(hiveMind, new StopTickLoop());
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
     public async Task RequestBrainRuntimeReset_RejectsDuplicatePendingReset_And_AllowsRetryAfterCompletion()
     {
         var system = new ActorSystem();
@@ -1721,6 +1804,7 @@ public class HiveMindTickBarrierTests
 
     private sealed record SendMessage(PID Target, object Message);
     private sealed record SendMessageAck;
+    private sealed record RequestDirectRuntimeRewardControl(PID Target, DirectRuntimeRewardControlRequest Message);
     private sealed record TestSignalReceived;
     private sealed record GetDebugProbeSnapshot;
 
@@ -1760,6 +1844,28 @@ public class HiveMindTickBarrierTests
             {
                 context.Request(send.Target, send.Message);
                 context.Respond(new SendMessageAck());
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class DirectRuntimeRewardControlClient : IActor
+    {
+        private PID? _pendingSender;
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case RequestDirectRuntimeRewardControl request:
+                    _pendingSender = context.Sender;
+                    context.Request(request.Target, request.Message);
+                    break;
+                case DirectRuntimeRewardControlResponse response when _pendingSender is not null:
+                    context.Send(_pendingSender, response);
+                    _pendingSender = null;
+                    break;
             }
 
             return Task.CompletedTask;
@@ -1954,6 +2060,8 @@ public class HiveMindTickBarrierTests
         private readonly ShardId32 _shardId;
         private readonly PID _router;
         private readonly TaskCompletionSource<ulong> _deliverObserved;
+        private readonly TaskCompletionSource<UpdateShardRuntimeConfig>? _runtimeConfigObserved;
+        private readonly Func<UpdateShardRuntimeConfig, bool>? _runtimeConfigPredicate;
         private PID? _pendingAckTarget;
         private ulong _pendingAckTickId;
 
@@ -1961,12 +2069,16 @@ public class HiveMindTickBarrierTests
             Guid brainId,
             ShardId32 shardId,
             PID router,
-            TaskCompletionSource<ulong> deliverObserved)
+            TaskCompletionSource<ulong> deliverObserved,
+            TaskCompletionSource<UpdateShardRuntimeConfig>? runtimeConfigObserved = null,
+            Func<UpdateShardRuntimeConfig, bool>? runtimeConfigPredicate = null)
         {
             _brainId = brainId;
             _shardId = shardId;
             _router = router;
             _deliverObserved = deliverObserved;
+            _runtimeConfigObserved = runtimeConfigObserved;
+            _runtimeConfigPredicate = runtimeConfigPredicate;
         }
 
         public sealed record EmitAck;
@@ -2004,6 +2116,128 @@ public class HiveMindTickBarrierTests
                     _pendingAckTarget = context.Sender ?? _router;
                     _pendingAckTickId = batch.TickId;
                     _deliverObserved.TrySetResult(batch.TickId);
+                    break;
+                case UpdateShardRuntimeConfig update:
+                    if (update.RegionId == (uint)_shardId.RegionId
+                        && update.ShardIndex == (uint)_shardId.ShardIndex
+                        && _runtimeConfigObserved is not null
+                        && _runtimeConfigPredicate is not null
+                        && _runtimeConfigPredicate(update))
+                    {
+                        _runtimeConfigObserved.TrySetResult(update);
+                    }
+
+                    if (context.Sender is not null)
+                    {
+                        context.Respond(new UpdateShardRuntimeConfigAck
+                        {
+                            BrainId = update.BrainId?.Clone(),
+                            RegionId = update.RegionId,
+                            ShardIndex = update.ShardIndex,
+                            Success = true,
+                            Message = "applied"
+                        });
+                    }
+                    break;
+                case EmitAck:
+                    if (_pendingAckTarget is not null)
+                    {
+                        context.Request(_pendingAckTarget, new SignalBatchAck
+                        {
+                            BrainId = _brainId.ToProtoUuid(),
+                            RegionId = (uint)_shardId.RegionId,
+                            ShardId = _shardId.ToProtoShardId32(),
+                            TickId = _pendingAckTickId
+                        });
+                    }
+
+                    _pendingAckTarget = null;
+                    _pendingAckTickId = 0;
+                    context.Respond(new EmitAckAck());
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ControlledDirectRuntimeRewardShardActor : IActor
+    {
+        private readonly Guid _brainId;
+        private readonly ShardId32 _shardId;
+        private readonly PID _router;
+        private readonly TaskCompletionSource<ulong> _deliverObserved;
+        private readonly TaskCompletionSource<UpdateShardRuntimeConfig> _runtimeUpdate;
+        private PID? _pendingAckTarget;
+        private ulong _pendingAckTickId;
+
+        public ControlledDirectRuntimeRewardShardActor(
+            Guid brainId,
+            ShardId32 shardId,
+            PID router,
+            TaskCompletionSource<ulong> deliverObserved,
+            TaskCompletionSource<UpdateShardRuntimeConfig> runtimeUpdate)
+        {
+            _brainId = brainId;
+            _shardId = shardId;
+            _router = router;
+            _deliverObserved = deliverObserved;
+            _runtimeUpdate = runtimeUpdate;
+        }
+
+        public sealed record EmitAck;
+        public sealed record EmitAckAck;
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case SendMessage send:
+                    context.Request(send.Target, send.Message);
+                    context.Respond(new SendMessageAck());
+                    break;
+                case TickCompute tick:
+                    context.Send(_router, new OutboxBatch
+                    {
+                        BrainId = _brainId.ToProtoUuid(),
+                        TickId = tick.TickId,
+                        DestRegionId = (uint)_shardId.RegionId,
+                        DestShardId = _shardId.ToProtoShardId32(),
+                        Contribs = { new Contribution { TargetNeuronId = 0, Value = 1f } }
+                    });
+                    context.Request(context.Sender ?? _router, new TickComputeDone
+                    {
+                        TickId = tick.TickId,
+                        BrainId = _brainId.ToProtoUuid(),
+                        RegionId = (uint)_shardId.RegionId,
+                        ShardId = _shardId.ToProtoShardId32(),
+                        ComputeMs = 1,
+                        OutBatches = 1,
+                        OutContribs = 1
+                    });
+                    break;
+                case SignalBatch batch:
+                    _pendingAckTarget = context.Sender ?? _router;
+                    _pendingAckTickId = batch.TickId;
+                    _deliverObserved.TrySetResult(batch.TickId);
+                    break;
+                case UpdateShardRuntimeConfig update:
+                    if (Math.Abs(update.HomeostasisBaseProbability - 0.23f) < 0.000001f)
+                    {
+                        _runtimeUpdate.TrySetResult(update);
+                    }
+
+                    if (context.Sender is not null)
+                    {
+                        context.Respond(new UpdateShardRuntimeConfigAck
+                        {
+                            BrainId = update.BrainId?.Clone(),
+                            RegionId = update.RegionId,
+                            ShardIndex = update.ShardIndex,
+                            Success = true,
+                            Message = "applied"
+                        });
+                    }
                     break;
                 case EmitAck:
                     if (_pendingAckTarget is not null)

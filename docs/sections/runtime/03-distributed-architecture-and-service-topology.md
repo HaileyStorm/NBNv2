@@ -66,7 +66,7 @@ NBN treats placement as a runtime concern:
 * Requires Reproduction for candidate synthesis/assessment and Speciation for lineage tracking/admission commits
 * Does not participate in HiveMind tick barriers, mutate live RegionShard state, or bypass IO/Reproduction/Speciation ownership
 
-Direct brain/runtime reward-control is a separate runtime-control contract, not a hidden PPO optimizer behavior. External reward controllers must enter through IO, be admitted by HiveMind/runtime ownership, and target only explicitly supported live controls such as bounded runtime state, plasticity, homeostasis, or future neuromodulation settings. They do not own `.nbn` structural mutation; artifact candidate mutation remains Reproduction/PPO/Speciation territory.
+Direct brain/runtime reward-control is a separate runtime-control contract, not a hidden PPO optimizer behavior. External reward controllers must enter through IO, be admitted by HiveMind/runtime ownership, and target only explicitly supported live runtime-config controls such as plasticity, homeostasis, cost/energy toggles, and output-vector source. They do not own `.nbn` structural mutation, arbitrary neuron state writes, or artifact candidate mutation; those remain Reproduction/PPO/Speciation or future explicitly-scoped runtime-control territory.
 
 ### 3.3 Brain actor topology
 

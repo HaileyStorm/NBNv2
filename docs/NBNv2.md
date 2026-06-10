@@ -139,7 +139,7 @@ NBN treats placement as a runtime concern:
 * Requires Reproduction for candidate synthesis/assessment and Speciation for lineage tracking/admission commits
 * Does not participate in HiveMind tick barriers, mutate live RegionShard state, or bypass IO/Reproduction/Speciation ownership
 
-Direct brain/runtime reward-control is a separate runtime-control contract, not a hidden PPO optimizer behavior. External reward controllers must enter through IO, be admitted by HiveMind/runtime ownership, and target only explicitly supported live controls such as bounded runtime state, plasticity, homeostasis, or future neuromodulation settings. They do not own `.nbn` structural mutation; artifact candidate mutation remains Reproduction/PPO/Speciation territory.
+Direct brain/runtime reward-control is a separate runtime-control contract, not a hidden PPO optimizer behavior. External reward controllers must enter through IO, be admitted by HiveMind/runtime ownership, and target only explicitly supported live runtime-config controls such as plasticity, homeostasis, cost/energy toggles, and output-vector source. They do not own `.nbn` structural mutation, arbitrary neuron state writes, or artifact candidate mutation; those remain Reproduction/PPO/Speciation or future explicitly-scoped runtime-control territory.
 
 ### 3.3 Brain actor topology
 
@@ -323,7 +323,7 @@ HiveMind does not start `TickCompute(tick_id+1)` until:
 
 This ensures that all cross-shard signals produced in tick `N` are delivered and available for tick `N+1` compute, independent of network latency.
 
-Whole-brain runtime-state resets use this same barrier. HiveMind queues the request and only asks IO/Brain runtime surfaces to apply it once that Brain has completed `TickDeliverDone(tick_id)` for the current tick and before `TickCompute(tick_id+1)` is allowed to start.
+Whole-brain runtime-state resets and active-brain direct runtime reward-control config mutations use this same barrier. HiveMind queues the request and only asks IO/Brain/runtime-config surfaces to apply it once that Brain has completed `TickDeliverDone(tick_id)` for the current tick and before `TickCompute(tick_id+1)` is allowed to start.
 
 ### 6.3 Timeouts and late arrivals
 
@@ -823,7 +823,7 @@ Snapshots are taken at tick boundaries to avoid needing to store inbox state.
 
 Any placement or recovery flow that reloads a brain from `.nbn + .nbs` artifacts restores the persisted homeostasis settings when the snapshot header carries them.
 
-Direct reward-control controller state is not implicitly part of a brain snapshot. The initial direct runtime reward-control ledger is ephemeral HiveMind admission state, and its `plasticity_rate` surface updates live runtime config that is reconstructable from current controller/config intent rather than from hidden `.nbs` controller data. Any future surface must classify each controlled value as persisted in `.nbs`, ephemeral runtime state, or reconstructable controller configuration before that value may participate in recovery semantics. Reward observations for controller updates must refer to a completed tick boundary or an explicit observation fence, not an opportunistic live read.
+Direct reward-control controller state is not implicitly part of a brain snapshot. The direct runtime reward-control ledger is ephemeral HiveMind admission state. Supported reward-control surfaces update live runtime config: homeostasis fields follow the existing `.nbs` homeostasis-config persistence path when snapshots carry that block, while plasticity/cost/output-mode controls remain reconstructable live configuration rather than hidden `.nbs` controller data. Future surfaces must classify each controlled value as persisted in `.nbs`, ephemeral runtime state, or reconstructable controller configuration before that value may participate in recovery semantics. Reward observations for controller updates must refer to a completed tick boundary or an explicit observation fence, not an opportunistic live read.
 
 ### 12.3 Failure recovery
 
@@ -997,13 +997,22 @@ The contract is intentionally narrower than "arbitrary training":
 * reward samples must identify the target `brain_id`, controller identity, objective/reward signal, observation tick or explicit observation fence, control action id, and target control surface
 * rewards and action parameters must be finite, bounded, and validated before they reach HiveMind or shard actors
 * stale, duplicate, or mismatched rewards must be rejected deterministically instead of updating controller state twice
-* the implemented initial surface is `plasticity_rate`, accepted only while the target Brain is paused and bounded to `[0,1]`; broader surfaces such as bounded neuron state writes/pulses, homeostasis settings, cost/energy knobs, output/source mode, and future neuromodulation controls require explicit ranges, ownership, timing, and persistence semantics before exposure
+* implemented runtime-config surfaces are scalar and explicitly ranged: `plasticity_rate`, `plasticity_delta`, `plasticity_rebase_threshold_pct`, and `homeostasis_base_probability` use `[0,1]`; `homeostasis_energy_target_scale` and `homeostasis_energy_probability_scale` use `[0,4]`; boolean runtime toggles are represented as `0`/`1`; and `output_vector_source` is represented as `0` for potential or `1` for buffer. Broader surfaces such as bounded neuron state writes/pulses and future neuromodulation controls require explicit ranges, ownership, timing, and persistence semantics before exposure
 * `.nbn` structure, neuron counts, axon topology, function IDs, and artifact lineage remain outside direct reward-control; those changes go through Reproduction/import/export contracts
-* IO-region invariants still apply: direct control may write runtime values for input/output neurons through supported paths, but it may not create illegal region `0` targets, output-to-output axons, duplicate axons, or hidden IO neuron count edits
+* IO-region invariants still apply to any current or future direct-control-adjacent runtime API: reward-control does not expose neuron state writes today, and no supported path may create illegal region `0` targets, output-to-output axons, duplicate axons, or hidden IO neuron count edits
+
+Current direct reward-control surfaces:
+
+| surface | control value | timing | persistence |
+| --- | --- | --- | --- |
+| `plasticity_rate`, `plasticity_delta`, `plasticity_rebase_threshold_pct` | `[0,1]` | immediate when not in an open tick, otherwise next deliver-to-compute barrier | live runtime config; controller ledger is ephemeral |
+| `plasticity_enabled`, `plasticity_probabilistic_updates`, `cost_energy_enabled` | `0` or `1` | immediate when not in an open tick, otherwise next deliver-to-compute barrier | live runtime config; persisted only through the normal snapshot fields that already carry the underlying setting |
+| `homeostasis_enabled`, `homeostasis_base_probability`, `homeostasis_energy_coupling_enabled`, `homeostasis_energy_target_scale`, `homeostasis_energy_probability_scale` | booleans use `0`/`1`; probabilities use `[0,1]`; energy scales use `[0,4]` | immediate when not in an open tick, otherwise next deliver-to-compute barrier | follows the existing `.nbs` homeostasis config block when snapshots carry it |
+| `output_vector_source` | `0` for potential, `1` for buffer | immediate when not in an open tick, otherwise next deliver-to-compute barrier | live IO/runtime config |
 
 Mutation timing is part of the safety model:
 
-* controls that affect compute-visible state must be paused-only or queued to a HiveMind-owned deliver-to-compute barrier
+* controls that affect compute-visible state are applied immediately only when the target brain is not participating in the open tick; otherwise HiveMind queues them to that brain's deliver-to-compute barrier
 * tick `N` reward/action feedback must not retroactively affect tick `N` compute or delivery
 * output subscriptions are not sufficient observation fences for policy learning unless the subscription contract explicitly states post-deliver ordering for the sampled tick
 * live snapshots used for reward observations must report the completed tick boundary they represent
@@ -1011,7 +1020,7 @@ Mutation timing is part of the safety model:
 
 Direct reward-control and reproduction-action PPO may run in the same deployment only when ownership is explicit. Reproduction-action PPO owns artifact candidate mutation and reward feedback about child artifacts; direct reward-control owns live runtime modulation for a specific Brain. If both are enabled for related brains, the caller must keep reward signals, controller ids, and action provenance separate so one policy cannot consume the other's feedback samples.
 
-The current proto/API surface is `ApplyDirectRuntimeRewardControl` through IO with HiveMind as the authority. Requests carry `controller_id`, `action_id`, `objective_name`, `reward_signal`, observation/action ticks, target surface, finite reward, and finite control value. HiveMind rejects non-IO senders, active-brain actions for the initial paused-only surface, stale or duplicate provenance, unsupported surfaces, non-finite values, out-of-range controls, and action ticks other than the next visible tick using stable reason codes. Accepted actions report `applied_tick_floor`; for the paused-only surface, shard runtime config is updated immediately before resume is allowed. The reward-control ledger is bounded and ephemeral; it is not serialized into `.nbs`.
+The current proto/API surface is `ApplyDirectRuntimeRewardControl` through IO with HiveMind as the authority. Requests carry `controller_id`, `action_id`, `objective_name`, `reward_signal`, observation/action ticks, target surface, finite reward, and finite control value. HiveMind rejects non-IO senders, stale or duplicate provenance, duplicate same-surface action ticks, unsupported surfaces, non-finite values, out-of-range controls, pending barrier work, runtime-config sync failures, and action ticks other than the next compute-visible barrier using stable string reason codes in `failure_reason_code`. Accepted actions report `applied_tick_floor`. If the target Brain is actively participating in the current tick, HiveMind queues eligible runtime-config actions until that Brain reports `TickDeliverDone`, sends the mutation before tick `N+1` compute can start, and then releases that Brain's deliver barrier. If the Brain is paused, idle, or otherwise not dispatchable, HiveMind applies eligible bounded runtime-config mutations immediately. The reward-control ledger is bounded and ephemeral; it is not serialized into `.nbs`, while the effective runtime config remains live HiveMind/IO/RegionHost state.
 
 ### 13.7 Brain death notifications
 
@@ -2362,9 +2371,24 @@ message SetBrainHomeostasis {
   float homeostasis_energy_probability_scale = 9;
 }
 
+message SynchronizeBrainRuntimeConfig {
+  nbn.Uuid brain_id = 1;
+}
+
 enum DirectRuntimeRewardControlSurface {
   DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_UNKNOWN = 0;
   DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_PLASTICITY_RATE = 1;
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_HOMEOSTASIS_BASE_PROBABILITY = 2;
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_COST_ENERGY_ENABLED = 3;
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_PLASTICITY_ENABLED = 4;
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_PLASTICITY_PROBABILISTIC_UPDATES = 5;
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_PLASTICITY_DELTA = 6;
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_PLASTICITY_REBASE_THRESHOLD_PCT = 7;
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_HOMEOSTASIS_ENABLED = 8;
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_HOMEOSTASIS_ENERGY_COUPLING_ENABLED = 9;
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_HOMEOSTASIS_ENERGY_TARGET_SCALE = 10;
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_HOMEOSTASIS_ENERGY_PROBABILITY_SCALE = 11;
+  DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_OUTPUT_VECTOR_SOURCE = 12;
 }
 
 message DirectRuntimeRewardControlRequest {
@@ -4190,7 +4214,7 @@ message PpoRecordRewardsResponse {
 - Tick-based runtime orchestration (compute then deliver) is implemented through HiveMind plus Brain/Region actors.
 - Core runtime services are operational: SettingsMonitor, HiveMind, IO, Reproduction, Speciation, PPO, Observability, and Artifacts.
 - Snapshot/recovery, plasticity overlays, reproduction workflows, and PPO reward-policy artifact rollout orchestration are implemented and exercised by tests/tools.
-- The direct brain/runtime reward-control safety model has an initial IO/HiveMind/Workbench API path for paused, bounded plasticity-rate control; broader barrier-queued live surfaces remain future work.
+- The direct brain/runtime reward-control safety model has IO/HiveMind/Workbench API coverage for paused bounded plasticity-rate control plus barrier-queued bounded runtime-config surfaces; structural mutation and arbitrary neuron state control remain future work.
 - Workbench orchestration, designer, debug, and visualization surfaces are implemented for operator workflows.
 - Workbench local launch plus Designer-driven spawn workflows provide repeatable operator validation paths.
 - Documentation assembly pipeline is implemented (`docs/INDEX.md` -> `docs/NBNv2.md`) with CI freshness checks.

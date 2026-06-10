@@ -307,6 +307,17 @@ public class ProtoCompatibilityTests
         var directRewardSurface = descriptor.EnumTypes.Single(@enum => @enum.Name == "DirectRuntimeRewardControlSurface");
         AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_UNKNOWN", 0);
         AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_PLASTICITY_RATE", 1);
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_HOMEOSTASIS_BASE_PROBABILITY", 2);
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_COST_ENERGY_ENABLED", 3);
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_PLASTICITY_ENABLED", 4);
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_PLASTICITY_PROBABILISTIC_UPDATES", 5);
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_PLASTICITY_DELTA", 6);
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_PLASTICITY_REBASE_THRESHOLD_PCT", 7);
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_HOMEOSTASIS_ENABLED", 8);
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_HOMEOSTASIS_ENERGY_COUPLING_ENABLED", 9);
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_HOMEOSTASIS_ENERGY_TARGET_SCALE", 10);
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_HOMEOSTASIS_ENERGY_PROBABILITY_SCALE", 11);
+        AssertEnumValue(directRewardSurface, "DIRECT_RUNTIME_REWARD_CONTROL_SURFACE_OUTPUT_VECTOR_SOURCE", 12);
 
         var directRewardRequest = descriptor.MessageTypes.Single(message => message.Name == "DirectRuntimeRewardControlRequest");
         AssertField(directRewardRequest, "brain_id", 1, FieldType.Message, "nbn.Uuid");

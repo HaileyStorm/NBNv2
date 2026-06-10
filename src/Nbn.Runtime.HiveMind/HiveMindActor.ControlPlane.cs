@@ -179,9 +179,27 @@ public sealed partial class HiveMindActor
         {
             brain.PendingRuntimeReset.Completion.TrySetResult(
                 BuildRuntimeResetAck(brainId, success: false, $"brain_unregistered:{reason}"));
-            _pendingBarrierResets.Remove(brainId);
+            _pendingBarrierWorkBrains.Remove(brainId);
             brain.PendingRuntimeReset = null;
         }
+
+        if (brain.PendingDirectRuntimeRewardControls.Count > 0)
+        {
+            foreach (var pending in brain.PendingDirectRuntimeRewardControls.Values)
+            {
+                pending.Completion.TrySetResult(CreateDirectRuntimeRewardControlResponse(
+                    pending.Request,
+                    accepted: false,
+                    "brain_unregistered",
+                    $"Brain was unregistered before direct runtime reward-control applied: {reason}",
+                    pending.AppliedTickFloor));
+            }
+
+            _pendingBarrierWorkBrains.Remove(brainId);
+            _pendingDirectRuntimeRewardControlSnapshots.Remove(brainId);
+            brain.PendingDirectRuntimeRewardControls.Clear();
+        }
+
         _brains.Remove(brainId);
 
         if (_pendingSpawns.Remove(brainId, out var pendingSpawn))

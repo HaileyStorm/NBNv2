@@ -35,7 +35,7 @@ HiveMind does not start `TickCompute(tick_id+1)` until:
 
 This ensures that all cross-shard signals produced in tick `N` are delivered and available for tick `N+1` compute, independent of network latency.
 
-Whole-brain runtime-state resets use this same barrier. HiveMind queues the request and only asks IO/Brain runtime surfaces to apply it once that Brain has completed `TickDeliverDone(tick_id)` for the current tick and before `TickCompute(tick_id+1)` is allowed to start.
+Whole-brain runtime-state resets and active-brain direct runtime reward-control config mutations use this same barrier. HiveMind queues the request and only asks IO/Brain/runtime-config surfaces to apply it once that Brain has completed `TickDeliverDone(tick_id)` for the current tick and before `TickCompute(tick_id+1)` is allowed to start.
 
 ### 6.3 Timeouts and late arrivals
 

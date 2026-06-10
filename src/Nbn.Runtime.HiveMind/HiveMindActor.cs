@@ -54,7 +54,8 @@ public sealed partial class HiveMindActor : IActor
     private readonly Dictionary<ShardKey, PID> _pendingComputeSenders = new();
     private readonly HashSet<Guid> _pendingDeliver = new();
     private readonly Dictionary<Guid, PID> _pendingDeliverSenders = new();
-    private readonly HashSet<Guid> _pendingBarrierResets = new();
+    private readonly HashSet<Guid> _pendingBarrierWorkBrains = new();
+    private readonly Dictionary<Guid, DirectRuntimeRewardControlRuntimeConfigSnapshot> _pendingDirectRuntimeRewardControlSnapshots = new();
     private readonly Dictionary<string, VisualizationSubscriberLease> _vizSubscriberLeases = new(StringComparer.Ordinal);
     private readonly HashSet<string> _knownSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _activeSettingsNodeAddresses = new(StringComparer.OrdinalIgnoreCase);
@@ -186,7 +187,7 @@ public sealed partial class HiveMindActor : IActor
                 _tickLoopEnabled = false;
                 return true;
             case TickStart:
-                if (_tickLoopEnabled && !_rescheduleInProgress && _phase == TickPhase.Idle && _pendingBarrierResets.Count == 0)
+                if (_tickLoopEnabled && !_rescheduleInProgress && _phase == TickPhase.Idle && _pendingBarrierWorkBrains.Count == 0)
                 {
                     StartTick(context);
                 }

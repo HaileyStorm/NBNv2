@@ -1463,7 +1463,7 @@ public class HiveMindOutputSinkTests
     }
 
     [Fact]
-    public async Task DirectRuntimeRewardControl_PlasticityRate_Is_Paused_Bounded_And_Deduped()
+    public async Task DirectRuntimeRewardControl_RuntimeConfigSurfaces_Are_Bounded_And_Deduped()
     {
         var system = new ActorSystem();
         var root = system.Root;
@@ -1486,13 +1486,16 @@ public class HiveMindOutputSinkTests
         var shard = ShardId32.From(9, 0);
         var initialRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
         var controlledRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var homeostasisRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
         var shardPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigProbe(
             shard,
             initialRuntime,
             _ => true,
             controlledRuntime,
             update => update.PlasticityEnabled
-                      && Math.Abs(update.PlasticityRate - 0.2f) < 0.000001f)));
+                      && Math.Abs(update.PlasticityRate - 0.2f) < 0.000001f,
+            homeostasisRuntime,
+            update => Math.Abs(update.HomeostasisBaseProbability - 0.25f) < 0.000001f)));
         await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
         {
             BrainId = brainId.ToProtoUuid(),
@@ -1515,20 +1518,13 @@ public class HiveMindOutputSinkTests
         Assert.False(unauthorized.Accepted);
         Assert.Equal("sender_not_trusted_io", unauthorized.FailureReasonCode);
 
-        var activeReject = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
-            ioPid,
-            new RequestDirectRuntimeRewardControl(hiveMind, BuildDirectRuntimeRewardControlRequest(brainId, "action-active", 0, 1, 0.2f)),
-            cancellationToken: cts.Token);
-        Assert.False(activeReject.Accepted);
-        Assert.Equal("brain_not_paused", activeReject.FailureReasonCode);
-
-        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new PauseBrain
-        {
-            BrainId = brainId.ToProtoUuid(),
-            Reason = "direct_runtime_reward_control_test"
-        }));
-
-        var futureTickRequest = BuildDirectRuntimeRewardControlRequest(brainId, "action-future", 0, 2, 0.2f);
+        var futureTickRequest = BuildDirectRuntimeRewardControlRequest(
+            brainId,
+            "action-future",
+            0,
+            2,
+            0.2f,
+            DirectRuntimeRewardControlSurface.HomeostasisBaseProbability);
         futureTickRequest.ObjectiveName = "future-tick";
         var futureTick = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
             ioPid,
@@ -1546,34 +1542,65 @@ public class HiveMindOutputSinkTests
         Assert.False(nonFinite.Accepted);
         Assert.Equal("reward_non_finite", nonFinite.FailureReasonCode);
 
-        var accepted = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+        var homeostasis = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
             ioPid,
-            new RequestDirectRuntimeRewardControl(hiveMind, BuildDirectRuntimeRewardControlRequest(brainId, "action-1", 0, 1, 0.2f)),
+            new RequestDirectRuntimeRewardControl(
+                hiveMind,
+                BuildDirectRuntimeRewardControlRequest(
+                    brainId,
+                    "homeostasis-1",
+                    0,
+                    1,
+                    0.25f,
+                    DirectRuntimeRewardControlSurface.HomeostasisBaseProbability)),
             cancellationToken: cts.Token);
-        Assert.True(accepted.Accepted);
-        Assert.Equal(string.Empty, accepted.FailureReasonCode);
-        Assert.Equal(1UL, accepted.AppliedTickFloor);
-        Assert.Equal(DirectRuntimeRewardControlSurface.PlasticityRate, accepted.Surface);
-        Assert.Equal(0.2f, accepted.ControlValue);
+        Assert.True(homeostasis.Accepted);
+        Assert.Equal(DirectRuntimeRewardControlSurface.HomeostasisBaseProbability, homeostasis.Surface);
+        Assert.Equal(0.25f, homeostasis.ControlValue);
+
+        var homeostasisUpdate = await homeostasisRuntime.Task.WaitAsync(cts.Token);
+        Assert.Equal(0.25f, homeostasisUpdate.HomeostasisBaseProbability);
+
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new PauseBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            Reason = "direct_runtime_reward_control_test"
+        }));
+
+        var pausedPlasticity = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, BuildDirectRuntimeRewardControlRequest(brainId, "action-active", 0, 1, 0.2f)),
+            cancellationToken: cts.Token);
+        Assert.True(pausedPlasticity.Accepted);
+        Assert.Equal(string.Empty, pausedPlasticity.FailureReasonCode);
+        Assert.Equal(1UL, pausedPlasticity.AppliedTickFloor);
+        Assert.Equal(DirectRuntimeRewardControlSurface.PlasticityRate, pausedPlasticity.Surface);
+        Assert.Equal(0.2f, pausedPlasticity.ControlValue);
 
         var controlled = await controlledRuntime.Task.WaitAsync(cts.Token);
         Assert.Equal(0.2f, controlled.PlasticityRate);
 
         var duplicate = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
             ioPid,
-            new RequestDirectRuntimeRewardControl(hiveMind, BuildDirectRuntimeRewardControlRequest(brainId, "action-1", 0, 1, 0.2f)),
+            new RequestDirectRuntimeRewardControl(hiveMind, BuildDirectRuntimeRewardControlRequest(brainId, "action-active", 0, 1, 0.2f)),
             cancellationToken: cts.Token);
         Assert.False(duplicate.Accepted);
         Assert.Equal("duplicate_action", duplicate.FailureReasonCode);
 
-        var stale = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+        var surfaceConflict = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
             ioPid,
             new RequestDirectRuntimeRewardControl(hiveMind, BuildDirectRuntimeRewardControlRequest(brainId, "action-2", 0, 1, 0.3f)),
             cancellationToken: cts.Token);
-        Assert.False(stale.Accepted);
-        Assert.Equal("stale_action", stale.FailureReasonCode);
+        Assert.False(surfaceConflict.Accepted);
+        Assert.Equal("surface_action_tick_conflict", surfaceConflict.FailureReasonCode);
 
-        var outOfRangeRequest = BuildDirectRuntimeRewardControlRequest(brainId, "action-3", 0, 2, 1.2f);
+        var outOfRangeRequest = BuildDirectRuntimeRewardControlRequest(
+            brainId,
+            "action-3",
+            0,
+            1,
+            1.2f,
+            DirectRuntimeRewardControlSurface.HomeostasisBaseProbability);
         outOfRangeRequest.ObjectiveName = "range-check";
         var outOfRange = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
             ioPid,
@@ -1581,6 +1608,82 @@ public class HiveMindOutputSinkTests
             cancellationToken: cts.Token);
         Assert.False(outOfRange.Accepted);
         Assert.Equal("control_value_out_of_range", outOfRange.FailureReasonCode);
+
+        await system.ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task DirectRuntimeRewardControl_RuntimeConfigSyncFailure_DoesNotRecordAction()
+    {
+        var system = new ActorSystem();
+        var root = system.Root;
+        var ioName = $"io-{Guid.NewGuid():N}";
+        var ioPid = root.SpawnNamed(
+            Props.FromProducer(() => new DirectRuntimeRewardControlClient()),
+            ioName);
+        var hiveMind = root.Spawn(Props.FromProducer(() => new HiveMindActor(
+            CreateOptions(),
+            ioPid: new PID(string.Empty, ioName))));
+
+        var brainId = Guid.NewGuid();
+        var brainRoot = root.Spawn(Props.FromProducer(() => new EmptyActor()));
+        await root.RequestAsync<SendMessageAck>(brainRoot, new SendMessage(hiveMind, new RegisterBrain
+        {
+            BrainId = brainId.ToProtoUuid(),
+            BrainRootPid = PidLabel(brainRoot)
+        }));
+
+        var shard = ShardId32.From(9, 0);
+        var initialRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rejectedRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acceptedRuntime = new TaskCompletionSource<UpdateShardRuntimeConfig>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shardPid = root.Spawn(Props.FromProducer(() => new RuntimeConfigFailOnceProbe(
+            shard,
+            initialRuntime,
+            rejectedRuntime,
+            acceptedRuntime,
+            update => Math.Abs(update.HomeostasisBaseProbability - 0.33f) < 0.000001f)));
+        await root.RequestAsync<SendMessageAck>(shardPid, new SendMessage(hiveMind, new RegisterShard
+        {
+            BrainId = brainId.ToProtoUuid(),
+            RegionId = (uint)shard.RegionId,
+            ShardIndex = (uint)shard.ShardIndex,
+            ShardPid = PidLabel(shardPid),
+            NeuronStart = 0,
+            NeuronCount = 1
+        }));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        await initialRuntime.Task.WaitAsync(cts.Token);
+
+        var request = BuildDirectRuntimeRewardControlRequest(
+            brainId,
+            "retryable-sync-failure",
+            0,
+            1,
+            0.33f,
+            DirectRuntimeRewardControlSurface.HomeostasisBaseProbability);
+
+        var rejected = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, request),
+            cancellationToken: cts.Token);
+        Assert.False(rejected.Accepted);
+        Assert.Equal("runtime_config_sync_failed", rejected.FailureReasonCode);
+        await rejectedRuntime.Task.WaitAsync(cts.Token);
+
+        root.Send(shardPid, RuntimeConfigFailOnceProbe.AllowRuntimeConfig.Instance);
+
+        var retry = await root.RequestAsync<DirectRuntimeRewardControlResponse>(
+            ioPid,
+            new RequestDirectRuntimeRewardControl(hiveMind, request),
+            cancellationToken: cts.Token);
+        Assert.True(retry.Accepted);
+        Assert.Equal(string.Empty, retry.FailureReasonCode);
+        Assert.Equal(0.33f, retry.ControlValue);
+
+        var accepted = await acceptedRuntime.Task.WaitAsync(cts.Token);
+        Assert.Equal(0.33f, accepted.HomeostasisBaseProbability);
 
         await system.ShutdownAsync();
     }
@@ -2640,7 +2743,8 @@ public class HiveMindOutputSinkTests
         string actionId,
         ulong observationTickId,
         ulong actionTickId,
-        float controlValue)
+        float controlValue,
+        DirectRuntimeRewardControlSurface surface = DirectRuntimeRewardControlSurface.PlasticityRate)
         => new()
         {
             BrainId = brainId.ToProtoUuid(),
@@ -2650,7 +2754,7 @@ public class HiveMindOutputSinkTests
             RewardSignal = "operator",
             ObservationTickId = observationTickId,
             ActionTickId = actionTickId,
-            Surface = DirectRuntimeRewardControlSurface.PlasticityRate,
+            Surface = surface,
             Reward = 1f,
             ControlValue = controlValue
         };
@@ -2812,6 +2916,8 @@ public class HiveMindOutputSinkTests
         private readonly Func<UpdateShardRuntimeConfig, bool> _firstPredicate;
         private readonly TaskCompletionSource<UpdateShardRuntimeConfig>? _second;
         private readonly Func<UpdateShardRuntimeConfig, bool>? _secondPredicate;
+        private readonly TaskCompletionSource<UpdateShardRuntimeConfig>? _third;
+        private readonly Func<UpdateShardRuntimeConfig, bool>? _thirdPredicate;
         private readonly TimeSpan _responseDelay;
 
         public RuntimeConfigProbe(
@@ -2820,6 +2926,8 @@ public class HiveMindOutputSinkTests
             Func<UpdateShardRuntimeConfig, bool> firstPredicate,
             TaskCompletionSource<UpdateShardRuntimeConfig>? second = null,
             Func<UpdateShardRuntimeConfig, bool>? secondPredicate = null,
+            TaskCompletionSource<UpdateShardRuntimeConfig>? third = null,
+            Func<UpdateShardRuntimeConfig, bool>? thirdPredicate = null,
             TimeSpan? responseDelay = null)
         {
             _shardId = shardId;
@@ -2827,6 +2935,8 @@ public class HiveMindOutputSinkTests
             _firstPredicate = firstPredicate;
             _second = second;
             _secondPredicate = secondPredicate;
+            _third = third;
+            _thirdPredicate = thirdPredicate;
             _responseDelay = responseDelay ?? TimeSpan.Zero;
         }
 
@@ -2859,6 +2969,11 @@ public class HiveMindOutputSinkTests
                 _second.TrySetResult(update);
             }
 
+            if (_third is not null && !_third.Task.IsCompleted && _thirdPredicate is not null && _thirdPredicate(update))
+            {
+                _third.TrySetResult(update);
+            }
+
             if (_responseDelay > TimeSpan.Zero)
             {
                 await Task.Delay(_responseDelay);
@@ -2875,6 +2990,99 @@ public class HiveMindOutputSinkTests
                     Message = "applied"
                 });
             }
+        }
+    }
+
+    private sealed class RuntimeConfigFailOnceProbe : IActor
+    {
+        private readonly ShardId32 _shardId;
+        private readonly TaskCompletionSource<UpdateShardRuntimeConfig> _initial;
+        private readonly TaskCompletionSource<UpdateShardRuntimeConfig> _rejected;
+        private readonly TaskCompletionSource<UpdateShardRuntimeConfig> _accepted;
+        private readonly Func<UpdateShardRuntimeConfig, bool> _controlledPredicate;
+        private bool _allowControlled;
+
+        public RuntimeConfigFailOnceProbe(
+            ShardId32 shardId,
+            TaskCompletionSource<UpdateShardRuntimeConfig> initial,
+            TaskCompletionSource<UpdateShardRuntimeConfig> rejected,
+            TaskCompletionSource<UpdateShardRuntimeConfig> accepted,
+            Func<UpdateShardRuntimeConfig, bool> controlledPredicate)
+        {
+            _shardId = shardId;
+            _initial = initial;
+            _rejected = rejected;
+            _accepted = accepted;
+            _controlledPredicate = controlledPredicate;
+        }
+
+        public sealed record AllowRuntimeConfig
+        {
+            public static AllowRuntimeConfig Instance { get; } = new();
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case SendMessage send:
+                    context.Request(send.Target, send.Message);
+                    context.Respond(new SendMessageAck());
+                    break;
+                case AllowRuntimeConfig:
+                    _allowControlled = true;
+                    break;
+                case UpdateShardRuntimeConfig update:
+                    if (update.RegionId != (uint)_shardId.RegionId || update.ShardIndex != (uint)_shardId.ShardIndex)
+                    {
+                        break;
+                    }
+
+                    if (!_initial.Task.IsCompleted && !_controlledPredicate(update))
+                    {
+                        _initial.TrySetResult(update);
+                        RespondRuntimeConfig(context, update, success: true, "applied");
+                        break;
+                    }
+
+                    if (_controlledPredicate(update) && !_allowControlled)
+                    {
+                        _rejected.TrySetResult(update);
+                        RespondRuntimeConfig(context, update, success: false, "rejected_once");
+                        break;
+                    }
+
+                    if (_controlledPredicate(update))
+                    {
+                        _accepted.TrySetResult(update);
+                    }
+
+                    RespondRuntimeConfig(context, update, success: true, "applied");
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private static void RespondRuntimeConfig(
+            IContext context,
+            UpdateShardRuntimeConfig update,
+            bool success,
+            string message)
+        {
+            if (context.Sender is null)
+            {
+                return;
+            }
+
+            context.Respond(new UpdateShardRuntimeConfigAck
+            {
+                BrainId = update.BrainId?.Clone(),
+                RegionId = update.RegionId,
+                ShardIndex = update.ShardIndex,
+                Success = success,
+                Message = message
+            });
         }
     }
 

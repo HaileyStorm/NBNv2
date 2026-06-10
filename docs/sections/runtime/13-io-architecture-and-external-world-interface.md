@@ -143,13 +143,22 @@ The contract is intentionally narrower than "arbitrary training":
 * reward samples must identify the target `brain_id`, controller identity, objective/reward signal, observation tick or explicit observation fence, control action id, and target control surface
 * rewards and action parameters must be finite, bounded, and validated before they reach HiveMind or shard actors
 * stale, duplicate, or mismatched rewards must be rejected deterministically instead of updating controller state twice
-* the implemented initial surface is `plasticity_rate`, accepted only while the target Brain is paused and bounded to `[0,1]`; broader surfaces such as bounded neuron state writes/pulses, homeostasis settings, cost/energy knobs, output/source mode, and future neuromodulation controls require explicit ranges, ownership, timing, and persistence semantics before exposure
+* implemented runtime-config surfaces are scalar and explicitly ranged: `plasticity_rate`, `plasticity_delta`, `plasticity_rebase_threshold_pct`, and `homeostasis_base_probability` use `[0,1]`; `homeostasis_energy_target_scale` and `homeostasis_energy_probability_scale` use `[0,4]`; boolean runtime toggles are represented as `0`/`1`; and `output_vector_source` is represented as `0` for potential or `1` for buffer. Broader surfaces such as bounded neuron state writes/pulses and future neuromodulation controls require explicit ranges, ownership, timing, and persistence semantics before exposure
 * `.nbn` structure, neuron counts, axon topology, function IDs, and artifact lineage remain outside direct reward-control; those changes go through Reproduction/import/export contracts
-* IO-region invariants still apply: direct control may write runtime values for input/output neurons through supported paths, but it may not create illegal region `0` targets, output-to-output axons, duplicate axons, or hidden IO neuron count edits
+* IO-region invariants still apply to any current or future direct-control-adjacent runtime API: reward-control does not expose neuron state writes today, and no supported path may create illegal region `0` targets, output-to-output axons, duplicate axons, or hidden IO neuron count edits
+
+Current direct reward-control surfaces:
+
+| surface | control value | timing | persistence |
+| --- | --- | --- | --- |
+| `plasticity_rate`, `plasticity_delta`, `plasticity_rebase_threshold_pct` | `[0,1]` | immediate when not in an open tick, otherwise next deliver-to-compute barrier | live runtime config; controller ledger is ephemeral |
+| `plasticity_enabled`, `plasticity_probabilistic_updates`, `cost_energy_enabled` | `0` or `1` | immediate when not in an open tick, otherwise next deliver-to-compute barrier | live runtime config; persisted only through the normal snapshot fields that already carry the underlying setting |
+| `homeostasis_enabled`, `homeostasis_base_probability`, `homeostasis_energy_coupling_enabled`, `homeostasis_energy_target_scale`, `homeostasis_energy_probability_scale` | booleans use `0`/`1`; probabilities use `[0,1]`; energy scales use `[0,4]` | immediate when not in an open tick, otherwise next deliver-to-compute barrier | follows the existing `.nbs` homeostasis config block when snapshots carry it |
+| `output_vector_source` | `0` for potential, `1` for buffer | immediate when not in an open tick, otherwise next deliver-to-compute barrier | live IO/runtime config |
 
 Mutation timing is part of the safety model:
 
-* controls that affect compute-visible state must be paused-only or queued to a HiveMind-owned deliver-to-compute barrier
+* controls that affect compute-visible state are applied immediately only when the target brain is not participating in the open tick; otherwise HiveMind queues them to that brain's deliver-to-compute barrier
 * tick `N` reward/action feedback must not retroactively affect tick `N` compute or delivery
 * output subscriptions are not sufficient observation fences for policy learning unless the subscription contract explicitly states post-deliver ordering for the sampled tick
 * live snapshots used for reward observations must report the completed tick boundary they represent
@@ -157,7 +166,7 @@ Mutation timing is part of the safety model:
 
 Direct reward-control and reproduction-action PPO may run in the same deployment only when ownership is explicit. Reproduction-action PPO owns artifact candidate mutation and reward feedback about child artifacts; direct reward-control owns live runtime modulation for a specific Brain. If both are enabled for related brains, the caller must keep reward signals, controller ids, and action provenance separate so one policy cannot consume the other's feedback samples.
 
-The current proto/API surface is `ApplyDirectRuntimeRewardControl` through IO with HiveMind as the authority. Requests carry `controller_id`, `action_id`, `objective_name`, `reward_signal`, observation/action ticks, target surface, finite reward, and finite control value. HiveMind rejects non-IO senders, active-brain actions for the initial paused-only surface, stale or duplicate provenance, unsupported surfaces, non-finite values, out-of-range controls, and action ticks other than the next visible tick using stable reason codes. Accepted actions report `applied_tick_floor`; for the paused-only surface, shard runtime config is updated immediately before resume is allowed. The reward-control ledger is bounded and ephemeral; it is not serialized into `.nbs`.
+The current proto/API surface is `ApplyDirectRuntimeRewardControl` through IO with HiveMind as the authority. Requests carry `controller_id`, `action_id`, `objective_name`, `reward_signal`, observation/action ticks, target surface, finite reward, and finite control value. HiveMind rejects non-IO senders, stale or duplicate provenance, duplicate same-surface action ticks, unsupported surfaces, non-finite values, out-of-range controls, pending barrier work, runtime-config sync failures, and action ticks other than the next compute-visible barrier using stable string reason codes in `failure_reason_code`. Accepted actions report `applied_tick_floor`. If the target Brain is actively participating in the current tick, HiveMind queues eligible runtime-config actions until that Brain reports `TickDeliverDone`, sends the mutation before tick `N+1` compute can start, and then releases that Brain's deliver barrier. If the Brain is paused, idle, or otherwise not dispatchable, HiveMind applies eligible bounded runtime-config mutations immediately. The reward-control ledger is bounded and ephemeral; it is not serialized into `.nbs`, while the effective runtime config remains live HiveMind/IO/RegionHost state.
 
 ### 13.7 Brain death notifications
 

@@ -292,7 +292,7 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        if (!TryValidateDirectRuntimeRewardControlShape(message, brain, out var failureReason, out var failureMessage))
+        if (!TryValidateDirectRuntimeRewardControlShape(message, out var failureReason, out var failureMessage))
         {
             context.Respond(CreateDirectRuntimeRewardControlResponse(
                 message,
@@ -303,8 +303,20 @@ public sealed partial class HiveMindActor
             return;
         }
 
+        if (brain.PendingRuntimeReset is not null)
+        {
+            context.Respond(CreateDirectRuntimeRewardControlResponse(
+                message,
+                accepted: false,
+                "runtime_reset_pending",
+                "Direct runtime reward-control cannot be accepted while a runtime reset is pending for the brain.",
+                appliedTickFloor: _lastCompletedTickId + 1));
+            return;
+        }
+
         var actionKey = BuildDirectRuntimeRewardControlActionKey(message);
-        if (brain.DirectRuntimeRewardControlRecords.ContainsKey(actionKey))
+        if (brain.DirectRuntimeRewardControlRecords.ContainsKey(actionKey)
+            || brain.PendingDirectRuntimeRewardControls.ContainsKey(actionKey))
         {
             context.Respond(CreateDirectRuntimeRewardControlResponse(
                 message,
@@ -326,6 +338,17 @@ public sealed partial class HiveMindActor
             return;
         }
 
+        if (HasConflictingDirectRuntimeRewardControlSurfaceTick(brain, message))
+        {
+            context.Respond(CreateDirectRuntimeRewardControlResponse(
+                message,
+                accepted: false,
+                "surface_action_tick_conflict",
+                "Direct runtime reward-control surface already has an accepted action for this action tick.",
+                appliedTickFloor: _lastCompletedTickId + 1));
+            return;
+        }
+
         if (HasStaleDirectRuntimeRewardControlAction(brain, message))
         {
             context.Respond(CreateDirectRuntimeRewardControlResponse(
@@ -337,33 +360,252 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        if (!TryValidateDirectRuntimeRewardControlTiming(message, out failureReason, out failureMessage))
+        if (brain.PendingDirectRuntimeRewardControls.Count > 0)
+        {
+            context.Respond(CreateDirectRuntimeRewardControlResponse(
+                message,
+                accepted: false,
+                "barrier_work_already_pending",
+                "Direct runtime reward-control cannot queue while another direct runtime-control action is pending.",
+                appliedTickFloor: ResolveDirectRuntimeRewardControlAppliedTickFloor(brain)));
+            return;
+        }
+
+        if (brain.PendingRuntimeReset is not null)
+        {
+            context.Respond(CreateDirectRuntimeRewardControlResponse(
+                message,
+                accepted: false,
+                "barrier_work_already_pending",
+                "Direct runtime reward-control cannot queue while a runtime reset is pending for this brain.",
+                appliedTickFloor: ResolveDirectRuntimeRewardControlAppliedTickFloor(brain)));
+            return;
+        }
+
+        if (!TryValidateDirectRuntimeRewardControlTiming(message, brain, out failureReason, out failureMessage, out var appliedTickFloor))
         {
             context.Respond(CreateDirectRuntimeRewardControlResponse(
                 message,
                 accepted: false,
                 failureReason,
                 failureMessage,
-                appliedTickFloor: _lastCompletedTickId + 1));
+                appliedTickFloor));
             return;
         }
 
-        var appliedTickFloor = Math.Max(_lastCompletedTickId + 1, message.ActionTickId);
-        switch (message.Surface)
+        if (ShouldQueueDirectRuntimeRewardControl(brain))
         {
-            case ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRate:
-                ApplyDirectRuntimeRewardControlPlasticityRate(context, brain, message.ControlValue);
-                break;
-            default:
+            if (brain.PendingRuntimeReset is not null)
+            {
                 context.Respond(CreateDirectRuntimeRewardControlResponse(
                     message,
                     accepted: false,
-                    "unsupported_surface",
-                    "Direct runtime reward-control surface is not supported.",
+                    "barrier_work_already_pending",
+                    "Direct runtime reward-control cannot queue while another barrier runtime-control action is pending.",
                     appliedTickFloor));
                 return;
+            }
+
+            var pending = new PendingDirectRuntimeRewardControlState(actionKey, message, appliedTickFloor);
+            brain.PendingDirectRuntimeRewardControls[actionKey] = pending;
+            context.ReenterAfter(
+                pending.Completion.Task,
+                task =>
+                {
+                    context.Respond(task.IsCompletedSuccessfully
+                        ? task.Result
+                        : CreateDirectRuntimeRewardControlResponse(
+                            message,
+                            accepted: false,
+                            "queued_action_failed",
+                            $"Direct runtime reward-control queued action failed: {task.Exception?.GetBaseException().Message ?? "unknown_error"}",
+                            appliedTickFloor));
+                    return Task.CompletedTask;
+                });
+            return;
         }
 
+        StartImmediateDirectRuntimeRewardControl(
+            context,
+            brain,
+            message,
+            actionKey,
+            appliedTickFloor);
+    }
+
+    private void StartPendingDirectRuntimeRewardControl(IContext context, BrainState brain)
+    {
+        if (brain.PendingDirectRuntimeRewardControls.Count == 0
+            || !_pendingBarrierWorkBrains.Add(brain.BrainId))
+        {
+            return;
+        }
+
+        _pendingDirectRuntimeRewardControlSnapshots[brain.BrainId] = CaptureDirectRuntimeRewardControlRuntimeConfig(brain);
+
+        foreach (var pending in brain.PendingDirectRuntimeRewardControls.Values
+                     .OrderBy(static item => item.Request.ActionTickId)
+                     .ThenBy(static item => item.ActionKey, StringComparer.Ordinal))
+        {
+            ApplyDirectRuntimeRewardControlSurface(
+                context,
+                brain,
+                pending.Request);
+        }
+
+        context.ReenterAfter(SynchronizeBrainRuntimeConfigAsync(context, brain), task =>
+        {
+            CompletePendingDirectRuntimeRewardControl(context, brain.BrainId, task);
+            return Task.CompletedTask;
+        });
+    }
+
+    private void CompletePendingDirectRuntimeRewardControl(
+        IContext context,
+        Guid brainId,
+        Task<ProtoIo.IoCommandAck> task)
+    {
+        _pendingBarrierWorkBrains.Remove(brainId);
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            return;
+        }
+
+        var pendingControls = brain.PendingDirectRuntimeRewardControls.Values.ToArray();
+        brain.PendingDirectRuntimeRewardControls.Clear();
+        _pendingDirectRuntimeRewardControlSnapshots.Remove(brainId, out var snapshot);
+
+        var ack = task.IsCompletedSuccessfully && task.Result is not null
+            ? task.Result
+            : CreateRuntimeConfigSyncAck(
+                brainId,
+                success: false,
+                $"runtime_config_sync_failed:{task.Exception?.GetBaseException().Message ?? "empty_response"}");
+
+        if (ack.Success)
+        {
+            RegisterBrainWithIo(context, brain, force: true);
+        }
+        else if (snapshot is not null)
+        {
+            RestoreDirectRuntimeRewardControlRuntimeConfig(brain, snapshot);
+            RegisterBrainWithIo(context, brain, force: true);
+        }
+
+        foreach (var pending in pendingControls)
+        {
+            if (ack.Success)
+            {
+                RecordDirectRuntimeRewardControl(
+                    brain,
+                    pending.Request,
+                    pending.ActionKey,
+                    pending.AppliedTickFloor);
+            }
+
+            pending.Completion.TrySetResult(CreateDirectRuntimeRewardControlResponse(
+                pending.Request,
+                accepted: ack.Success,
+                ack.Success ? string.Empty : "runtime_config_sync_failed",
+                ack.Success ? "accepted" : ack.Message,
+                pending.AppliedTickFloor));
+        }
+
+        if (_phase == TickPhase.Deliver && _tick is not null && _pendingDeliver.Contains(brainId))
+        {
+            if (RemovePendingDeliver(brainId))
+            {
+                _tick.CompletedDeliverCount++;
+                ReportBrainTick(context, brainId, _tick.TickId);
+                MaybeCompleteDeliver(context);
+            }
+
+            return;
+        }
+
+        if (_tickLoopEnabled && !_rescheduleInProgress && _phase == TickPhase.Idle && _pendingBarrierWorkBrains.Count == 0)
+        {
+            ScheduleNextTick(context, TimeSpan.Zero);
+        }
+    }
+
+    private void StartImmediateDirectRuntimeRewardControl(
+        IContext context,
+        BrainState brain,
+        ProtoControl.DirectRuntimeRewardControlRequest message,
+        string actionKey,
+        ulong appliedTickFloor)
+    {
+        var pending = new PendingDirectRuntimeRewardControlState(actionKey, message, appliedTickFloor);
+        brain.PendingDirectRuntimeRewardControls[actionKey] = pending;
+        _pendingDirectRuntimeRewardControlSnapshots[brain.BrainId] = CaptureDirectRuntimeRewardControlRuntimeConfig(brain);
+        ApplyDirectRuntimeRewardControlSurface(context, brain, message);
+        context.ReenterAfter(SynchronizeBrainRuntimeConfigAsync(context, brain), task =>
+        {
+            context.Respond(CompleteImmediateDirectRuntimeRewardControl(context, brain.BrainId, pending, task));
+            return Task.CompletedTask;
+        });
+    }
+
+    private ProtoControl.DirectRuntimeRewardControlResponse CompleteImmediateDirectRuntimeRewardControl(
+        IContext context,
+        Guid brainId,
+        PendingDirectRuntimeRewardControlState pending,
+        Task<ProtoIo.IoCommandAck> task)
+    {
+        if (!_brains.TryGetValue(brainId, out var brain))
+        {
+            _pendingDirectRuntimeRewardControlSnapshots.Remove(brainId);
+            return CreateDirectRuntimeRewardControlResponse(
+                pending.Request,
+                accepted: false,
+                "brain_unregistered",
+                "Direct runtime reward-control target brain was unregistered before the action could complete.",
+                pending.AppliedTickFloor);
+        }
+
+        brain.PendingDirectRuntimeRewardControls.Remove(pending.ActionKey);
+        _pendingDirectRuntimeRewardControlSnapshots.Remove(brainId, out var snapshot);
+
+        var ack = task.IsCompletedSuccessfully && task.Result is not null
+            ? task.Result
+            : CreateRuntimeConfigSyncAck(
+                brainId,
+                success: false,
+                $"runtime_config_sync_failed:{task.Exception?.GetBaseException().Message ?? "empty_response"}");
+
+        if (ack.Success)
+        {
+            RegisterBrainWithIo(context, brain, force: true);
+            RecordDirectRuntimeRewardControl(brain, pending.Request, pending.ActionKey, pending.AppliedTickFloor);
+            return CreateDirectRuntimeRewardControlResponse(
+                pending.Request,
+                accepted: true,
+                string.Empty,
+                "accepted",
+                pending.AppliedTickFloor);
+        }
+
+        if (snapshot is not null)
+        {
+            RestoreDirectRuntimeRewardControlRuntimeConfig(brain, snapshot);
+            RegisterBrainWithIo(context, brain, force: true);
+        }
+
+        return CreateDirectRuntimeRewardControlResponse(
+            pending.Request,
+            accepted: false,
+            "runtime_config_sync_failed",
+            ack.Message,
+            pending.AppliedTickFloor);
+    }
+
+    private static void RecordDirectRuntimeRewardControl(
+        BrainState brain,
+        ProtoControl.DirectRuntimeRewardControlRequest message,
+        string actionKey,
+        ulong appliedTickFloor)
+    {
         brain.DirectRuntimeRewardControlRecords[actionKey] = new DirectRuntimeRewardControlRecord(
             NormalizeDirectRuntimeRewardControlToken(message.ControllerId),
             NormalizeDirectRuntimeRewardControlToken(message.ActionId),
@@ -376,18 +618,10 @@ public sealed partial class HiveMindActor
             message.ControlValue,
             appliedTickFloor);
         TrimDirectRuntimeRewardControlRecords(brain);
-
-        context.Respond(CreateDirectRuntimeRewardControlResponse(
-            message,
-            accepted: true,
-            string.Empty,
-            "accepted",
-            appliedTickFloor));
     }
 
     private bool TryValidateDirectRuntimeRewardControlShape(
         ProtoControl.DirectRuntimeRewardControlRequest message,
-        BrainState brain,
         out string failureReason,
         out string failureMessage)
     {
@@ -436,25 +670,80 @@ public sealed partial class HiveMindActor
             return false;
         }
 
-        if (!brain.Paused)
+        switch (message.Surface)
         {
-            failureReason = "brain_not_paused";
-            failureMessage = "Direct runtime reward-control actions are paused-only until a barrier-queued action contract exists.";
-            return false;
-        }
-
-        if (message.Surface != ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRate)
-        {
-            failureReason = "unsupported_surface";
-            failureMessage = "Direct runtime reward-control surface is not supported.";
-            return false;
-        }
-
-        if (message.ControlValue < 0f || message.ControlValue > 1f)
-        {
-            failureReason = "control_value_out_of_range";
-            failureMessage = "Direct runtime reward-control plasticity_rate must be in [0,1].";
-            return false;
+            case ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRate:
+                if (message.ControlValue < 0f || message.ControlValue > 1f)
+                {
+                    failureReason = "control_value_out_of_range";
+                    failureMessage = "Direct runtime reward-control plasticity_rate must be in [0,1].";
+                    return false;
+                }
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.CostEnergyEnabled:
+            case ProtoControl.DirectRuntimeRewardControlSurface.PlasticityEnabled:
+            case ProtoControl.DirectRuntimeRewardControlSurface.PlasticityProbabilisticUpdates:
+            case ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisEnabled:
+            case ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisEnergyCouplingEnabled:
+                if (!IsDirectRuntimeRewardControlBoolean(message.ControlValue))
+                {
+                    failureReason = "control_value_out_of_range";
+                    failureMessage = $"Direct runtime reward-control {FormatDirectRuntimeRewardControlSurface(message.Surface)} must be 0 or 1.";
+                    return false;
+                }
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.PlasticityDelta:
+                if (message.ControlValue < 0f || message.ControlValue > 1f)
+                {
+                    failureReason = "control_value_out_of_range";
+                    failureMessage = "Direct runtime reward-control plasticity_delta must be in [0,1].";
+                    return false;
+                }
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRebaseThresholdPct:
+                if (message.ControlValue < 0f || message.ControlValue > 1f)
+                {
+                    failureReason = "control_value_out_of_range";
+                    failureMessage = "Direct runtime reward-control plasticity_rebase_threshold_pct must be in [0,1].";
+                    return false;
+                }
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisBaseProbability:
+                if (message.ControlValue < 0f || message.ControlValue > 1f)
+                {
+                    failureReason = "control_value_out_of_range";
+                    failureMessage = "Direct runtime reward-control homeostasis_base_probability must be in [0,1].";
+                    return false;
+                }
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisEnergyTargetScale:
+                if (message.ControlValue < 0f || message.ControlValue > 4f)
+                {
+                    failureReason = "control_value_out_of_range";
+                    failureMessage = "Direct runtime reward-control homeostasis_energy_target_scale must be in [0,4].";
+                    return false;
+                }
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisEnergyProbabilityScale:
+                if (message.ControlValue < 0f || message.ControlValue > 4f)
+                {
+                    failureReason = "control_value_out_of_range";
+                    failureMessage = "Direct runtime reward-control homeostasis_energy_probability_scale must be in [0,4].";
+                    return false;
+                }
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.OutputVectorSource:
+                if (!IsDirectRuntimeRewardControlOutputVectorSource(message.ControlValue))
+                {
+                    failureReason = "control_value_out_of_range";
+                    failureMessage = "Direct runtime reward-control output_vector_source must be 0 for potential or 1 for buffer.";
+                    return false;
+                }
+                break;
+            default:
+                failureReason = "unsupported_surface";
+                failureMessage = "Direct runtime reward-control surface is not supported.";
+                return false;
         }
 
         return true;
@@ -462,11 +751,14 @@ public sealed partial class HiveMindActor
 
     private bool TryValidateDirectRuntimeRewardControlTiming(
         ProtoControl.DirectRuntimeRewardControlRequest message,
+        BrainState brain,
         out string failureReason,
-        out string failureMessage)
+        out string failureMessage,
+        out ulong appliedTickFloor)
     {
         failureReason = string.Empty;
         failureMessage = string.Empty;
+        appliedTickFloor = ResolveDirectRuntimeRewardControlAppliedTickFloor(brain);
 
         if (message.ObservationTickId > _lastCompletedTickId)
         {
@@ -482,23 +774,118 @@ public sealed partial class HiveMindActor
             return false;
         }
 
-        var nextVisibleTick = _lastCompletedTickId + 1;
-        if (message.ActionTickId < nextVisibleTick)
+        if (message.ActionTickId < appliedTickFloor)
         {
             failureReason = "action_tick_stale";
-            failureMessage = "Direct runtime reward-control action_tick_id must not target a completed tick.";
+            failureMessage = "Direct runtime reward-control action_tick_id must not target a completed or already-visible tick.";
             return false;
         }
 
-        if (message.ActionTickId > nextVisibleTick)
+        if (message.ActionTickId > appliedTickFloor)
         {
             failureReason = "action_tick_not_next";
-            failureMessage = "Direct runtime reward-control action_tick_id must target the next visible tick for the paused-only surface.";
+            failureMessage = "Direct runtime reward-control action_tick_id must target the next barrier-visible tick.";
             return false;
         }
 
         return true;
     }
+
+    private ulong ResolveDirectRuntimeRewardControlAppliedTickFloor(BrainState brain)
+    {
+        if (_tick is null || _phase == TickPhase.Idle || !CanDispatchTickToBrain(brain))
+        {
+            return _lastCompletedTickId + 1;
+        }
+
+        return Math.Max(_lastCompletedTickId, _tick.TickId) + 1;
+    }
+
+    private bool ShouldQueueDirectRuntimeRewardControl(BrainState brain)
+        => _tick is not null
+           && _phase != TickPhase.Idle
+           && CanDispatchTickToBrain(brain)
+           && brain.PendingRuntimeReset is null
+           && (_phase == TickPhase.Compute
+               || (_phase == TickPhase.Deliver && _pendingDeliver.Contains(brain.BrainId)));
+
+    private void ApplyDirectRuntimeRewardControlSurface(
+        IContext context,
+        BrainState brain,
+        ProtoControl.DirectRuntimeRewardControlRequest message)
+    {
+        switch (message.Surface)
+        {
+            case ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRate:
+                ApplyDirectRuntimeRewardControlPlasticityRate(context, brain, message.ControlValue);
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisBaseProbability:
+                ApplyDirectRuntimeRewardControlHomeostasisBaseProbability(context, brain, message.ControlValue);
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.CostEnergyEnabled:
+                ApplyDirectRuntimeRewardControlCostEnergyEnabled(context, brain, message.ControlValue);
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.PlasticityEnabled:
+                ApplyDirectRuntimeRewardControlPlasticityEnabled(context, brain, message.ControlValue);
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.PlasticityProbabilisticUpdates:
+                ApplyDirectRuntimeRewardControlPlasticityProbabilisticUpdates(context, brain, message.ControlValue);
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.PlasticityDelta:
+                ApplyDirectRuntimeRewardControlPlasticityDelta(context, brain, message.ControlValue);
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRebaseThresholdPct:
+                ApplyDirectRuntimeRewardControlPlasticityRebaseThresholdPct(context, brain, message.ControlValue);
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisEnabled:
+                ApplyDirectRuntimeRewardControlHomeostasisEnabled(context, brain, message.ControlValue);
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisEnergyCouplingEnabled:
+                ApplyDirectRuntimeRewardControlHomeostasisEnergyCouplingEnabled(context, brain, message.ControlValue);
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisEnergyTargetScale:
+                ApplyDirectRuntimeRewardControlHomeostasisEnergyTargetScale(context, brain, message.ControlValue);
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisEnergyProbabilityScale:
+                ApplyDirectRuntimeRewardControlHomeostasisEnergyProbabilityScale(context, brain, message.ControlValue);
+                break;
+            case ProtoControl.DirectRuntimeRewardControlSurface.OutputVectorSource:
+                ApplyDirectRuntimeRewardControlOutputVectorSource(context, brain, message.ControlValue);
+                break;
+        }
+    }
+
+    private static bool IsDirectRuntimeRewardControlBoolean(float controlValue)
+        => Math.Abs(controlValue) < 0.000001f || Math.Abs(controlValue - 1f) < 0.000001f;
+
+    private static bool IsDirectRuntimeRewardControlOutputVectorSource(float controlValue)
+        => Math.Abs(controlValue) < 0.000001f || Math.Abs(controlValue - 1f) < 0.000001f;
+
+    private static bool ReadDirectRuntimeRewardControlBoolean(float controlValue)
+        => Math.Abs(controlValue - 1f) < 0.000001f;
+
+    private static ProtoControl.OutputVectorSource ReadDirectRuntimeRewardControlOutputVectorSource(float controlValue)
+        => Math.Abs(controlValue - 1f) < 0.000001f
+            ? ProtoControl.OutputVectorSource.Buffer
+            : ProtoControl.OutputVectorSource.Potential;
+
+    private static string FormatDirectRuntimeRewardControlSurface(ProtoControl.DirectRuntimeRewardControlSurface surface)
+        => surface switch
+        {
+            ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRate => "plasticity_rate",
+            ProtoControl.DirectRuntimeRewardControlSurface.CostEnergyEnabled => "cost_energy_enabled",
+            ProtoControl.DirectRuntimeRewardControlSurface.PlasticityEnabled => "plasticity_enabled",
+            ProtoControl.DirectRuntimeRewardControlSurface.PlasticityProbabilisticUpdates => "plasticity_probabilistic_updates",
+            ProtoControl.DirectRuntimeRewardControlSurface.PlasticityDelta => "plasticity_delta",
+            ProtoControl.DirectRuntimeRewardControlSurface.PlasticityRebaseThresholdPct => "plasticity_rebase_threshold_pct",
+            ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisEnabled => "homeostasis_enabled",
+            ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisBaseProbability => "homeostasis_base_probability",
+            ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisEnergyCouplingEnabled => "homeostasis_energy_coupling_enabled",
+            ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisEnergyTargetScale => "homeostasis_energy_target_scale",
+            ProtoControl.DirectRuntimeRewardControlSurface.HomeostasisEnergyProbabilityScale => "homeostasis_energy_probability_scale",
+            ProtoControl.DirectRuntimeRewardControlSurface.OutputVectorSource => "output_vector_source",
+            _ => "unknown"
+        };
 
     private void ApplyDirectRuntimeRewardControlPlasticityRate(
         IContext context,
@@ -507,8 +894,130 @@ public sealed partial class HiveMindActor
     {
         brain.PlasticityRate = plasticityRate;
         brain.PlasticityDelta = ResolvePlasticityDelta(plasticityRate, brain.PlasticityDelta);
-        UpdateShardRuntimeConfig(context, brain);
-        RegisterBrainWithIo(context, brain, force: true);
+    }
+
+    private void ApplyDirectRuntimeRewardControlCostEnergyEnabled(
+        IContext context,
+        BrainState brain,
+        float enabled)
+    {
+        brain.CostEnergyEnabled = ReadDirectRuntimeRewardControlBoolean(enabled);
+    }
+
+    private void ApplyDirectRuntimeRewardControlPlasticityEnabled(
+        IContext context,
+        BrainState brain,
+        float enabled)
+    {
+        brain.PlasticityEnabled = ReadDirectRuntimeRewardControlBoolean(enabled);
+    }
+
+    private void ApplyDirectRuntimeRewardControlPlasticityProbabilisticUpdates(
+        IContext context,
+        BrainState brain,
+        float enabled)
+    {
+        brain.PlasticityProbabilisticUpdates = ReadDirectRuntimeRewardControlBoolean(enabled);
+    }
+
+    private void ApplyDirectRuntimeRewardControlPlasticityDelta(
+        IContext context,
+        BrainState brain,
+        float plasticityDelta)
+    {
+        brain.PlasticityDelta = plasticityDelta;
+    }
+
+    private void ApplyDirectRuntimeRewardControlPlasticityRebaseThresholdPct(
+        IContext context,
+        BrainState brain,
+        float thresholdPct)
+    {
+        brain.PlasticityRebaseThresholdPct = thresholdPct;
+    }
+
+    private void ApplyDirectRuntimeRewardControlHomeostasisEnabled(
+        IContext context,
+        BrainState brain,
+        float enabled)
+    {
+        brain.HomeostasisEnabled = ReadDirectRuntimeRewardControlBoolean(enabled);
+    }
+
+    private void ApplyDirectRuntimeRewardControlHomeostasisBaseProbability(
+        IContext context,
+        BrainState brain,
+        float probability)
+    {
+        brain.HomeostasisBaseProbability = probability;
+    }
+
+    private void ApplyDirectRuntimeRewardControlHomeostasisEnergyCouplingEnabled(
+        IContext context,
+        BrainState brain,
+        float enabled)
+    {
+        brain.HomeostasisEnergyCouplingEnabled = ReadDirectRuntimeRewardControlBoolean(enabled);
+    }
+
+    private void ApplyDirectRuntimeRewardControlHomeostasisEnergyTargetScale(
+        IContext context,
+        BrainState brain,
+        float scale)
+    {
+        brain.HomeostasisEnergyTargetScale = scale;
+    }
+
+    private void ApplyDirectRuntimeRewardControlHomeostasisEnergyProbabilityScale(
+        IContext context,
+        BrainState brain,
+        float scale)
+    {
+        brain.HomeostasisEnergyProbabilityScale = scale;
+    }
+
+    private void ApplyDirectRuntimeRewardControlOutputVectorSource(
+        IContext context,
+        BrainState brain,
+        float source)
+    {
+        brain.OutputVectorSource = ReadDirectRuntimeRewardControlOutputVectorSource(source);
+        brain.HasExplicitOutputVectorSource = true;
+    }
+
+    private static DirectRuntimeRewardControlRuntimeConfigSnapshot CaptureDirectRuntimeRewardControlRuntimeConfig(BrainState brain)
+        => new(
+            brain.CostEnergyEnabled,
+            brain.PlasticityEnabled,
+            brain.PlasticityRate,
+            brain.PlasticityProbabilisticUpdates,
+            brain.PlasticityDelta,
+            brain.PlasticityRebaseThresholdPct,
+            brain.HomeostasisEnabled,
+            brain.HomeostasisBaseProbability,
+            brain.HomeostasisEnergyCouplingEnabled,
+            brain.HomeostasisEnergyTargetScale,
+            brain.HomeostasisEnergyProbabilityScale,
+            brain.OutputVectorSource,
+            brain.HasExplicitOutputVectorSource);
+
+    private static void RestoreDirectRuntimeRewardControlRuntimeConfig(
+        BrainState brain,
+        DirectRuntimeRewardControlRuntimeConfigSnapshot snapshot)
+    {
+        brain.CostEnergyEnabled = snapshot.CostEnergyEnabled;
+        brain.PlasticityEnabled = snapshot.PlasticityEnabled;
+        brain.PlasticityRate = snapshot.PlasticityRate;
+        brain.PlasticityProbabilisticUpdates = snapshot.PlasticityProbabilisticUpdates;
+        brain.PlasticityDelta = snapshot.PlasticityDelta;
+        brain.PlasticityRebaseThresholdPct = snapshot.PlasticityRebaseThresholdPct;
+        brain.HomeostasisEnabled = snapshot.HomeostasisEnabled;
+        brain.HomeostasisBaseProbability = snapshot.HomeostasisBaseProbability;
+        brain.HomeostasisEnergyCouplingEnabled = snapshot.HomeostasisEnergyCouplingEnabled;
+        brain.HomeostasisEnergyTargetScale = snapshot.HomeostasisEnergyTargetScale;
+        brain.HomeostasisEnergyProbabilityScale = snapshot.HomeostasisEnergyProbabilityScale;
+        brain.OutputVectorSource = snapshot.OutputVectorSource;
+        brain.HasExplicitOutputVectorSource = snapshot.HasExplicitOutputVectorSource;
     }
 
     private static ProtoControl.DirectRuntimeRewardControlResponse CreateDirectRuntimeRewardControlResponse(
@@ -550,10 +1059,19 @@ public sealed partial class HiveMindActor
         var controllerId = NormalizeDirectRuntimeRewardControlToken(message.ControllerId);
         var actionId = NormalizeDirectRuntimeRewardControlToken(message.ActionId);
         var actionKey = BuildDirectRuntimeRewardControlActionKey(message);
-        return brain.DirectRuntimeRewardControlRecords.Any(
-            record => string.Equals(record.Key, actionKey, StringComparison.Ordinal) is false
+        return EnumerateDirectRuntimeRewardControlRecords(brain).Any(
+            record => string.Equals(record.ActionKey, actionKey, StringComparison.Ordinal) is false
                       && string.Equals(record.Value.ControllerId, controllerId, StringComparison.Ordinal)
                       && string.Equals(record.Value.ActionId, actionId, StringComparison.Ordinal));
+    }
+
+    private static bool HasConflictingDirectRuntimeRewardControlSurfaceTick(
+        BrainState brain,
+        ProtoControl.DirectRuntimeRewardControlRequest message)
+    {
+        return EnumerateDirectRuntimeRewardControlRecords(brain).Any(
+            record => record.Value.Surface == message.Surface
+                      && record.Value.ActionTickId == message.ActionTickId);
     }
 
     private static bool HasStaleDirectRuntimeRewardControlAction(
@@ -563,7 +1081,7 @@ public sealed partial class HiveMindActor
         var controllerId = NormalizeDirectRuntimeRewardControlToken(message.ControllerId);
         var objectiveName = NormalizeDirectRuntimeRewardControlToken(message.ObjectiveName);
         var rewardSignal = NormalizeDirectRuntimeRewardControlToken(message.RewardSignal);
-        return brain.DirectRuntimeRewardControlRecords.Values.Any(
+        return EnumerateDirectRuntimeRewardControlRecords(brain).Select(static record => record.Value).Any(
             record => string.Equals(record.ControllerId, controllerId, StringComparison.Ordinal)
                       && string.Equals(record.ObjectiveName, objectiveName, StringComparison.Ordinal)
                       && string.Equals(record.RewardSignal, rewardSignal, StringComparison.Ordinal)
@@ -571,6 +1089,35 @@ public sealed partial class HiveMindActor
                       && (record.ActionTickId >= message.ActionTickId
                           || record.ObservationTickId >= message.ObservationTickId));
     }
+
+    private static IEnumerable<(string ActionKey, DirectRuntimeRewardControlRecord Value)> EnumerateDirectRuntimeRewardControlRecords(
+        BrainState brain)
+    {
+        foreach (var record in brain.DirectRuntimeRewardControlRecords)
+        {
+            yield return (record.Key, record.Value);
+        }
+
+        foreach (var pending in brain.PendingDirectRuntimeRewardControls.Values)
+        {
+            yield return (pending.ActionKey, CreateDirectRuntimeRewardControlRecord(pending.Request, pending.AppliedTickFloor));
+        }
+    }
+
+    private static DirectRuntimeRewardControlRecord CreateDirectRuntimeRewardControlRecord(
+        ProtoControl.DirectRuntimeRewardControlRequest message,
+        ulong appliedTickFloor)
+        => new(
+            NormalizeDirectRuntimeRewardControlToken(message.ControllerId),
+            NormalizeDirectRuntimeRewardControlToken(message.ActionId),
+            NormalizeDirectRuntimeRewardControlToken(message.ObjectiveName),
+            NormalizeDirectRuntimeRewardControlToken(message.RewardSignal),
+            message.ObservationTickId,
+            message.ActionTickId,
+            message.Surface,
+            message.Reward,
+            message.ControlValue,
+            appliedTickFloor);
 
     private static string NormalizeDirectRuntimeRewardControlToken(string? value)
         => (value ?? string.Empty).Trim();

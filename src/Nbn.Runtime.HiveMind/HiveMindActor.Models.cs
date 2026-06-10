@@ -217,8 +217,29 @@ public sealed partial class HiveMindActor
         public Dictionary<ShardId32, string> ShardRegistrationAssignmentIds { get; } = new();
         public RoutingTableSnapshot RoutingSnapshot { get; set; } = RoutingTableSnapshot.Empty;
         public PendingRuntimeResetState? PendingRuntimeReset { get; set; }
+        public Dictionary<string, PendingDirectRuntimeRewardControlState> PendingDirectRuntimeRewardControls { get; } =
+            new(StringComparer.Ordinal);
         public Dictionary<string, DirectRuntimeRewardControlRecord> DirectRuntimeRewardControlRecords { get; } =
             new(StringComparer.Ordinal);
+    }
+
+    private sealed class PendingDirectRuntimeRewardControlState
+    {
+        public PendingDirectRuntimeRewardControlState(
+            string actionKey,
+            ProtoControl.DirectRuntimeRewardControlRequest request,
+            ulong appliedTickFloor)
+        {
+            ActionKey = actionKey;
+            Request = request.Clone();
+            AppliedTickFloor = appliedTickFloor;
+        }
+
+        public string ActionKey { get; }
+        public ProtoControl.DirectRuntimeRewardControlRequest Request { get; }
+        public ulong AppliedTickFloor { get; }
+        public TaskCompletionSource<ProtoControl.DirectRuntimeRewardControlResponse> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private sealed record DirectRuntimeRewardControlRecord(
@@ -232,6 +253,21 @@ public sealed partial class HiveMindActor
         float Reward,
         float ControlValue,
         ulong AppliedTickFloor);
+
+    private sealed record DirectRuntimeRewardControlRuntimeConfigSnapshot(
+        bool CostEnergyEnabled,
+        bool PlasticityEnabled,
+        float PlasticityRate,
+        bool PlasticityProbabilisticUpdates,
+        float PlasticityDelta,
+        float PlasticityRebaseThresholdPct,
+        bool HomeostasisEnabled,
+        float HomeostasisBaseProbability,
+        bool HomeostasisEnergyCouplingEnabled,
+        float HomeostasisEnergyTargetScale,
+        float HomeostasisEnergyProbabilityScale,
+        ProtoControl.OutputVectorSource OutputVectorSource,
+        bool HasExplicitOutputVectorSource);
 
     private sealed class PendingSpawnState
     {

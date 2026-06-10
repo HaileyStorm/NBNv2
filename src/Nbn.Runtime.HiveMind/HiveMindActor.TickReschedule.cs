@@ -57,6 +57,11 @@ public sealed partial class HiveMindActor
             MaybeCompleteDeliver(context);
         }
 
+        if (brain.PendingDirectRuntimeRewardControls.Count > 0)
+        {
+            StartPendingDirectRuntimeRewardControl(context, brain);
+        }
+
         ReportBrainState(context, brainId, "Paused", reason);
         EmitVizEvent(context, VizEventType.VizBrainPaused, brainId: brainId);
         EmitDebug(context, ProtoSeverity.SevInfo, "brain.paused", $"Brain {brainId} paused. reason={reason ?? "none"}");
@@ -315,6 +320,13 @@ public sealed partial class HiveMindActor
             return;
         }
 
+        if (brainState.PendingDirectRuntimeRewardControls.Count > 0)
+        {
+            _pendingDeliverSenders.Remove(brainId);
+            StartPendingDirectRuntimeRewardControl(context, brainState);
+            return;
+        }
+
         if (!RemovePendingDeliver(brainId))
         {
             EmitTickDeliverDoneIgnored(context, message, "untracked_payload", expectedSender);
@@ -369,6 +381,10 @@ public sealed partial class HiveMindActor
                         LogError($"TickDeliver timeout detail: {DescribePendingDeliver()}");
                     }
                 }
+                FailPendingDirectRuntimeRewardControlsForBrains(
+                    context,
+                    _pendingDeliverSenders.Keys.Concat(_pendingBarrierWorkBrains).Distinct().ToArray(),
+                    "deliver_timeout");
                 FailPendingRuntimeResetsForBrains(_pendingDeliverSenders.Keys.ToArray(), "deliver_timeout");
                 ClearPendingDeliver();
                 CompleteTick(context);
@@ -487,7 +503,7 @@ public sealed partial class HiveMindActor
             }
         }
 
-        if (_pendingBarrierResets.Count == 0)
+        if (_pendingBarrierWorkBrains.Count == 0)
         {
             ScheduleNextTick(context, ComputeTickDelay(elapsed, decision.TargetTickHz));
         }
@@ -516,6 +532,42 @@ public sealed partial class HiveMindActor
 
             HiveMindTelemetry.RecordBrainTickCost(entry.Key, cost);
             context.Send(ioPid, new ApplyTickCost(entry.Key, tickId, cost));
+        }
+    }
+
+    private void FailPendingDirectRuntimeRewardControlsForBrains(IContext context, IEnumerable<Guid> brainIds, string reason)
+    {
+        foreach (var brainId in brainIds)
+        {
+            if (!_brains.TryGetValue(brainId, out var brain))
+            {
+                continue;
+            }
+
+            var hasPendingSnapshot = _pendingDirectRuntimeRewardControlSnapshots.ContainsKey(brain.BrainId);
+            if (brain.PendingDirectRuntimeRewardControls.Count == 0 && !hasPendingSnapshot)
+            {
+                continue;
+            }
+
+            foreach (var pending in brain.PendingDirectRuntimeRewardControls.Values.ToArray())
+            {
+                brain.PendingDirectRuntimeRewardControls.Remove(pending.ActionKey);
+                pending.Completion.TrySetResult(CreateDirectRuntimeRewardControlResponse(
+                    pending.Request,
+                    accepted: false,
+                    reason,
+                    reason,
+                    pending.AppliedTickFloor));
+            }
+
+            if (_pendingDirectRuntimeRewardControlSnapshots.Remove(brain.BrainId, out var snapshot))
+            {
+                RestoreDirectRuntimeRewardControlRuntimeConfig(brain, snapshot);
+                RegisterBrainWithIo(context, brain, force: true);
+            }
+
+            _pendingBarrierWorkBrains.Remove(brain.BrainId);
         }
     }
 
@@ -599,8 +651,9 @@ public sealed partial class HiveMindActor
             brain.PendingRuntimeReset.Completion.TrySetResult(
                 BuildRuntimeResetAck(brain.BrainId, success: false, reason));
             brain.PendingRuntimeReset = null;
-            _pendingBarrierResets.Remove(brain.BrainId);
+            _pendingBarrierWorkBrains.Remove(brain.BrainId);
         }
+
     }
 
     private void RemovePendingComputeForBrain(Guid brainId)
