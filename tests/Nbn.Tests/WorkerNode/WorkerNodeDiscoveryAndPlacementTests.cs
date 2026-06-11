@@ -894,6 +894,121 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
     }
 
     [Fact]
+    public async Task PlacementUnassignmentRequest_RegionShard_DoesNotClearOutputSink_WhenWorkerHasNoOutputCoordinator()
+    {
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+        var hiveMindProbe = harness.Root.SpawnNamed(
+            Props.FromProducer(() => new HiveMindOutputSinkProbeActor(workerPid)),
+            $"worker-output-sink-probe-{Guid.NewGuid():N}");
+
+        try
+        {
+            var brainId = Guid.NewGuid();
+            var assignment = BuildAssignment(
+                assignmentId: "assign-shard-no-output-clear",
+                brainId: brainId,
+                workerNodeId: workerNodeId,
+                placementEpoch: 5,
+                regionId: 2,
+                shardIndex: 0);
+
+            var assignAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = assignment.Clone()
+                });
+            Assert.True(assignAck.Accepted);
+
+            var initialRegistrations = await harness.Root.RequestAsync<OutputSinkRegistrationSnapshot>(
+                hiveMindProbe,
+                new GetOutputSinkRegistrations());
+            Assert.Empty(initialRegistrations.Messages);
+
+            var unassignAck = await harness.Root.RequestAsync<PlacementUnassignmentAck>(
+                hiveMindProbe,
+                new ProbePlacementUnassignment(assignment.Clone()));
+            Assert.True(unassignAck.Accepted);
+
+            await Task.Delay(100);
+            var registrations = await harness.Root.RequestAsync<OutputSinkRegistrationSnapshot>(
+                hiveMindProbe,
+                new GetOutputSinkRegistrations());
+            Assert.Empty(registrations.Messages);
+        }
+        finally
+        {
+            harness.Root.Stop(hiveMindProbe);
+        }
+    }
+
+    [Fact]
+    public async Task PlacementUnassignmentRequest_OutputCoordinator_ClearsOutputSink()
+    {
+        await using var harness = await WorkerHarness.CreateAsync();
+
+        var workerNodeId = Guid.NewGuid();
+        var workerPid = harness.Root.Spawn(
+            Props.FromProducer(() => new WorkerNodeActor(workerNodeId, "127.0.0.1:12041")));
+        var hiveMindProbe = harness.Root.SpawnNamed(
+            Props.FromProducer(() => new HiveMindOutputSinkProbeActor(workerPid)),
+            $"worker-output-sink-probe-{Guid.NewGuid():N}");
+
+        try
+        {
+            var brainId = Guid.NewGuid();
+            var assignment = BuildAssignment(
+                assignmentId: "assign-output-clear",
+                brainId: brainId,
+                workerNodeId: workerNodeId,
+                placementEpoch: 5,
+                regionId: 31,
+                shardIndex: 0,
+                target: PlacementAssignmentTarget.PlacementTargetOutputCoordinator,
+                actorName: $"brain-{brainId:N}-output",
+                neuronStart: 0,
+                neuronCount: 0);
+
+            var assignAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
+                workerPid,
+                new PlacementAssignmentRequest
+                {
+                    Assignment = assignment.Clone()
+                });
+            Assert.True(assignAck.Accepted);
+
+            var initialRegistrations = await harness.Root.RequestAsync<OutputSinkRegistrationSnapshot>(
+                hiveMindProbe,
+                new GetOutputSinkRegistrations());
+            Assert.Empty(initialRegistrations.Messages);
+
+            var unassignAck = await harness.Root.RequestAsync<PlacementUnassignmentAck>(
+                hiveMindProbe,
+                new ProbePlacementUnassignment(assignment.Clone()));
+            Assert.True(unassignAck.Accepted);
+
+            await WaitForAsync(
+                async () =>
+                {
+                    var registrations = await harness.Root.RequestAsync<OutputSinkRegistrationSnapshot>(
+                        hiveMindProbe,
+                        new GetOutputSinkRegistrations());
+                    var clear = Assert.Single(registrations.Messages);
+                    return string.IsNullOrWhiteSpace(clear.OutputPid);
+                },
+                timeoutMs: 2_000);
+        }
+        finally
+        {
+            harness.Root.Stop(hiveMindProbe);
+        }
+    }
+
+    [Fact]
     public async Task PlacementUnassignmentRequest_Duplicate_IsIdempotent()
     {
         await using var harness = await WorkerHarness.CreateAsync();
@@ -2961,6 +3076,49 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
         finally
         {
             system.Root.Stop(senderPid);
+        }
+    }
+
+    private sealed record ProbePlacementUnassignment(PlacementAssignment Assignment);
+    private sealed record GetOutputSinkRegistrations;
+    private sealed record OutputSinkRegistrationSnapshot(IReadOnlyList<RegisterOutputSink> Messages);
+
+    private sealed class HiveMindOutputSinkProbeActor : IActor
+    {
+        private readonly PID _workerPid;
+        private readonly List<RegisterOutputSink> _registrations = new();
+        private PID? _pendingUnassignmentReply;
+
+        public HiveMindOutputSinkProbeActor(PID workerPid)
+        {
+            _workerPid = workerPid;
+        }
+
+        public Task ReceiveAsync(IContext context)
+        {
+            switch (context.Message)
+            {
+                case ProbePlacementUnassignment request:
+                    _pendingUnassignmentReply = context.Sender;
+                    context.Request(_workerPid, new PlacementUnassignmentRequest
+                    {
+                        Assignment = request.Assignment.Clone()
+                    });
+                    break;
+                case PlacementUnassignmentAck ack when _pendingUnassignmentReply is not null:
+                    context.Send(_pendingUnassignmentReply, ack);
+                    _pendingUnassignmentReply = null;
+                    break;
+                case RegisterOutputSink register:
+                    _registrations.Add(register.Clone());
+                    break;
+                case GetOutputSinkRegistrations:
+                    context.Respond(new OutputSinkRegistrationSnapshot(
+                        _registrations.Select(static message => message.Clone()).ToArray()));
+                    break;
+            }
+
+            return Task.CompletedTask;
         }
     }
 

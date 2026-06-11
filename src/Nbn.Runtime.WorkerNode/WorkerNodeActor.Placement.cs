@@ -278,12 +278,14 @@ public sealed partial class WorkerNodeActor
             removed = true;
         }
 
+        var removedOutputCoordinator = false;
         if (assignment.Target == PlacementAssignmentTarget.PlacementTargetOutputCoordinator
             && hostedPid is not null
             && PidEquals(brain.OutputCoordinatorPid, hostedPid))
         {
             brain.OutputCoordinatorPid = null;
             removed = true;
+            removedOutputCoordinator = true;
         }
 
         if (assignment.Target == PlacementAssignmentTarget.PlacementTargetRegionShard
@@ -303,7 +305,7 @@ public sealed partial class WorkerNodeActor
             }
         }
 
-        PublishHostedBrainState(context, brain, refreshCoordinatorWidths: false, allowClearOutputSink: true);
+        PublishHostedBrainState(context, brain, refreshCoordinatorWidths: false, allowClearOutputSink: removedOutputCoordinator);
         RemoveBrainStateIfEmpty(brain);
         return removed;
     }
