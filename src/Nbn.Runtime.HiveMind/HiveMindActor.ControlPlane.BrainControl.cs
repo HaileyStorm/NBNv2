@@ -539,10 +539,7 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        if (_tickLoopEnabled && !_rescheduleInProgress && _phase == TickPhase.Idle && _pendingBarrierWorkBrains.Count == 0)
-        {
-            ScheduleNextTick(context, TimeSpan.Zero);
-        }
+        ScheduleImmediateTickIfIdle(context);
     }
 
     private void StartImmediateDirectRuntimeRewardControl(

@@ -76,6 +76,7 @@ public sealed partial class HiveMindActor
             ReportBrainState(context, brainId, "Active", null);
             EmitVizEvent(context, VizEventType.VizBrainActive, brainId: brainId);
             EmitDebug(context, ProtoSeverity.SevInfo, "brain.resumed", $"Brain {brainId} resumed.");
+            ScheduleImmediateTickIfIdle(context);
         }
     }
 
@@ -579,6 +580,17 @@ public sealed partial class HiveMindActor
         }
 
         ScheduleSelf(context, delay, new TickStart());
+    }
+
+    private void ScheduleImmediateTickIfIdle(IContext context)
+    {
+        if (_tickLoopEnabled
+            && !_rescheduleInProgress
+            && _phase == TickPhase.Idle
+            && _pendingBarrierWorkBrains.Count == 0)
+        {
+            ScheduleNextTick(context, TimeSpan.Zero);
+        }
     }
 
     private static bool CanDispatchTickToBrain(BrainState brain)

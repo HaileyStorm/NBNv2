@@ -207,11 +207,20 @@ public sealed partial class HiveMindActor
     private void StartPendingRuntimeReset(IContext context, BrainState brain)
     {
         var pending = brain.PendingRuntimeReset;
-        if (pending is null || !_pendingBarrierWorkBrains.Add(brain.BrainId) || _ioPid is null)
+        if (pending is null || _pendingBarrierWorkBrains.Contains(brain.BrainId))
         {
             return;
         }
 
+        if (_ioPid is null)
+        {
+            brain.PendingRuntimeReset = null;
+            pending.Completion.TrySetResult(BuildRuntimeResetAck(brain.BrainId, success: false, "io_gateway_unavailable"));
+            ScheduleImmediateTickIfIdle(context);
+            return;
+        }
+
+        _pendingBarrierWorkBrains.Add(brain.BrainId);
         var minimumAcceptedTickId = ResolveRuntimeResetMinimumAcceptedTickId(brain);
         var ioPid = ResolveSendTargetPid(context, _ioPid);
         context.ReenterAfter(
@@ -272,10 +281,7 @@ public sealed partial class HiveMindActor
             return;
         }
 
-        if (_tickLoopEnabled && !_rescheduleInProgress && _phase == TickPhase.Idle && _pendingBarrierWorkBrains.Count == 0)
-        {
-            ScheduleNextTick(context, TimeSpan.Zero);
-        }
+        ScheduleImmediateTickIfIdle(context);
     }
 
     private static ProtoIo.IoCommandAck BuildRuntimeResetAck(Guid brainId, bool success, string message)
