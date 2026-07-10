@@ -6,6 +6,21 @@ namespace Nbn.Tests.Artifacts;
 public sealed class ArtifactStoreConformanceTests
 {
     [Fact]
+    public async Task NativeSqliteVersion_MeetsSecurityBaseline()
+    {
+        var required = new Version(3, 50, 2);
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT sqlite_version();";
+
+        var versionText = Assert.IsType<string>(await command.ExecuteScalarAsync());
+
+        Assert.True(Version.TryParse(versionText, out var actual), $"SQLite returned invalid version '{versionText}'.");
+        Assert.True(actual >= required, $"SQLite {actual} is below required security baseline {required}.");
+    }
+
+    [Fact]
     public async Task StoreAsync_OverlappingArtifacts_ReusesChunks_AndIncrementsChunkRefCounts()
     {
         var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-artifact-conformance-{Guid.NewGuid():N}");
