@@ -1,5 +1,5 @@
-model = "gpt-5.6-terra"
-model_reasoning_effort = "high"
+model = "gpt-5.6-luna"
+model_reasoning_effort = "xhigh"
 model_context_window = 480000
 model_auto_compact_token_limit = 480000
 tool_output_token_limit = 37500

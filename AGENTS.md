@@ -47,11 +47,9 @@
 
 ## Model policy
 
-- Use GPT-5.6 Sol as the default model for local work, implementation, review, and correctness-heavy agents.
-- Use GPT-5.6 Terra for code-oriented scouts and GPT-5.6 Luna for bounded documentation or packetizing roles.
-- Use `high` or greater reasoning for coding work except short, rote changes. Never use less than `medium` reasoning for any work.
-- Escalate difficult cross-cutting or correctness-critical work to `xhigh`, and use Sol or Terra at `ultra` for very difficult, extended, or highly detailed reasoning/programming. For such work, the practical hierarchy is `ultra >> xhigh >>>>>> high >> medium > low`; token use rises similarly, though the `high` to `xhigh` quality gain is disproportionately large. Never assign Luna `ultra`.
-- Spark is a fallback only when the selected GPT-5.6 model is unavailable because of quota and Spark quota remains available; rerun the same scoped task explicitly rather than pinning Spark in a primary role profile.
+- Never use `ultra`. Sol is valid only at `high`, `xhigh`, or `max`; Terra only at `xhigh` or `max`; Luna only at `high`, `xhigh`, or `max`.
+- Use Luna `high` instead of Terra `medium`, Luna `xhigh`/`max` instead of Terra `high`, and Terra `xhigh`/`max` instead of Sol `medium`. Coding defaults to Sol `high`.
+- Spark is a quota fallback only for definitely bounded, Spark-suitable work. Every subagent-launching agent treats `⚠ Selected model is at capacity. Please try a different model.` as quota: retry after 5 minutes, then 10, then 20/40 minutes with a reasonable cap, preserving state unless a definitely suitable Spark fallback can run.
 - Keep repo-local context-window and automatic-compaction overrides at 480,000 tokens.
 
 ## Documentation maintenance policy (required)
