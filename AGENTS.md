@@ -50,6 +50,7 @@
 - Use GPT-5.6 Sol as the default model for local work, implementation, review, and correctness-heavy agents.
 - Use GPT-5.6 Terra for code-oriented scouts and GPT-5.6 Luna for bounded documentation or packetizing roles.
 - Use `high` or greater reasoning for coding work except short, rote changes. Never use less than `medium` reasoning for any work.
+- Escalate difficult cross-cutting or correctness-critical work to `xhigh`, and use Sol or Terra at `ultra` for very difficult, extended, or highly detailed reasoning/programming. For such work, the practical hierarchy is `ultra >> xhigh >>>>>> high >> medium > low`; token use rises similarly, though the `high` to `xhigh` quality gain is disproportionately large. Never assign Luna `ultra`.
 - Spark is a fallback only when the selected GPT-5.6 model is unavailable because of quota and Spark quota remains available; rerun the same scoped task explicitly rather than pinning Spark in a primary role profile.
 - Keep repo-local context-window and automatic-compaction overrides at 480,000 tokens.
 
