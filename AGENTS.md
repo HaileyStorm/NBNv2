@@ -47,11 +47,11 @@
 
 ## Model policy
 
-- Allowed model families are GPT-5.5 and Spark only.
-- Use GPT-5.5 as the default non-Spark model for local work and any agent/model override.
-- Use Spark only for discovery-only, simple mechanical, or otherwise low-risk delegated work while Spark quota is available.
-- If Spark quota is exhausted or unavailable, promote the work to GPT-5.5; medium reasoning is the default when GPT-5.5 is replacing Spark unless the task risk calls for high or xhigh.
-- Do not use GPT-5.4 model aliases for this repository.
+- Use GPT-5.6 Sol as the default model for local work, implementation, review, and correctness-heavy agents.
+- Use GPT-5.6 Terra for code-oriented scouts and GPT-5.6 Luna for bounded documentation or packetizing roles.
+- Use `high` or greater reasoning for coding work except short, rote changes. Never use less than `medium` reasoning for any work.
+- Spark is a fallback only when the selected GPT-5.6 model is unavailable because of quota and Spark quota remains available; rerun the same scoped task explicitly rather than pinning Spark in a primary role profile.
+- Keep repo-local context-window and automatic-compaction overrides at 480,000 tokens.
 
 ## Documentation maintenance policy (required)
 
