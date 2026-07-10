@@ -12,6 +12,7 @@ Owns the stable shared contracts and helper layer consumed by runtime services, 
 ## Stable invariants
 
 - Public shared helpers must preserve current wire, file-format, and validation semantics unless a broader spec change explicitly updates them.
+- Binary readers reject artifact-controlled counts, impossible checkpoint layouts, and truncated record sections before constructing count-sized arrays.
 - Input region `0`, output region `31`, and illegal IO-region axon rules remain fixed across shared validation and format helpers.
 - Cleanup in this project should favor clearer organization, docs, and annotations over behavior changes.
 

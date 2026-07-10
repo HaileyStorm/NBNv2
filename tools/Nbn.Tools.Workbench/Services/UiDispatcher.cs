@@ -33,4 +33,20 @@ public sealed class UiDispatcher
 
         Dispatcher.UIThread.Post(action);
     }
+
+    /// <summary>
+    /// Defers an action to a later UI turn when a live Avalonia lifetime exists, or executes it inline in headless usage.
+    /// </summary>
+    public void PostDeferred(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+
+        if (Application.Current?.ApplicationLifetime is null)
+        {
+            action();
+            return;
+        }
+
+        Dispatcher.UIThread.Post(action);
+    }
 }

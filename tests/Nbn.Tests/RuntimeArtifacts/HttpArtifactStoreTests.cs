@@ -38,11 +38,11 @@ public sealed class HttpArtifactStoreTests
         Assert.Equal(1, server.StoreRequests);
         Assert.True(server.ManifestRequests >= 1);
         Assert.True(server.ArtifactRequests >= 2);
-        Assert.Equal(1, server.RangeRequests);
+        Assert.Equal(0, server.RangeRequests);
     }
 
     [Fact]
-    public async Task TryOpenArtifactRangeAsync_WhenServerDoesNotSupportRange_FallsBackToFullArtifactRead()
+    public async Task TryOpenArtifactRangeAsync_DerivesRangeFromVerifiedFullArtifactRead()
     {
         await using var server = new HttpArtifactStoreTestServer(supportsRangeRequests: false);
         var store = new HttpArtifactStore(server.BaseUri);
@@ -55,8 +55,55 @@ public sealed class HttpArtifactStoreTests
 
         var expected = vector.Bytes.AsSpan((int)region.Offset, (int)region.Length).ToArray();
         Assert.Equal(expected, await ReadAllBytesAsync(rangeStream!));
-        Assert.Equal(1, server.RangeRequests);
-        Assert.True(server.ArtifactRequests >= 2);
+        Assert.Equal(0, server.RangeRequests);
+        Assert.Equal(1, server.ArtifactRequests);
+    }
+
+    [Theory]
+    [InlineData("truncated")]
+    [InlineData("oversized")]
+    [InlineData("hash-mismatch")]
+    public async Task TryOpenArtifactAsync_WhenPayloadIdentityIsInvalid_RejectsBeforeReturningStream(string corruption)
+    {
+        await using var server = new HttpArtifactStoreTestServer(
+            artifactPayloadTransform: payload => CorruptPayload(payload, corruption));
+        var expected = new byte[] { 3, 1, 4, 1, 5, 9 };
+        var manifest = await server.SeedAsync(expected, "application/octet-stream");
+        var store = new HttpArtifactStore(server.BaseUri);
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => store.TryOpenArtifactAsync(manifest.ArtifactId));
+    }
+
+    [Fact]
+    public async Task CachingStore_WhenHttpPayloadHashIsInvalid_DoesNotPolluteArtifactCache()
+    {
+        await using var server = new HttpArtifactStoreTestServer(
+            artifactPayloadTransform: payload => CorruptPayload(payload, "hash-mismatch"));
+        var expected = new byte[] { 2, 7, 1, 8, 2, 8 };
+        var manifest = await server.SeedAsync(expected, "application/octet-stream");
+        var cacheRoot = Path.Combine(Path.GetTempPath(), $"nbn-http-integrity-cache-{Guid.NewGuid():N}");
+
+        try
+        {
+            var store = new CachingArtifactStore(
+                new HttpArtifactStore(server.BaseUri),
+                new ArtifactCacheOptions(cacheRoot));
+
+            await Assert.ThrowsAsync<InvalidDataException>(
+                () => store.TryOpenArtifactAsync(manifest.ArtifactId));
+
+            Assert.False(
+                Directory.Exists(cacheRoot)
+                && Directory.EnumerateFiles(cacheRoot, "*", SearchOption.AllDirectories).Any());
+        }
+        finally
+        {
+            if (Directory.Exists(cacheRoot))
+            {
+                Directory.Delete(cacheRoot, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -68,7 +115,20 @@ public sealed class HttpArtifactStoreTests
 
         Assert.Null(await store.TryGetManifestAsync(missing));
         Assert.Null(await store.TryOpenArtifactAsync(missing));
+        Assert.Null(await store.TryOpenArtifactRangeAsync(missing, 0, 0));
         Assert.Null(await store.TryOpenArtifactRangeAsync(missing, 0, 1));
+    }
+
+    [Fact]
+    public async Task TryOpenArtifactRangeAsync_ZeroLengthBeyondEnd_IsRejected()
+    {
+        await using var server = new HttpArtifactStoreTestServer();
+        var payload = new byte[] { 1, 2, 3 };
+        var manifest = await server.SeedAsync(payload, "application/octet-stream");
+        var store = new HttpArtifactStore(server.BaseUri);
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => store.TryOpenArtifactRangeAsync(manifest.ArtifactId, payload.Length + 1, 0));
     }
 
     private static async Task<byte[]> ReadAllBytesAsync(Stream stream)
@@ -77,4 +137,13 @@ public sealed class HttpArtifactStoreTests
         await stream.CopyToAsync(buffer);
         return buffer.ToArray();
     }
+
+    private static byte[] CorruptPayload(byte[] payload, string corruption)
+        => corruption switch
+        {
+            "truncated" => payload[..^1],
+            "oversized" => [.. payload, 0],
+            "hash-mismatch" => payload.Select((value, index) => index == 0 ? (byte)(value ^ 0xff) : value).ToArray(),
+            _ => throw new ArgumentOutOfRangeException(nameof(corruption), corruption, "Unknown corruption mode.")
+        };
 }

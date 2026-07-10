@@ -26,6 +26,38 @@ public class NbnBinaryValidatorTests
     }
 
     [Fact]
+    public void ValidateNbn_MaximumStride_UsesOverflowSafeCheckpointCount()
+    {
+        const uint stride = uint.MaxValue;
+        var neurons = new[]
+        {
+            new NeuronRecord(0, 0, 0, 0, 0, 0, 0, 0, true),
+            new NeuronRecord(0, 0, 0, 0, 0, 0, 0, 0, true)
+        };
+        var checkpoints = NbnBinary.BuildCheckpoints(neurons, stride);
+        var input = new NbnRegionSection(0, 2, 0, stride, (uint)checkpoints.Length, checkpoints, neurons, Array.Empty<AxonRecord>());
+        var output = new NbnRegionSection(31, 2, 0, stride, (uint)checkpoints.Length, checkpoints, neurons, Array.Empty<AxonRecord>());
+        var directory = new NbnRegionDirectoryEntry[NbnConstants.RegionCount];
+        directory[0] = new NbnRegionDirectoryEntry(2, 0, NbnBinary.NbnHeaderBytes, 0);
+        directory[31] = new NbnRegionDirectoryEntry(2, 0, (ulong)(NbnBinary.NbnHeaderBytes + input.ByteLength), 0);
+        var header = new NbnHeaderV2(
+            "NBN2",
+            2,
+            1,
+            10,
+            0,
+            stride,
+            0,
+            QuantizationSchemas.DefaultNbn,
+            directory);
+
+        var result = NbnBinaryValidator.ValidateNbn(header, new[] { input, output });
+
+        Assert.True(result.IsValid, FormatIssues(result));
+        Assert.Equal(new ulong[] { 0, 0 }, checkpoints);
+    }
+
+    [Fact]
     public void ValidateNbn_DetectsUnsortedAxons()
     {
         var stride = (uint)NbnConstants.DefaultAxonStride;

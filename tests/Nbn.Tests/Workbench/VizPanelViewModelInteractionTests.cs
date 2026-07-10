@@ -127,6 +127,21 @@ public class VizPanelViewModelInteractionTests
             "ApplyTickCadenceAsync",
             BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("ApplyTickCadenceAsync method not found.");
+    private static readonly MethodInfo FlushPendingEventsMethod =
+        typeof(VizPanelViewModel).GetMethod(
+            "FlushPendingEvents",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("FlushPendingEvents method not found.");
+    private static readonly FieldInfo PendingEventsField =
+        typeof(VizPanelViewModel).GetField(
+            "_pendingEvents",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("_pendingEvents field not found.");
+    private static readonly FieldInfo FlushScheduledField =
+        typeof(VizPanelViewModel).GetField(
+            "_flushScheduled",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("_flushScheduled field not found.");
 
     [Fact]
     public void TryResolveCanvasHit_NodeHoverStickyTolerance_ResolvesNearMiss()
@@ -1623,6 +1638,46 @@ public class VizPanelViewModelInteractionTests
             tickId: 11));
 
         Assert.Empty(vm.VizEvents);
+    }
+
+    [Fact]
+    public void FlushPendingEvents_MoreThanOneBatch_WithoutApplicationLifetime_DrainsAll()
+    {
+        AvaloniaTestHost.EnsureInitialized();
+        Assert.Null(Avalonia.Application.Current?.ApplicationLifetime);
+        var vm = CreateViewModel();
+        var brain = new BrainListItem(Guid.NewGuid(), "Running", true);
+        vm.KnownBrains.Add(brain);
+        vm.SelectedBrain = brain;
+        var pending = Assert.IsType<Queue<VizEventItem>>(PendingEventsField.GetValue(vm));
+
+        for (ulong tick = 1; tick <= 97; tick++)
+        {
+            pending.Enqueue(CreateVizEvent(
+                type: VizEventType.VizNeuronFired.ToString(),
+                brainId: brain.BrainId.ToString("D"),
+                tickId: tick,
+                region: "1",
+                source: tick.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        FlushScheduledField.SetValue(vm, true);
+        FlushPendingEventsMethod.Invoke(vm, null);
+
+        Assert.Equal(97, vm.VizEvents.Count);
+        Assert.Empty(pending);
+        Assert.False(Assert.IsType<bool>(FlushScheduledField.GetValue(vm)));
+
+        vm.AddVizEvent(CreateVizEvent(
+            type: VizEventType.VizNeuronFired.ToString(),
+            brainId: brain.BrainId.ToString("D"),
+            tickId: 98,
+            region: "1",
+            source: "98"));
+
+        Assert.Equal(98, vm.VizEvents.Count);
+        Assert.Empty(pending);
+        Assert.False(Assert.IsType<bool>(FlushScheduledField.GetValue(vm)));
     }
 
     [Fact]

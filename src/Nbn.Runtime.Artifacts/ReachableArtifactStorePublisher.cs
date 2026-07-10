@@ -364,8 +364,10 @@ public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
                 }
 
                 var offset = range.From.Value;
-                var length = checked(range.To.Value - offset + 1);
-                if (offset < 0 || length < 0 || offset + length > manifest.ByteLength)
+                var end = range.To.Value;
+                if (offset < 0
+                    || end < offset
+                    || end >= manifest.ByteLength)
                 {
                     await WriteErrorAsync(
                         context.Response,
@@ -374,6 +376,8 @@ public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
                         context.RequestAborted).ConfigureAwait(false);
                     return;
                 }
+
+                var length = end - offset + 1;
 
                 await using var rangeStream = await store
                     .TryOpenArtifactRangeAsync(artifactId, offset, length, context.RequestAborted)
@@ -392,7 +396,7 @@ public sealed class ReachableArtifactStorePublisher : IAsyncDisposable
                 context.Response.ContentType = manifest.MediaType;
                 context.Response.ContentLength = length;
                 context.Response.Headers.AcceptRanges = "bytes";
-                context.Response.Headers.ContentRange = $"bytes {offset}-{offset + length - 1}/{manifest.ByteLength}";
+                context.Response.Headers.ContentRange = $"bytes {offset}-{end}/{manifest.ByteLength}";
                 await rangeStream.CopyToAsync(context.Response.Body, context.RequestAborted).ConfigureAwait(false);
             });
     }

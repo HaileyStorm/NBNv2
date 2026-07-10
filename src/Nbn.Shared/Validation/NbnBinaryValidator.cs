@@ -312,7 +312,7 @@ public static class NbnBinaryValidator
         }
         else
         {
-            var expectedCheckpointCount = (uint)((section.NeuronSpan + section.Stride - 1) / section.Stride + 1);
+            var expectedCheckpointCount = NbnBinary.GetCheckpointCount(section.NeuronSpan, section.Stride);
             if (section.CheckpointCount != expectedCheckpointCount)
             {
                 result.Add("Checkpoint count does not match stride rules.", context);

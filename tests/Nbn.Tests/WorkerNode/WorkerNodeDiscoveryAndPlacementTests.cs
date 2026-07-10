@@ -2890,7 +2890,7 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
             Assert.True(firstAck.Accepted);
             Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, firstAck.State);
             Assert.Equal(2, server.ArtifactRequests);
-            Assert.Equal(2, server.RangeRequests);
+            Assert.Equal(0, server.RangeRequests);
 
             var secondBrainId = Guid.NewGuid();
             var secondAck = await harness.Root.RequestAsync<PlacementAssignmentAck>(
@@ -2912,7 +2912,7 @@ public sealed class WorkerNodeDiscoveryAndPlacementTests
             Assert.True(secondAck.Accepted);
             Assert.Equal(PlacementAssignmentState.PlacementAssignmentReady, secondAck.State);
             Assert.Equal(2, server.ArtifactRequests);
-            Assert.Equal(2, server.RangeRequests);
+            Assert.Equal(0, server.RangeRequests);
         }
         finally
         {

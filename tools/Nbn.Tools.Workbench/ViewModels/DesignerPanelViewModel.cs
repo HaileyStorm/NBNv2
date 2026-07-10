@@ -13,7 +13,6 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
-using Avalonia.Threading;
 using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Nbn.Shared.Format;
@@ -114,6 +113,7 @@ public sealed partial class DesignerPanelViewModel : ViewModelBase
     private static readonly double[] AccumulationFunctionWeights = BuildAccumulationFunctionWeights();
     private readonly ConnectionViewModel _connections;
     private readonly WorkbenchClient _client;
+    private readonly UiDispatcher _dispatcher;
     private readonly IWorkbenchArtifactPublisher _artifactPublisher;
     private readonly Action<Guid>? _brainDiscovered;
     private readonly Dictionary<Guid, DesignerSpawnState> _spawnedBrains = new();
@@ -177,10 +177,12 @@ public sealed partial class DesignerPanelViewModel : ViewModelBase
         ConnectionViewModel connections,
         WorkbenchClient client,
         Action<Guid>? brainDiscovered = null,
-        IWorkbenchArtifactPublisher? artifactPublisher = null)
+        IWorkbenchArtifactPublisher? artifactPublisher = null,
+        UiDispatcher? dispatcher = null)
     {
         _connections = connections;
         _client = client;
+        _dispatcher = dispatcher ?? new UiDispatcher();
         _artifactPublisher = artifactPublisher ?? new WorkbenchArtifactPublisher(logInfo: WorkbenchLog.Info, logWarn: WorkbenchLog.Warn);
         _brainDiscovered = brainDiscovered;
         _spawnArtifactRoot = BuildDefaultArtifactRoot();

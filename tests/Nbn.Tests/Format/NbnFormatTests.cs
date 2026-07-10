@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using Nbn.Shared;
 using Nbn.Shared.Format;
@@ -132,6 +133,46 @@ public class NbnFormatTests
         Assert.Equal(new ulong[] { 0, 4, 7, 8 }, section.Checkpoints);
 
         AssertAxonOrdering(section);
+    }
+
+    [Fact]
+    public void NbnRegionSection_HugeCheckpointCount_IsRejectedBeforeAllocation()
+    {
+        var section = CreateRegionSectionHeader(neuronSpan: 0, totalAxons: 0, stride: 1, checkpointCount: uint.MaxValue);
+
+        var error = Assert.Throws<InvalidDataException>(() => NbnBinary.ReadNbnRegionSection(section, 0));
+
+        Assert.Contains("Checkpoint count", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NbnRegionSection_HugeNeuronSpan_IsRejectedBeforeAllocation()
+    {
+        var section = CreateRegionSectionHeader(neuronSpan: uint.MaxValue, totalAxons: 0, stride: 1, checkpointCount: 0);
+
+        var error = Assert.Throws<InvalidDataException>(() => NbnBinary.ReadNbnRegionSection(section, 0));
+
+        Assert.Contains("Neuron span", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NbnRegionSection_HugeAxonCount_IsRejectedBeforeAllocation()
+    {
+        var section = CreateRegionSectionHeader(neuronSpan: 0, totalAxons: ulong.MaxValue, stride: 1, checkpointCount: 1);
+
+        var error = Assert.Throws<InvalidDataException>(() => NbnBinary.ReadNbnRegionSection(section, 0));
+
+        Assert.Contains("Total axons", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NbnRegionSection_DeclaredRecordsBeyondInput_AreRejectedBeforeAllocation()
+    {
+        var section = CreateRegionSectionHeader(neuronSpan: 1, totalAxons: 0, stride: 1, checkpointCount: 2);
+
+        var error = Assert.Throws<InvalidDataException>(() => NbnBinary.ReadNbnRegionSection(section, 0));
+
+        Assert.Contains("do not fit", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -303,6 +344,20 @@ public class NbnFormatTests
         Assert.Equal(expected.Min, actual.Min, 6);
         Assert.Equal(expected.Max, actual.Max, 6);
         Assert.Equal(expected.Gamma, actual.Gamma, 6);
+    }
+
+    private static byte[] CreateRegionSectionHeader(
+        uint neuronSpan,
+        ulong totalAxons,
+        uint stride,
+        uint checkpointCount)
+    {
+        var section = new byte[24];
+        BinaryPrimitives.WriteUInt32LittleEndian(section.AsSpan(4, 4), neuronSpan);
+        BinaryPrimitives.WriteUInt64LittleEndian(section.AsSpan(8, 8), totalAxons);
+        BinaryPrimitives.WriteUInt32LittleEndian(section.AsSpan(16, 4), stride);
+        BinaryPrimitives.WriteUInt32LittleEndian(section.AsSpan(20, 4), checkpointCount);
+        return section;
     }
 
     private static void AssertNeuronRecord(Nbn.Shared.Packing.NeuronRecord expected, Nbn.Shared.Packing.NeuronRecord actual)

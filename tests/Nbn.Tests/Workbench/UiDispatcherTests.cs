@@ -19,4 +19,19 @@ public sealed class UiDispatcherTests
 
         Assert.Equal(callingThreadId, executedThreadId);
     }
+
+    [Fact]
+    public void PostDeferred_WithoutApplicationLifetime_ExecutesInlineOnCallingThread()
+    {
+        AvaloniaTestHost.EnsureInitialized();
+        Assert.Null(Application.Current?.ApplicationLifetime);
+
+        var dispatcher = new UiDispatcher();
+        var callingThreadId = Environment.CurrentManagedThreadId;
+        var executedThreadId = -1;
+
+        dispatcher.PostDeferred(() => executedThreadId = Environment.CurrentManagedThreadId);
+
+        Assert.Equal(callingThreadId, executedThreadId);
+    }
 }

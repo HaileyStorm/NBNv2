@@ -839,7 +839,7 @@ public sealed partial class VizPanelViewModel
 
         if (hasMore)
         {
-            Avalonia.Threading.Dispatcher.UIThread.Post(FlushPendingEvents, Avalonia.Threading.DispatcherPriority.Background);
+            _dispatcher.PostDeferred(FlushPendingEvents);
         }
     }
 

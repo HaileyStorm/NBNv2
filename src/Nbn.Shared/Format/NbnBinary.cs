@@ -122,7 +122,7 @@ public static class NbnBinary
         }
 
         var start = (int)offset;
-        if (data.Length < start + 24)
+        if (data.Length < 24 || start > data.Length - 24)
         {
             throw new ArgumentException("Data is too small for a region section header.", nameof(data));
         }
@@ -134,14 +134,41 @@ public static class NbnBinary
         var stride = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(16, 4));
         var checkpointCount = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(20, 4));
 
-        if (neuronSpan > int.MaxValue)
+        if (neuronSpan > NbnConstants.MaxAxonTargetNeuronId)
         {
-            throw new InvalidOperationException("Neuron span is too large for this parser.");
+            throw new InvalidDataException("Neuron span exceeds the 22-bit NBN format limit.");
         }
 
         if (totalAxons > int.MaxValue)
         {
-            throw new InvalidOperationException("Total axons is too large for this parser.");
+            throw new InvalidDataException("Total axons is too large for this parser.");
+        }
+
+        var maxAxonsForSpan = (ulong)neuronSpan * NbnConstants.MaxAxonsPerNeuron;
+        if (totalAxons > maxAxonsForSpan)
+        {
+            throw new InvalidDataException("Total axons exceeds the maximum representable by the region neuron span.");
+        }
+
+        if (stride == 0)
+        {
+            throw new InvalidDataException("Region stride must be greater than zero.");
+        }
+
+        var expectedCheckpointCount = GetCheckpointCount(neuronSpan, stride);
+        if (checkpointCount != expectedCheckpointCount)
+        {
+            throw new InvalidDataException(
+                $"Checkpoint count {checkpointCount} does not match expected count {expectedCheckpointCount}.");
+        }
+
+        var checkpointBytes = (ulong)checkpointCount * sizeof(ulong);
+        var neuronBytes = (ulong)neuronSpan * NbnConstants.NeuronRecordBytes;
+        var axonBytes = totalAxons * NbnConstants.AxonRecordBytes;
+        var requiredRecordBytes = checkpointBytes + neuronBytes + axonBytes;
+        if (requiredRecordBytes > (ulong)(span.Length - 24))
+        {
+            throw new InvalidDataException("Declared checkpoint, neuron, and axon records do not fit in the region section data.");
         }
 
         var checkpointOffset = 24;
@@ -667,14 +694,13 @@ public static class NbnBinary
         var neuronSpan = (uint)neurons.Count;
         var checkpointCount = GetCheckpointCount(neuronSpan, stride);
         var checkpoints = new ulong[checkpointCount];
-        var strideInt = checked((int)stride);
         ulong cumulative = 0;
 
         for (var i = 0; i < neurons.Count; i++)
         {
-            if (i % strideInt == 0)
+            if ((uint)i % stride == 0)
             {
-                checkpoints[i / strideInt] = cumulative;
+                checkpoints[(uint)i / stride] = cumulative;
             }
 
             cumulative += neurons[i].AxonCount;
@@ -684,14 +710,14 @@ public static class NbnBinary
         return checkpoints;
     }
 
-    private static uint GetCheckpointCount(uint neuronSpan, uint stride)
+    internal static uint GetCheckpointCount(uint neuronSpan, uint stride)
     {
         if (stride == 0)
         {
             return 0;
         }
 
-        return (uint)((neuronSpan + stride - 1) / stride + 1);
+        return checked((uint)(((ulong)neuronSpan + stride - 1UL) / stride + 1UL));
     }
 
     private static NbnQuantizationSchema ReadNbnQuantization(ReadOnlySpan<byte> data)

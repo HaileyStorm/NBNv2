@@ -132,10 +132,7 @@ public sealed class LocalArtifactStore : IArtifactStore
             return null;
         }
 
-        if (offset > manifest.ByteLength || offset + length > manifest.ByteLength)
-        {
-            throw new ArgumentOutOfRangeException(nameof(offset), offset, "Requested range exceeds artifact length.");
-        }
+        ArtifactRangeSupport.ValidateRangeWithin(manifest.ByteLength, offset, length);
 
         if (length == 0)
         {

@@ -109,10 +109,7 @@ public sealed class CachingArtifactStore : IArtifactStore
         var cachedEntry = await _cache.TryGetAsync(artifactId, cancellationToken).ConfigureAwait(false);
         if (cachedEntry is not null)
         {
-            if (offset > cachedEntry.ByteLength || offset + length > cachedEntry.ByteLength)
-            {
-                throw new ArgumentOutOfRangeException(nameof(offset), offset, "Requested range exceeds artifact length.");
-            }
+            ArtifactRangeSupport.ValidateRangeWithin(cachedEntry.ByteLength, offset, length);
 
             return new ArtifactRangeStream(OpenCachedEntry(cachedEntry), offset, length);
         }
@@ -129,10 +126,7 @@ public sealed class CachingArtifactStore : IArtifactStore
             return null;
         }
 
-        if (offset > manifest.ByteLength || offset + length > manifest.ByteLength)
-        {
-            throw new ArgumentOutOfRangeException(nameof(offset), offset, "Requested range exceeds artifact length.");
-        }
+        ArtifactRangeSupport.ValidateRangeWithin(manifest.ByteLength, offset, length);
 
         var upstreamRange = await _upstream.TryOpenArtifactRangeAsync(artifactId, offset, length, cancellationToken).ConfigureAwait(false);
         if (upstreamRange is null)

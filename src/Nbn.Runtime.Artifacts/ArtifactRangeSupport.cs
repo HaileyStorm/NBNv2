@@ -15,6 +15,20 @@ internal static class ArtifactRangeSupport
         }
     }
 
+    public static void ValidateRangeWithin(long totalLength, long offset, long length)
+    {
+        if (totalLength < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(totalLength), totalLength, "Total length must be non-negative.");
+        }
+
+        ValidateRange(offset, length);
+        if (offset > totalLength || length > totalLength - offset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset), offset, "Requested range exceeds artifact length.");
+        }
+    }
+
     public static async Task<Stream?> TryOpenFallbackAsync(
         IArtifactStore store,
         Sha256Hash artifactId,
@@ -23,6 +37,18 @@ internal static class ArtifactRangeSupport
         CancellationToken cancellationToken)
     {
         ValidateRange(offset, length);
+
+        var manifest = await store.TryGetManifestAsync(artifactId, cancellationToken).ConfigureAwait(false);
+        if (manifest is null)
+        {
+            return null;
+        }
+
+        ValidateRangeWithin(manifest.ByteLength, offset, length);
+        if (length == 0)
+        {
+            return new MemoryStream(Array.Empty<byte>(), writable: false);
+        }
 
         var stream = await store.TryOpenArtifactAsync(artifactId, cancellationToken).ConfigureAwait(false);
         if (stream is null)

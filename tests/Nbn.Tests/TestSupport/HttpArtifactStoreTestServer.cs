@@ -14,10 +14,14 @@ public sealed class HttpArtifactStoreTestServer : IAsyncDisposable
     private readonly HttpListener _listener;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loopTask;
+    private readonly Func<byte[], byte[]>? _artifactPayloadTransform;
 
-    public HttpArtifactStoreTestServer(bool supportsRangeRequests = true)
+    public HttpArtifactStoreTestServer(
+        bool supportsRangeRequests = true,
+        Func<byte[], byte[]>? artifactPayloadTransform = null)
     {
         SupportsRangeRequests = supportsRangeRequests;
+        _artifactPayloadTransform = artifactPayloadTransform;
         _rootPath = TempDirectoryScope.Create("nbn-http-artifact-store", clearSqlitePools: true);
         _store = new LocalArtifactStore(new ArtifactStoreOptions(_rootPath));
 
@@ -208,8 +212,19 @@ public sealed class HttpArtifactStoreTestServer : IAsyncDisposable
 
             response.StatusCode = (int)HttpStatusCode.OK;
             response.ContentType = manifest.MediaType;
-            response.ContentLength64 = manifest.ByteLength;
             response.Headers[HttpResponseHeader.AcceptRanges] = "bytes";
+
+            if (_artifactPayloadTransform is not null)
+            {
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+                var payload = _artifactPayloadTransform(buffer.ToArray());
+                response.ContentLength64 = payload.Length;
+                await response.OutputStream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            response.ContentLength64 = manifest.ByteLength;
             await stream.CopyToAsync(response.OutputStream, cancellationToken).ConfigureAwait(false);
             return;
         }
@@ -237,12 +252,16 @@ public sealed class HttpArtifactStoreTestServer : IAsyncDisposable
         }
 
         var offset = range.From.Value;
-        var length = checked(range.To.Value - offset + 1);
-        if (offset < 0 || length < 0 || offset + length > manifest.ByteLength)
+        var end = range.To.Value;
+        if (offset < 0
+            || end < offset
+            || end >= manifest.ByteLength)
         {
             await WriteErrorAsync(response, HttpStatusCode.RequestedRangeNotSatisfiable, "range_out_of_bounds", cancellationToken).ConfigureAwait(false);
             return;
         }
+
+        var length = end - offset + 1;
 
         await using var rangeStream = await _store.TryOpenArtifactRangeAsync(artifactId, offset, length, cancellationToken).ConfigureAwait(false);
         if (rangeStream is null)
@@ -255,7 +274,7 @@ public sealed class HttpArtifactStoreTestServer : IAsyncDisposable
         response.ContentType = manifest.MediaType;
         response.ContentLength64 = length;
         response.Headers[HttpResponseHeader.AcceptRanges] = "bytes";
-        response.Headers[HttpResponseHeader.ContentRange] = $"bytes {offset}-{offset + length - 1}/{manifest.ByteLength}";
+        response.Headers[HttpResponseHeader.ContentRange] = $"bytes {offset}-{end}/{manifest.ByteLength}";
         await rangeStream.CopyToAsync(response.OutputStream, cancellationToken).ConfigureAwait(false);
     }
 

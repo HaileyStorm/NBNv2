@@ -1,5 +1,7 @@
+using System.Buffers;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 
 namespace Nbn.Runtime.Artifacts;
 
@@ -106,7 +108,14 @@ public sealed class HttpArtifactStore : IArtifactStore
         }
 
         await EnsureSuccessStatusCodeAsync(response, cancellationToken).ConfigureAwait(false);
-        return await ArtifactStoreHttpPayloads.DeserializeManifestAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        var manifest = await ArtifactStoreHttpPayloads.DeserializeManifestAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        if (manifest.ArtifactId != artifactId)
+        {
+            throw new InvalidDataException(
+                $"Artifact store returned manifest {manifest.ArtifactId} for requested artifact {artifactId}.");
+        }
+
+        return manifest;
     }
 
     /// <inheritdoc />
@@ -116,8 +125,22 @@ public sealed class HttpArtifactStore : IArtifactStore
     /// <inheritdoc />
     public async Task<Stream?> TryOpenArtifactAsync(Sha256Hash artifactId, CancellationToken cancellationToken = default)
     {
+        var manifest = await TryGetManifestAsync(artifactId, cancellationToken).ConfigureAwait(false);
+        if (manifest is null)
+        {
+            return null;
+        }
+
+        return await OpenVerifiedArtifactAsync(artifactId, manifest.ByteLength, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<Stream?> OpenVerifiedArtifactAsync(
+        Sha256Hash artifactId,
+        long expectedLength,
+        CancellationToken cancellationToken)
+    {
         using var request = new HttpRequestMessage(HttpMethod.Get, BuildRelativeUri($"v1/artifacts/{artifactId.ToHex()}"));
-        var response = await _httpClient.SendAsync(
+        using var response = await _httpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken)
@@ -125,21 +148,11 @@ public sealed class HttpArtifactStore : IArtifactStore
 
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
-            response.Dispose();
             return null;
         }
 
-        try
-        {
-            await EnsureSuccessStatusCodeAsync(response, cancellationToken).ConfigureAwait(false);
-            var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            return new ResponseStream(stream, response);
-        }
-        catch
-        {
-            response.Dispose();
-            throw;
-        }
+        await EnsureSuccessStatusCodeAsync(response, cancellationToken).ConfigureAwait(false);
+        return await StageVerifiedPayloadAsync(response.Content, artifactId, expectedLength, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -150,49 +163,117 @@ public sealed class HttpArtifactStore : IArtifactStore
         CancellationToken cancellationToken = default)
     {
         ArtifactRangeSupport.ValidateRange(offset, length);
+        var manifest = await TryGetManifestAsync(artifactId, cancellationToken).ConfigureAwait(false);
+        if (manifest is null)
+        {
+            return null;
+        }
+
+        ArtifactRangeSupport.ValidateRangeWithin(manifest.ByteLength, offset, length);
         if (length == 0)
         {
             return new MemoryStream(Array.Empty<byte>(), writable: false);
         }
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, BuildRelativeUri($"v1/artifacts/{artifactId.ToHex()}"));
-        request.Headers.Range = new RangeHeaderValue(offset, offset + length - 1);
-
-        var response = await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken)
-            .ConfigureAwait(false);
-
-        if (response.StatusCode == HttpStatusCode.NotFound)
+        var verified = await OpenVerifiedArtifactAsync(artifactId, manifest.ByteLength, cancellationToken).ConfigureAwait(false);
+        if (verified is null)
         {
-            response.Dispose();
             return null;
         }
 
-        if (response.StatusCode == HttpStatusCode.MethodNotAllowed
-            || response.StatusCode == HttpStatusCode.NotImplemented)
+        return new ArtifactRangeStream(verified, offset, length);
+    }
+
+    private static async Task<Stream> StageVerifiedPayloadAsync(
+        HttpContent content,
+        Sha256Hash artifactId,
+        long expectedLength,
+        CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength is { } contentLength && contentLength != expectedLength)
         {
-            response.Dispose();
-            return await ArtifactRangeSupport.TryOpenFallbackAsync(this, artifactId, offset, length, cancellationToken).ConfigureAwait(false);
+            throw new InvalidDataException(
+                $"Artifact {artifactId} declared {contentLength} response bytes; expected {expectedLength}.");
         }
 
-        if (response.StatusCode == HttpStatusCode.OK)
-        {
-            response.Dispose();
-            return await ArtifactRangeSupport.TryOpenFallbackAsync(this, artifactId, offset, length, cancellationToken).ConfigureAwait(false);
-        }
-
+        var tempPath = Path.Combine(Path.GetTempPath(), $"nbn-http-artifact-{Guid.NewGuid():N}.tmp");
+        FileStream? staged = null;
+        var completed = false;
         try
         {
-            await EnsureSuccessStatusCodeAsync(response, cancellationToken).ConfigureAwait(false);
-            var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-            return new ResponseStream(stream, response);
+            var fileOptions = new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.ReadWrite,
+                Share = FileShare.None,
+                BufferSize = 64 * 1024,
+                Options = FileOptions.Asynchronous | FileOptions.SequentialScan | FileOptions.DeleteOnClose
+            };
+            if (!OperatingSystem.IsWindows())
+            {
+                fileOptions.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+            }
+
+            staged = new FileStream(tempPath, fileOptions);
+
+            await using var source = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = ArrayPool<byte>.Shared.Rent(81920);
+            var actualLength = 0L;
+            try
+            {
+                while (true)
+                {
+                    var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    actualLength = checked(actualLength + read);
+                    if (actualLength > expectedLength)
+                    {
+                        throw new InvalidDataException(
+                            $"Artifact {artifactId} exceeded its expected length of {expectedLength} bytes.");
+                    }
+
+                    hasher.AppendData(buffer, 0, read);
+                    await staged.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+
+            if (actualLength != expectedLength)
+            {
+                throw new InvalidDataException(
+                    $"Artifact {artifactId} contained {actualLength} bytes; expected {expectedLength}.");
+            }
+
+            var actualId = new Sha256Hash(hasher.GetHashAndReset());
+            if (actualId != artifactId)
+            {
+                throw new InvalidDataException(
+                    $"Artifact payload SHA-256 {actualId} does not match requested identity {artifactId}.");
+            }
+
+            await staged.FlushAsync(cancellationToken).ConfigureAwait(false);
+            staged.Position = 0;
+            completed = true;
+            return staged;
         }
-        catch
+        finally
         {
-            response.Dispose();
-            throw;
+            if (!completed)
+            {
+                staged?.Dispose();
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
         }
     }
 
@@ -253,87 +334,4 @@ public sealed class HttpArtifactStore : IArtifactStore
         return client;
     }
 
-    private sealed class ResponseStream : Stream
-    {
-        private readonly Stream _inner;
-        private readonly HttpResponseMessage _response;
-        private bool _disposed;
-
-        public ResponseStream(Stream inner, HttpResponseMessage response)
-        {
-            _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-            _response = response ?? throw new ArgumentNullException(nameof(response));
-        }
-
-        public override bool CanRead => _inner.CanRead;
-        public override bool CanSeek => _inner.CanSeek;
-        public override bool CanWrite => _inner.CanWrite;
-        public override long Length => _inner.Length;
-        public override long Position
-        {
-            get => _inner.Position;
-            set => _inner.Position = value;
-        }
-
-        public override void Flush() => _inner.Flush();
-
-        public override Task FlushAsync(CancellationToken cancellationToken)
-            => _inner.FlushAsync(cancellationToken);
-
-        public override int Read(byte[] buffer, int offset, int count)
-            => _inner.Read(buffer, offset, count);
-
-        public override int Read(Span<byte> buffer)
-            => _inner.Read(buffer);
-
-        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
-            => _inner.ReadAsync(buffer, cancellationToken);
-
-        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-            => _inner.ReadAsync(buffer, offset, count, cancellationToken);
-
-        public override long Seek(long offset, SeekOrigin origin)
-            => _inner.Seek(offset, origin);
-
-        public override void SetLength(long value)
-            => _inner.SetLength(value);
-
-        public override void Write(byte[] buffer, int offset, int count)
-            => _inner.Write(buffer, offset, count);
-
-        public override void Write(ReadOnlySpan<byte> buffer)
-            => _inner.Write(buffer);
-
-        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
-            => _inner.WriteAsync(buffer, cancellationToken);
-
-        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-            => _inner.WriteAsync(buffer, offset, count, cancellationToken);
-
-        protected override void Dispose(bool disposing)
-        {
-            if (!disposing || _disposed)
-            {
-                return;
-            }
-
-            _disposed = true;
-            _inner.Dispose();
-            _response.Dispose();
-            base.Dispose(disposing);
-        }
-
-        public override async ValueTask DisposeAsync()
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            _disposed = true;
-            await _inner.DisposeAsync().ConfigureAwait(false);
-            _response.Dispose();
-            await base.DisposeAsync().ConfigureAwait(false);
-        }
-    }
 }

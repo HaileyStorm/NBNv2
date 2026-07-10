@@ -114,4 +114,52 @@ public sealed class ArtifactStorePartialReadTests
             }
         }
     }
+
+    [Fact]
+    public async Task TryOpenArtifactRangeAsync_OverflowingEnd_IsRejectedAcrossLocalAndCachingPaths()
+    {
+        var artifactRoot = Path.Combine(Path.GetTempPath(), $"nbn-artifact-range-overflow-{Guid.NewGuid():N}");
+        var uncachedRoot = Path.Combine(Path.GetTempPath(), $"nbn-artifact-range-uncached-{Guid.NewGuid():N}");
+        var cachedRoot = Path.Combine(Path.GetTempPath(), $"nbn-artifact-range-cached-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(artifactRoot);
+
+        try
+        {
+            var payload = new byte[] { 1, 2, 3, 4 };
+            var local = new LocalArtifactStore(new ArtifactStoreOptions(artifactRoot));
+            var manifest = await local.StoreAsync(new MemoryStream(payload), "application/octet-stream");
+            var uncached = new CachingArtifactStore(local, new ArtifactCacheOptions(uncachedRoot));
+            var cached = new CachingArtifactStore(local, new ArtifactCacheOptions(cachedRoot));
+
+            await using (var hydrated = await cached.TryOpenArtifactAsync(manifest.ArtifactId))
+            {
+                Assert.NotNull(hydrated);
+            }
+
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+                () => local.TryOpenArtifactRangeAsync(manifest.ArtifactId, 1, long.MaxValue));
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+                () => uncached.TryOpenArtifactRangeAsync(manifest.ArtifactId, 1, long.MaxValue));
+            await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+                () => cached.TryOpenArtifactRangeAsync(manifest.ArtifactId, 1, long.MaxValue));
+
+            await using var localBoundary = await local.TryOpenArtifactRangeAsync(manifest.ArtifactId, payload.Length, 0);
+            await using var cachedBoundary = await cached.TryOpenArtifactRangeAsync(manifest.ArtifactId, payload.Length, 0);
+            Assert.NotNull(localBoundary);
+            Assert.NotNull(cachedBoundary);
+            Assert.Equal(0, localBoundary!.Length);
+            Assert.Equal(0, cachedBoundary!.Length);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            foreach (var path in new[] { artifactRoot, uncachedRoot, cachedRoot })
+            {
+                if (Directory.Exists(path))
+                {
+                    Directory.Delete(path, recursive: true);
+                }
+            }
+        }
+    }
 }

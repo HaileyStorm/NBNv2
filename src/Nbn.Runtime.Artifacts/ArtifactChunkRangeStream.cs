@@ -21,13 +21,10 @@ internal sealed class ArtifactChunkRangeStream : Stream
         var totalLength = 0L;
         foreach (var chunk in _chunks)
         {
-            totalLength += chunk.UncompressedLength;
+            totalLength = checked(totalLength + chunk.UncompressedLength);
         }
 
-        if (offset > totalLength || offset + length > totalLength)
-        {
-            throw new ArgumentOutOfRangeException(nameof(offset), offset, "Requested range exceeds artifact length.");
-        }
+        ArtifactRangeSupport.ValidateRangeWithin(totalLength, offset, length);
 
         if (length == 0)
         {

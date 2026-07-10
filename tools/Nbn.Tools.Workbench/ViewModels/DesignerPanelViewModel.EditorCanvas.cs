@@ -13,7 +13,6 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
-using Avalonia.Threading;
 using Nbn.Runtime.Artifacts;
 using Nbn.Shared;
 using Nbn.Shared.Format;
@@ -507,11 +506,11 @@ public sealed partial class DesignerPanelViewModel
         }
 
         _regionRefreshPending = true;
-        Dispatcher.UIThread.Post(() =>
+        _dispatcher.PostDeferred(() =>
         {
             _regionRefreshPending = false;
             RefreshRegionView();
-        }, DispatcherPriority.Background);
+        });
     }
 
     private void RefreshRegionView()

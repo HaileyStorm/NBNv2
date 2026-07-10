@@ -11,6 +11,32 @@ namespace Nbn.Tests.Workbench;
 public class DesignerEdgeInteractionTests
 {
     [Fact]
+    public void SelectedRegionNeuronCollectionChange_WithoutApplicationLifetime_RefreshesVisiblePageInline()
+    {
+        AvaloniaTestHost.RunOnUiThread(() =>
+        {
+            Assert.Null(Application.Current?.ApplicationLifetime);
+            var vm = CreateViewModel();
+            var region = vm.Brain!.Regions[0];
+            vm.SelectRegionCommand.Execute(region);
+            var originalCount = region.Neurons.Count;
+            var added = new DesignerNeuronViewModel(region.RegionId, originalCount, exists: true, isRequired: true);
+
+            region.Neurons.Add(added);
+
+            Assert.Equal(originalCount + 1, vm.VisibleNeurons.Count);
+            Assert.Contains(added, vm.VisibleNeurons);
+            Assert.Equal(1, vm.RegionPageCount);
+            Assert.Equal($"Showing 0-{originalCount} of {originalCount + 1}", vm.RegionPageSummary);
+
+            region.Neurons.Remove(added);
+
+            Assert.Equal(originalCount, vm.VisibleNeurons.Count);
+            Assert.DoesNotContain(added, vm.VisibleNeurons);
+        });
+    }
+
+    [Fact]
     public void RefreshEdges_AssignsBundleMetadata_ForVisibleOutboundEdges()
     {
         AvaloniaTestHost.RunOnUiThread(() =>
