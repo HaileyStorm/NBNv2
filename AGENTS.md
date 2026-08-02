@@ -47,10 +47,11 @@
 
 ## Model policy
 
-- Never use `ultra`. Sol is valid only at `high`, `xhigh`, or `max`; Terra only at `xhigh` or `max`; Luna only at `high`, `xhigh`, or `max`.
-- Use Luna `high` instead of Terra `medium`, Luna `xhigh`/`max` instead of Terra `high`, and Terra `xhigh`/`max` instead of Sol `medium`. Coding defaults to Sol `high`.
+- Never use `ultra`. Sol, Terra, and Luna are valid only at `high`, `xhigh`, or `max` in this repository.
+- Use Luna `xhigh` for broad, bounded read-only discovery and inventory; use Terra `high`/`xhigh` to refine or verify those findings; use Sol `high` for implementation, invariant guards, architecture, and consequential review. Coding defaults to Sol `high`.
+- At the 2026-08-01 rate card, Sol:Terra:Luna costs have a `25:10:1` ratio across token classes. Keep independent Luna lanes busy for breadth, promote only useful results to Terra, and reserve Sol for decisions that need its judgment.
 - Spark is a quota fallback only for definitely bounded, Spark-suitable work. Every subagent-launching agent treats `⚠ Selected model is at capacity. Please try a different model.` as quota: retry after 5 minutes, then 10, then 20/40 minutes with a reasonable cap, preserving state unless a definitely suitable Spark fallback can run.
-- Keep repo-local context-window and automatic-compaction overrides at 480,000 tokens.
+- Keep repo-local context-window and automatic-compaction overrides at 320,000 tokens.
 
 ## Documentation maintenance policy (required)
 
