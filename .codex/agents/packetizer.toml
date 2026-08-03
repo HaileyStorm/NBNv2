@@ -1,6 +1,6 @@
 model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
-model_context_window = 320000
+model_context_window = 420000
 model_auto_compact_token_limit = 320000
 tool_output_token_limit = 37500
 sandbox_mode = "read-only"

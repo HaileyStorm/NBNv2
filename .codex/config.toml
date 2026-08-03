@@ -5,7 +5,7 @@
 
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
-model_context_window = 320000
+model_context_window = 420000
 model_auto_compact_token_limit = 320000
 
 [agents.explorer]
