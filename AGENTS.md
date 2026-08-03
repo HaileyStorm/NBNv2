@@ -186,3 +186,12 @@ When ending a work session, complete the full landing flow. Work is not complete
 Critical rules:
 - Do not stop at "ready to push".
 - If push fails, resolve it and retry.
+
+<!-- codex-project-policy:compression-v1 -->
+## Compression, randomized breadth, and memory
+
+- Give reuse, simplification, and deletion equal consideration to addition. Finish each task with an obsolescence audit covering code, tests, comments, docs, configuration, and tracked work.
+- Remove replaced behavior throughout the owned scope unless a verified protocol, compatibility, migration, replay, history, or provenance obligation requires both; name that obligation and removal gate.
+- Avoid comments that narrate obvious function-body behavior. Remove stale comments and completed TODOs while preserving non-obvious runtime, Bedrock-control, safety, and acceptance constraints.
+- Use seeded recursive partition search or Verbalized Sampling only for bounded open-ended ideation. Never use it to replace deterministic runtime, control, or in-world acceptance gates.
+- Keep memory content separate from reference-recency metadata. Recency may delay compression but never outranks runtime evidence, corrections, or explicit retention; GC proposals remain advisory and non-destructive.

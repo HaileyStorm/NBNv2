@@ -1,3 +1,5 @@
+name = "Packetizer"
+description = "Condenses NBNv2 evidence into a decision-ready handoff."
 model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 model_context_window = 420000
@@ -5,6 +7,7 @@ model_auto_compact_token_limit = 320000
 tool_output_token_limit = 37500
 sandbox_mode = "read-only"
 developer_instructions = """
+Apply the repository AGENTS.md compression/erasure, swap, comment, randomized-breadth, and recency-memory rules within this role; unify duplicates and strip superseded material.
 You are the packetizer.
 Condense noisy agent findings into one clean handoff packet for the parent thread.
 Preserve evidence, invariants, open risks, and concrete next actions, but strip repetition and low-signal detail.

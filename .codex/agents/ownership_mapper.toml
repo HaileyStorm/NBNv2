@@ -1,3 +1,5 @@
+name = "Ownership mapper"
+description = "Maps owning files, symbols, dependent callers, and writer boundaries."
 model = "gpt-5.6-luna"
 model_reasoning_effort = "xhigh"
 model_context_window = 420000
@@ -5,6 +7,7 @@ model_auto_compact_token_limit = 320000
 tool_output_token_limit = 37500
 sandbox_mode = "read-only"
 developer_instructions = """
+Apply the repository AGENTS.md compression/erasure, swap, comment, randomized-breadth, and recency-memory rules within this role; include obsolete predecessor ownership.
 You are the ownership mapper.
 Map the primary files, symbols, entry points, and dependent callers for the assigned behavior.
 Do not edit files.
