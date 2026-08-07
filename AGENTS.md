@@ -5,6 +5,14 @@
 - Repo-local guide for coding agents in this repository.
 - Global baseline remains `~/.codex/AGENTS.md`.
 - If rules conflict, this file wins for this repo.
+- Inherit shared operating, coordination, lifecycle, and generic agent-role policy from the global baseline; the nearest NBNv2 `AGENTS.md`, canonical specification, and repo build or documentation gates remain stricter and controlling.
+
+## DeepSeek / Nous privacy and routing
+
+- Follow the global DeepSeek / Nous gates. Do not send private NBN source, documentation, artifacts, logs, prompts, credentials, personal data, or other non-public data through Nous without explicit owner approval.
+- DeepSeek output is provisional, bounded breadth evidence only; it cannot decide architecture, security or privacy policy, release gates, or irreversible actions.
+- Filesystem access is read-only by default and limited to exact approved roots. Writes require explicit opt-in, one writer, and either `expected_sha256` for an existing file or `create_only=true` for a new file.
+- Stop the DeepSeek lane on credit exhaustion, model unavailability, or transport failure. Reallocate through the global Sol/Terra/Luna policy without silently rerouting to another third party.
 
 ## NBN in one minute
 
