@@ -105,3 +105,7 @@ In `Orchestrator`, use `Start All`, then in `Designer` use `Generate Random Brai
 - Cross-cutting docs live in repo-root `docs/sections/*`; operator runbooks live in `docs/runbooks/*`.
 - Project-specific docs belong next to code as `src/*/Design.md`, `tools/*/Design.md`, and `tests/*/Design.md`.
 - Do not create project-level `Docs/` or `docs/` subfolders under `src/*`, `tools/*`, or `tests/*`.
+
+## Support
+
+This project is free. Donations are entirely optional and never affect access or support; they sustain Hailey's open-source work. You can use [Buy Me a Coffee](https://buymeacoffee.com/threadspan), or see the [donation details, safety, and privacy notes](https://github.com/HaileyStorm/threadspan/blob/main/docs/DONATIONS.md). No route is preferred. This repository does not collect donor identities or telemetry, and it never asks for wallet keys; verify recipients independently because transfers may be irreversible.
