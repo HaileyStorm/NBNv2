@@ -108,4 +108,4 @@ In `Orchestrator`, use `Start All`, then in `Designer` use `Generate Random Brai
 
 ## Support
 
-This project is free. Donations are entirely optional and never affect access or support; they sustain Hailey's open-source work. You can use [Buy Me a Coffee](https://buymeacoffee.com/threadspan), or see the [donation details, safety, and privacy notes](https://github.com/HaileyStorm/threadspan/blob/main/docs/DONATIONS.md). No route is preferred. This repository does not collect donor identities or telemetry, and it never asks for wallet keys; verify recipients independently because transfers may be irreversible.
+This project is free. Donations are optional and never affect access or support. They support continued maintainer work; see [donation options](docs/DONATIONS.md) for crypto, Vast.ai, or Buy Me a Coffee. No method is preferred; verify recipients because transfers may be irreversible.
