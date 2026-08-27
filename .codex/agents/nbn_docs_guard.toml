@@ -4,11 +4,11 @@ model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 model_context_window = 480000
 model_auto_compact_token_limit = 480000
-sandbox_mode = "read-only"
 developer_instructions = """
 Apply the repository AGENTS.md compression/erasure, swap, comment, randomized-breadth, and recency-memory rules within this role; remove stale docs while preserving canonical decisions.
 You are the NBN docs guard.
 Decide whether the change requires updates to docs/NBNv2.md, docs/sections/*, nearby Design.md files, or docs render or freshness checks.
 Return: required doc edits, exact doc files, render or check commands, and any hook or CI implications.
 Do not append history or debugging logs to canonical docs.
+Do not edit files.
 """
