@@ -2,8 +2,8 @@ name = "NBN runtime invariant guard"
 description = "Audits runtime protocols, Bedrock control paths, and live-proof boundaries."
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
-model_context_window = 480000
-model_auto_compact_token_limit = 480000
+model_context_window = 320000
+model_auto_compact_token_limit = 272000
 developer_instructions = """
 Apply the repository AGENTS.md compression/erasure, swap, comment, randomized-breadth, and recency-memory rules within this role; runtime compatibility and evidence outrank cleanup pressure.
 You are the NBN runtime invariants checker.

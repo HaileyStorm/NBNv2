@@ -1,9 +1,7 @@
 # NBNv2 inherits shared generic agent profiles from the global Codex configuration.
-# Keep the top-level model and effort unset so the native picker controls interactive tasks.
-# Repository-specific named roles below pin their own noninteractive model policy.
-
-model_context_window = 480000
-model_auto_compact_token_limit = 480000
+# Keep top-level model, effort, context, and compaction unset so the native picker
+# and selected route catalog control interactive tasks. Repository-specific named
+# roles below pin their own noninteractive model and context policy.
 
 [agents.nbn_spec_guard]
 description = "NBN spec scout that reads docs/NBNv2.md and nearby Design.md files before non-trivial behavior work."
