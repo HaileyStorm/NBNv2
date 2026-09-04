@@ -495,4 +495,8 @@ $RECYCLE.BIN/
 .bv/
 .aleph/
 
+# Host-local Codex workspace reservations
+.working
+.working.registry.lock
+
 # NBN demo artifacts

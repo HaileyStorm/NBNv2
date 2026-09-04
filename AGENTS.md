@@ -12,7 +12,7 @@
 - Follow the global DeepSeek / Nous gates. Do not send private NBN source, documentation, artifacts, logs, prompts, credentials, personal data, or other non-public data through Nous without explicit owner approval.
 - DeepSeek output is provisional, bounded breadth evidence only; it cannot decide architecture, security or privacy policy, release gates, or irreversible actions.
 - Filesystem access is read-only by default and limited to exact approved roots. Writes require explicit opt-in, one writer, and either `expected_sha256` for an existing file or `create_only=true` for a new file.
-- Stop the DeepSeek lane on credit exhaustion, model unavailability, or transport failure. Reallocate through the global Sol/Terra/Luna policy without silently rerouting to another third party.
+- Stop the DeepSeek lane on credit exhaustion, model unavailability, or transport failure. Reallocate through the global Astra/Luna/Terra routing envelope without silently rerouting to another third party.
 
 ## NBN in one minute
 
@@ -55,10 +55,10 @@
 
 ## Model policy
 
-- Never use `ultra`. Sol is valid only at `high`, `xhigh`, or `max`; Terra only at `xhigh` or `max`; Luna only at `high`, `xhigh`, or `max`.
-- Use Luna `high`/`xhigh` for bounded read-only discovery and refinement, Terra `xhigh`/`max` only when that is a better fit than Sol, and Sol `high` for implementation, invariant guards, architecture, and consequential review. Coding defaults to Sol `high`.
-- Spark is a quota fallback only for definitely bounded, Spark-suitable work. Every subagent-launching agent treats `⚠ Selected model is at capacity. Please try a different model.` as quota: retry after 5 minutes, then 10, then 20/40 minutes with a reasonable cap, preserving state unless a definitely suitable Spark fallback can run.
-- Keep repo-local GPT-5.6 context-window and automatic-compaction overrides at 480,000 tokens.
+- Never use `ultra`. An explicit user model or reasoning choice wins.
+- Interactive tasks inherit Astra `low` and 602,000/512,000 context policy from the global harness. NBN specification, runtime, and documentation guards use Astra `high` with the same context policy.
+- Use inherited Luna roles for bounded breadth and Terra roles for refinement or routine implementation. Launch only the narrow roles the task needs; final judgment stays with the controller.
+- Treat a temporary capacity or provider failure as an incident: preserve state, continue independent safe work, use an explicit suitable fallback only when needed, and record a recheck and rollback condition. It is not a permanent routing change.
 
 ## Documentation maintenance policy (required)
 
