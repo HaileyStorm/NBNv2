@@ -53,7 +53,7 @@
 ## Model policy
 
 - Never use `ultra`. An explicit user, picker, task, or project model and reasoning choice wins.
-- New unpinned interactive tasks inherit GPT-6 Astra `low` and the 602,000/512,000 context policy from the global harness. NBN specification, runtime, and documentation guards explicitly use Sol `high` with 320,000-token context and 272,000-token compaction.
+- New unpinned interactive tasks inherit GPT-6 Astra `medium` and the 602,000/512,000 context policy from the global harness. NBN specification, runtime, and documentation guards explicitly use Sol `high` with 320,000-token context and 272,000-token compaction.
 - Use the global Pareto envelope for other specialists: Luna for bounded read-heavy work, Sol for consequential implementation, invariants, architecture, and review, and Terra where its configured role is the better fit. Launch only the narrow roles the task needs; final synthesis and judgment stay with the controlling thread.
 - Treat a temporary capacity or provider failure as an incident: preserve state, continue independent safe work, use an explicit suitable fallback only when needed, and record a recheck and rollback condition. It is not a permanent routing change.
 
