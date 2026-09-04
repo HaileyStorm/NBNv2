@@ -1,7 +1,7 @@
 # NBNv2 inherits shared generic agent profiles from the global Codex configuration.
 # Keep top-level model, effort, context, and compaction unset so the native picker
 # and selected route catalog control interactive tasks. The named NBN guards
-# below pin Astra and their own noninteractive context policy.
+# below pin Sol and their own noninteractive context policy.
 
 [agents.nbn_spec_guard]
 description = "NBN spec scout that reads docs/NBNv2.md and nearby Design.md files before non-trivial behavior work."
