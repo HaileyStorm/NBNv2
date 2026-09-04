@@ -12,7 +12,7 @@
 - Follow the global DeepSeek / Nous gates. Do not send private NBN source, documentation, artifacts, logs, prompts, credentials, personal data, or other non-public data through Nous without explicit owner approval.
 - DeepSeek output is provisional, bounded breadth evidence only; it cannot decide architecture, security or privacy policy, release gates, or irreversible actions.
 - Filesystem access is read-only by default and limited to exact approved roots. Writes require explicit opt-in, one writer, and either `expected_sha256` for an existing file or `create_only=true` for a new file.
-- Stop the DeepSeek lane on credit exhaustion, model unavailability, or transport failure. Reallocate through the global Astra/Luna/Terra routing envelope without silently rerouting to another third party.
+- Stop the DeepSeek lane on credit exhaustion, model unavailability, or transport failure. Reallocate through the global Astra-first Pareto routing policy without silently rerouting to another third party.
 
 ## NBN in one minute
 
@@ -37,11 +37,8 @@
 
 - For non-trivial code/behavior tasks, start with `nbn_spec_guard` or an equivalent scout that reads `docs/NBNv2.md` before deep code analysis.
 - For clearly bounded mechanical or docs-only edits, that full spec pass is optional when the task does not depend on spec details.
-- Default repo fan-out for behavior work:
-  1. `nbn_spec_guard` for expected behavior, ownership boundaries, and doc anchors
-  2. `nbn_runtime_invariants` for region/tick/snapshot/reproduction rules
-  3. `test_mapper` or `verifier` for regression surface and commands
-- Prefer multiple narrow agents over one broad worker; keep final synthesis and merge decisions in the main thread.
+- Choose the smallest useful set of agents for behavior work, normally one to three. Always include `nbn_spec_guard` or an equivalent spec pass; add `nbn_runtime_invariants` when region, tick, snapshot, recovery, or reproduction rules are in scope; add `test_mapper` or `verifier` when behavior or its regression surface changes.
+- Delegate independent work when it can save time or improve quality. Keep agents narrow, allow one writer per file or symbol cluster, and keep final synthesis and merge decisions in the controlling thread.
 - When the spec or code surface is large, split it across fresh read-only agents and compress the findings with `packetizer` before editing.
 - After any failed, aborted, or partially-applied edit attempt, immediately re-read the affected file(s) from disk and inspect `git diff` before making the next edit. Never assume a large patch landed exactly as intended.
 - For large-file edits, prefer smaller verified patches over one broad rewrite, and verify exact anchor text before every scripted replacement.
@@ -55,9 +52,9 @@
 
 ## Model policy
 
-- Never use `ultra`. An explicit user model or reasoning choice wins.
-- Interactive tasks inherit Astra `low` and 602,000/512,000 context policy from the global harness. NBN specification, runtime, and documentation guards use Astra `high` with the same context policy.
-- Use inherited Luna roles for bounded breadth and Terra roles for refinement or routine implementation. Launch only the narrow roles the task needs; final judgment stays with the controller.
+- Never use `ultra`. An explicit user, picker, task, or project model and reasoning choice wins.
+- New unpinned interactive tasks inherit GPT-6 Astra `low` and the 602,000/512,000 context policy from the global harness. NBN specification, runtime, and documentation guards explicitly use Astra `high` with the same context policy.
+- Use the global Pareto envelope for other specialists: Luna for bounded read-heavy work, Sol for consequential implementation, invariants, architecture, and review, and Terra where its configured role is the better fit. Launch only the narrow roles the task needs; final synthesis and judgment stay with the controlling thread.
 - Treat a temporary capacity or provider failure as an incident: preserve state, continue independent safe work, use an explicit suitable fallback only when needed, and record a recheck and rollback condition. It is not a permanent routing change.
 
 ## Documentation maintenance policy (required)
