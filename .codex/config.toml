@@ -4,6 +4,9 @@
 # global Astra `medium`; the named NBN guards below pin Sol and their own
 # noninteractive context policy.
 
+[features.context_management]
+experimental_mode = true
+
 [agents.nbn_spec_guard]
 description = "NBN spec scout that reads docs/NBNv2.md and nearby Design.md files before non-trivial behavior work."
 config_file = "agents/nbn_spec_guard.toml"
