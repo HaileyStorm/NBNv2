@@ -9,10 +9,17 @@
 
 ## DeepSeek / Nous privacy and routing
 
-- Follow the global DeepSeek / Nous gates. Do not send private NBN source, documentation, artifacts, logs, prompts, credentials, personal data, or other non-public data through Nous without explicit owner approval.
-- DeepSeek output is provisional, bounded breadth evidence only; it cannot decide architecture, security or privacy policy, release gates, or irreversible actions.
-- Filesystem access is read-only by default and limited to exact approved roots. Writes require explicit opt-in, one writer, and either `expected_sha256` for an existing file or `create_only=true` for a new file.
-- Stop the DeepSeek lane on credit exhaustion, model unavailability, or transport failure. Reallocate through the global Astra-first Pareto routing policy without silently rerouting to another third party.
+Follow the shared provider policy (`providers.md`) beside the active global
+`AGENTS.md` for Nous identity,
+privacy, adapter/replay acceptance, scoped writes, and terminal failures.
+DeepSeek output remains provisional bounded breadth evidence and cannot decide
+architecture, security or privacy policy, release gates, or irreversible
+actions. Do not send private NBN source, documentation, artifacts, logs,
+prompts, credentials, personal data, or other non-public data without explicit
+owner approval. Do not add a project-local credit, proof, confirmation,
+persistent stop-flag, or route-preflight gate. A native Direct facade is
+allowed only when its translation to reviewed Nous Chat behavior has its own
+acceptance evidence.
 
 ## NBN in one minute
 
@@ -53,8 +60,15 @@
 ## Model policy
 
 - Never use `ultra`. An explicit user, picker, task, or project model and reasoning choice wins.
-- New unpinned interactive tasks inherit GPT-6 Astra `medium` and the 602,000/512,000 context policy from the global harness. NBN specification, runtime, and documentation guards explicitly use Sol `high` with 320,000-token context and 272,000-token compaction.
-- Use the global Pareto envelope for other specialists: Luna for bounded read-heavy work, Sol for consequential implementation, invariants, architecture, and review, and Terra where its configured role is the better fit. Launch only the narrow roles the task needs; final synthesis and judgment stay with the controlling thread.
+- New unpinned interactive tasks inherit GPT-6 Astra `medium` and the 602,000/512,000 context policy from the global harness. NBN specification, runtime, and documentation guards use GPT-5.6 Luna `max` with 320,000-token context and 272,000-token compaction as the native fallback.
+- For eligible bounded task packets, prefer exact Nous DeepSeek V4.1 Flash
+  (deepseek/deepseek-v4.1-flash) at max only after the packet's privacy
+  and route gates pass. Use GPT-5.6 Luna max for private,
+  privacy-ineligible, or Nous-unavailable work. Do not send private NBN source,
+  docs, artifacts, logs, prompts, credentials, personal data, or implicit
+  parent history to Nous. Explicit user, task, project, provider, and named-role
+  choices always win. Project guard roles use the native Luna fallback; final
+  synthesis and judgment stay with the controlling thread.
 - Treat a temporary capacity or provider failure as an incident: preserve state, continue independent safe work, use an explicit suitable fallback only when needed, and record a recheck and rollback condition. It is not a permanent routing change.
 
 ## Documentation maintenance policy (required)
@@ -126,7 +140,7 @@ Keep docs concise and high-value:
 - `dotnet build -c Release --disable-build-servers`
 - `dotnet test -c Release --disable-build-servers`
 - Use filtered `dotnet test --filter ...` runs during development when they materially shorten iteration.
-- Before completing a turn, run the full suite with `dotnet test -c Release --disable-build-servers`.
+- For NBN code or runtime behavior changes, run the full suite with `dotnet test -c Release --disable-build-servers` before completing the turn. For documentation, agent-model, or policy-only edits, run the affected documentation/configuration checks instead.
 - Do not run a filtered set as a gate immediately before the full-suite run. If the next step is the full suite, run the full suite directly.
 - If binaries are locked:
   - `dotnet build -c Release --disable-build-servers --artifacts-path .artifacts-temp`
@@ -173,23 +187,8 @@ Keep docs concise and high-value:
 
 ## Landing the Plane (Session Completion)
 
-When ending a work session, complete the full landing flow. Work is not complete until changes are committed and pushed.
-
-1. File follow-up issues for remaining work.
-2. Run quality gates for changed code.
-3. Update issue status.
-4. Push to remote:
-   `git pull --rebase`
-   `bd sync`
-   `git push`
-   `git status` must show up to date with origin.
-5. Clean up temporary state you created.
-6. Verify intended changes are committed and pushed.
-7. Hand off context for the next session.
-
-Critical rules:
-- Do not stop at "ready to push".
-- If push fails, resolve it and retry.
+Use the canonical session-completion and handoff procedure in the global
+`AGENTS.md`. This project adds no separate push, tracker, or cleanup workflow.
 
 <!-- codex-project-policy:compression-v1 -->
 ## Compression, randomized breadth, and memory
