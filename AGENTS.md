@@ -9,10 +9,10 @@
 
 ## DeepSeek / Nous privacy and routing
 
-- Follow the global DeepSeek / Nous gates. Do not send private NBN source, documentation, artifacts, logs, prompts, credentials, personal data, or other non-public data through Nous without explicit owner approval.
-- DeepSeek output is provisional, bounded breadth evidence only; it cannot decide architecture, security or privacy policy, release gates, or irreversible actions.
-- Filesystem access is read-only by default and limited to exact approved roots. Writes require explicit opt-in, one writer, and either `expected_sha256` for an existing file or `create_only=true` for a new file.
-- Stop the DeepSeek lane on credit exhaustion, model unavailability, or transport failure. Reallocate through the global Astra-first Pareto routing policy without silently rerouting to another third party.
+- Follow the global DeepSeek gates and use only exact deepseek/deepseek-v4.1-flash through the approved approved shared route when supported and gated.
+- Do not send private NBN source, documentation, artifacts, logs, prompts, credentials, personal data, or other non-public data without explicit owner approval naming the exact scope and destination.
+- DeepSeek output remains provisional candidate evidence and cannot decide architecture, security or privacy, release, disputed requirements, or irreversible actions.
+- On credit exhaustion, model unavailability, or transport failure, stop the provider path, preserve state, and use gpt-5.6-luna at max or the explicitly selected local route without silently substituting another third party.
 
 ## NBN in one minute
 
@@ -52,10 +52,10 @@
 
 ## Model policy
 
-- Never use `ultra`. An explicit user, picker, task, or project model and reasoning choice wins.
-- New unpinned interactive tasks inherit GPT-6 Astra `medium` and the 602,000/512,000 context policy from the global harness. NBN specification, runtime, and documentation guards explicitly use Sol `high` with 320,000-token context and 272,000-token compaction.
-- Use the global Pareto envelope for other specialists: Luna for bounded read-heavy work, Sol for consequential implementation, invariants, architecture, and review, and Terra where its configured role is the better fit. Launch only the narrow roles the task needs; final synthesis and judgment stay with the controlling thread.
-- Treat a temporary capacity or provider failure as an incident: preserve state, continue independent safe work, use an explicit suitable fallback only when needed, and record a recheck and rollback condition. It is not a permanent routing change.
+- New unpinned interactive tasks inherit GPT-6 Astra at medium with explicit 602000 context and 512000 compaction values preserved; explicit user, picker, task, or project choices win.
+- Routine well-specified implementation support, minor bugs, monitoring, basic facts, and bounded invariant work prefer exact DeepSeek v4.1 through the approved bridge when supported and privacy-gated; otherwise use gpt-5.6-luna at max.
+- NBN specification, runtime, and documentation guards use the routine routing above while retaining their 320000 context and 272000 compaction settings. Use Sol at high for sparse consequential review; Terra is targeted refinement only.
+- Do not expose an unverified raw/custom-provider Responses role. Use Nous Direct for native children and writes only under the shared native-route and privacy requirements in `<CODEX_HOME>/HARNESS_OPERATIONS.md`; otherwise use `gpt-5.6-luna` at `max`. Preserve NBN canonical documentation, IO, tick, runtime, release, and artifact-store rules.
 
 ## Documentation maintenance policy (required)
 
