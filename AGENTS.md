@@ -12,7 +12,7 @@
 - Follow the global DeepSeek gates and use only exact deepseek/deepseek-v4.1-flash through the approved approved shared route when supported and gated.
 - Do not send private NBN source, documentation, artifacts, logs, prompts, credentials, personal data, or other non-public data without explicit owner approval naming the exact scope and destination.
 - DeepSeek output remains provisional candidate evidence and cannot decide architecture, security or privacy, release, disputed requirements, or irreversible actions.
-- On credit exhaustion, model unavailability, or transport failure, stop the provider path, preserve state, and use gpt-5.6-luna at max or the explicitly selected local route without silently substituting another third party.
+- On credit exhaustion, model unavailability, or transport failure, stop the provider path, preserve state, and use gpt-6-luna at max or the explicitly selected local route without silently substituting another third party.
 
 ## NBN in one minute
 
@@ -53,9 +53,9 @@
 ## Model policy
 
 - New unpinned interactive tasks inherit GPT-6 Astra at medium with explicit 602000 context and 512000 compaction values preserved; explicit user, picker, task, or project choices win.
-- Routine well-specified implementation support, minor bugs, monitoring, basic facts, and bounded invariant work prefer exact DeepSeek v4.1 through the approved bridge when supported and privacy-gated; otherwise use gpt-5.6-luna at max.
+- Routine well-specified implementation support, minor bugs, monitoring, basic facts, and bounded invariant work prefer exact DeepSeek v4.1 through the approved bridge when supported and privacy-gated; otherwise use gpt-6-luna at max.
 - NBN specification, runtime, and documentation guards use the routine routing above while retaining their 320000 context and 272000 compaction settings. Use Sol at high for sparse consequential review; Terra is targeted refinement only.
-- Do not expose an unverified raw/custom-provider Responses role. Use Nous Direct for native children and writes only under the shared native-route and privacy requirements in `<CODEX_HOME>/HARNESS_OPERATIONS.md`; otherwise use `gpt-5.6-luna` at `max`. Preserve NBN canonical documentation, IO, tick, runtime, release, and artifact-store rules.
+- Do not expose an unverified raw/custom-provider Responses role. Use Nous Direct for native children and writes only under the shared native-route and privacy requirements in `<CODEX_HOME>/HARNESS_OPERATIONS.md`; otherwise use `gpt-6-luna` at `max`. Preserve NBN canonical documentation, IO, tick, runtime, release, and artifact-store rules.
 
 ## Documentation maintenance policy (required)
 
