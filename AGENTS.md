@@ -93,7 +93,8 @@ Keep docs concise and high-value:
 - Commit/push hook policy:
   - Canonical hooks live in `.githooks/pre-commit` and `.githooks/pre-push`.
   - One-time setup command: `git config core.hooksPath .githooks`.
-  - `pre-commit` renders and stages `docs/NBNv2.md`; `pre-push` runs freshness check.
+  - `pre-commit` is retained but disabled by default following a Beads export incident. Do not opt in (`NBN_ENABLE_PRE_COMMIT=1`) until the DB/JSONL differences have been reconciled and the exact staged paths reviewed. For documentation changes, render `docs/NBNv2.md` explicitly before staging and run the freshness check; `pre-push` still runs that check.
+  - Recovery checkpoint (2026-10-01): the versioned JSONL preserves 516 comments, 36 historical close reasons, and tombstone provenance, but the local Beads 0.47.1 SQLite cache still lacks those restored fields. The activation audit classifies this tracker as incompatible. Keep Beads lifecycle/export commands and the pre-commit opt-in stopped until an owner-reviewed, version-compatible migration verifies round-trip field fidelity; do not export the stale database over the repaired JSONL.
 - CI workflow: `.github/workflows/docs-render.yml` runs the check on `push` and `pull_request` for Windows and Linux.
 
 ## Architecture snapshot
@@ -180,12 +181,12 @@ Keep docs concise and high-value:
 
 When ending a work session, complete the full landing flow. Work is not complete until changes are committed and pushed.
 
-1. File follow-up issues for remaining work.
+1. File follow-up issues only when the Beads activation audit supports mutation; otherwise preserve the exact remainder in the shared durable fallback.
 2. Run quality gates for changed code.
-3. Update issue status.
+3. Update issue status only when the tracker is compatible and the current owner has verified its route.
 4. Push to remote:
-   `git pull --rebase`
-   `bd sync`
+   Inspect Git state before any authorized pull/rebase; never rewrite unrelated local work.
+   Run `bd sync` only after a compatible tracker audit and owner-reviewed DB/JSONL reconciliation. It is stopped for the current 0.47.1 recovery checkpoint.
    `git push`
    `git status` must show up to date with origin.
 5. Clean up temporary state you created.
@@ -194,7 +195,7 @@ When ending a work session, complete the full landing flow. Work is not complete
 
 Critical rules:
 - Do not stop at "ready to push".
-- If push fails, resolve it and retry.
+- If push fails, inspect the remote and local state before a bounded retry; do not blindly replay a state-changing operation.
 
 <!-- codex-project-policy:compression-v1 -->
 ## Compression, randomized breadth, and memory

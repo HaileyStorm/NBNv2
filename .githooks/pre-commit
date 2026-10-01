@@ -1,6 +1,14 @@
 #!/usr/bin/env sh
 set -eu
 
+# Disabled by default after the 2026-10-01 policy-only commit unexpectedly
+# exported and staged divergent Beads records. Preserve this hook for reviewed
+# reactivation; set NBN_ENABLE_PRE_COMMIT=1 for one explicit invocation only
+# after the DB/JSONL reconciliation and staged-path preflight are complete.
+if [ "${NBN_ENABLE_PRE_COMMIT-}" != "1" ]; then
+    exit 0
+fi
+
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO_ROOT"
 

@@ -62,7 +62,7 @@ All paths are repository-root relative. Missing include targets are hard failure
   - rendered output is normalized to UTF-8 with LF line endings
 - Commit/push automation:
   - one-time setup: `git config core.hooksPath .githooks`
-  - `.githooks/pre-commit` renders and stages `docs/NBNv2.md` using the wrapper for the current OS only
+  - `.githooks/pre-commit` is retained but disabled by default after the Beads export incident; explicit one-invocation `NBN_ENABLE_PRE_COMMIT=1` opt-in requires reviewed DB/JSONL and staged paths. Render documentation explicitly before staging it.
   - `.githooks/pre-push` runs the freshness check using the wrapper for the current OS only
 
 ## CI and local runner guidance
