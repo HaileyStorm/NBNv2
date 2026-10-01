@@ -1,8 +1,5 @@
-# NBNv2 inherits shared generic agent profiles from the global Codex configuration.
-# Keep top-level model, effort, context, and compaction unset so the native picker
-# and selected route catalog control interactive tasks. New unpinned tasks inherit
-# global Astra `medium`; the named NBN guards below pin Sol and their own
-# noninteractive context policy.
+# NBN-specific role registrations only. Keep root model, effort, context, and
+# auto-compaction unset so global routing and explicit picker profiles apply.
 
 [features.context_management]
 experimental_mode = true

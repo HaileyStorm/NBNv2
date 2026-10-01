@@ -7,12 +7,10 @@
 - If rules conflict, this file wins for this repo.
 - Inherit shared operating, coordination, lifecycle, and generic agent-role policy from the global baseline; the nearest NBNv2 `AGENTS.md`, canonical specification, and repo build or documentation gates remain stricter and controlling.
 
-## DeepSeek / Nous privacy and routing
+## DeepSeek / Nous privacy
 
-- Follow the global DeepSeek gates and use only exact deepseek/deepseek-v4.1-flash through the approved approved shared route when supported and gated.
 - Do not send private NBN source, documentation, artifacts, logs, prompts, credentials, personal data, or other non-public data without explicit owner approval naming the exact scope and destination.
-- DeepSeek output remains provisional candidate evidence and cannot decide architecture, security or privacy, release, disputed requirements, or irreversible actions.
-- On credit exhaustion, model unavailability, or transport failure, stop the provider path, preserve state, and use gpt-6-luna at max or the explicitly selected local route without silently substituting another third party.
+- If the DeepSeek route is stopped or fails, preserve its state/evidence and do not retry ambiguously or substitute another provider.
 
 ## NBN in one minute
 
@@ -52,10 +50,17 @@
 
 ## Model policy
 
-- New unpinned interactive tasks inherit GPT-6 Astra at medium with explicit 602000 context and 512000 compaction values preserved; explicit user, picker, task, or project choices win.
-- Routine well-specified implementation support, minor bugs, monitoring, basic facts, and bounded invariant work prefer exact DeepSeek v4.1 through the approved bridge when supported and privacy-gated; otherwise use gpt-6-luna at max.
-- NBN specification, runtime, and documentation guards use the routine routing above while retaining their 320000 context and 272000 compaction settings. Use Sol at high for sparse consequential review; Terra is targeted refinement only.
-- Do not expose an unverified raw/custom-provider Responses role. Use Nous Direct for native children and writes only under the shared native-route and privacy requirements in `<CODEX_HOME>/HARNESS_OPERATIONS.md`; otherwise use `gpt-6-luna` at `max`. Preserve NBN canonical documentation, IO, tick, runtime, release, and artifact-store rules.
+- Use `gpt-6.1-sol` at `high` as the controller and default for project work, including implementation, integration, ordinary planning, and consequential review. Never select a lower or higher effort for this route.
+- Use `gpt-6-astra` only at `high` or `xhigh` for detailed planning, very complex or intricate code, stubborn problems, and exceptional synthesis. Never use another Astra effort.
+- For monitor/classify-only child tasks, prefer `nous/deepseek/deepseek-v4.1-flash` at `max` through the reviewed native Direct route when the current shared privacy, provider, and capability gates pass; otherwise use `gpt-6-luna` at `max`. A qualified native child may receive the same necessary scoped files and permissions as another child; the MCP bridge remains a distinct read-only surface. Do not route implementation or consequential review to Luna/DeepSeek solely to save tokens. Treat all model and agent output as evidence and independently verify consequential claims.
+- Set every GPT child profile, including Sol, Astra, and Luna, to `model_context_window = 291000` and `model_auto_compact_token_limit = 208000`. Keep those root-level keys unset in `.codex/config.toml`; the explicit `native-profile/gpt-6-astra-1m` picker choice alone retains its separately validated limits. Do not expose an unverified raw/custom-provider Responses role. Preserve NBN canonical documentation, IO, tick, runtime, release, and artifact-store rules.
+
+## Token budget, checkpoints, and task rollover
+
+- Favor narrow source slices, bounded prompts and handoffs, and the smallest capable role. Keep durable notes compact; do not repeat successful checks without a change or failure.
+- During long work, checkpoint the full objective and acceptance criteria, owner/task/host, exact checkout and base/ref, claimed files, changed Git state, latest tests/evidence, unresolved risks, and next action in the canonical tracker or an existing versioned fallback. Do not store secrets or depend on chat history.
+- After unexpected auto-compaction or in a fresh successor task, re-read the active request and local policy, then verify cwd, repository/worktree, branch/HEAD, Git status, claims/tracker, and recent test evidence. Never infer progress, completion, or permission from a summary or Goal state; if no checkpoint exists, inspect first and record uncertainty.
+- Before a takeover write, reuse the correct checkout and verify its intended base, permissions, active work, and exact claim. Use a managed worktree only for genuinely independent writers or required isolation; it is not a permission boundary and must not bypass project or tracker rules. Before blocking/archiving a predecessor, checkpoint, have it release its own claim in its owning host/session, and verify the successor can acquire a fresh exact claim. On setup/release failure, stop writes and use owner-reviewed structured recovery; never delete claims or force-prune worktrees.
 
 ## Documentation maintenance policy (required)
 
