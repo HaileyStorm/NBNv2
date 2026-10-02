@@ -4,25 +4,13 @@ set -eu
 # Disabled by default after the 2026-10-01 policy-only commit unexpectedly
 # exported and staged divergent Beads records. Preserve this hook for reviewed
 # reactivation; set NBN_ENABLE_PRE_COMMIT=1 for one explicit invocation only
-# after the DB/JSONL reconciliation and staged-path preflight are complete.
+# after the migration checkpoint and staged-path preflight are reviewed.
 if [ "${NBN_ENABLE_PRE_COMMIT-}" != "1" ]; then
     exit 0
 fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO_ROOT"
-
-# Keep the existing Beads safety behavior in commit flow.
-if command -v bd >/dev/null 2>&1 && [ -d .beads ]; then
-    if ! bd sync --flush-only >/dev/null 2>&1; then
-        echo "Error: Failed to flush bd changes to JSONL" >&2
-        echo "Run 'bd sync --flush-only' manually to diagnose" >&2
-        exit 1
-    fi
-    if [ -f .beads/issues.jsonl ]; then
-        git add .beads/issues.jsonl 2>/dev/null || true
-    fi
-fi
 
 detect_docs_platform() {
     case "${OS-}" in

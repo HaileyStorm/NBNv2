@@ -93,8 +93,8 @@ Keep docs concise and high-value:
 - Commit/push hook policy:
   - Canonical hooks live in `.githooks/pre-commit` and `.githooks/pre-push`.
   - One-time setup command: `git config core.hooksPath .githooks`.
-  - `pre-commit` is retained but disabled by default following a Beads export incident. Do not opt in (`NBN_ENABLE_PRE_COMMIT=1`) until the DB/JSONL differences have been reconciled and the exact staged paths reviewed. For documentation changes, render `docs/NBNv2.md` explicitly before staging and run the freshness check; `pre-push` still runs that check.
-  - Recovery checkpoint (2026-10-01): the versioned JSONL and local Beads 0.47.1 SQLite database now agree on all 36 historical close reasons and four deletion-provenance fields. An owner-authorized transaction restored exactly 40 cells after an isolated rehearsal and fresh backup; all 296 issues, 516 comments, 321 dependencies, 594 labels, 1,505 events, IDs, hashes, and timestamps were preserved. The local evidence is under `<CODEX_HOME>/state/beads-recovery/nbnv2-20261001-01a0f8a3/`; see `.beads/README.md` for the retained legacy operating limits. The shared activation audit still rejects this legacy backend. This repair does not authorize ordinary lifecycle/sync/export commands or pre-commit opt-in: 0.47.1's explicit export omits comments, its importer cannot restore these existing-record provenance fields, and 1.3.1's importer skips tombstones. Keep the hook disabled and require an independently verified full-data migration before backend replacement or automatic tracker export.
+  - `pre-commit` is retained but disabled by default following a Beads export incident. A reviewed invocation with `NBN_ENABLE_PRE_COMMIT=1` renders and stages canonical docs only; review the exact staged paths first. Beads export is explicit and independent of this hook. For documentation changes, render `docs/NBNv2.md` explicitly before staging and run the freshness check; `pre-push` still runs that check.
+  - Historical recovery evidence (2026-10-01): an owner-authorized repair of the Beads 0.47.1 SQLite baseline restored exactly 40 cells covering 36 close reasons and four deletion-provenance fields while preserving all 296 issues, 516 comments, 321 dependencies, 594 labels, and 1,505 events. Retain the immutable evidence under `<CODEX_HOME>/state/beads-recovery/nbnv2-20261001-01a0f8a3/`. Current backend, migration, archival preservation, and activation evidence belong in `.beads/migration-20261001.md`; the historical repair is not current route acceptance. Keep the hook disabled by default.
 - CI workflow: `.github/workflows/docs-render.yml` runs the check on `push` and `pull_request` for Windows and Linux.
 
 ## Architecture snapshot
@@ -163,7 +163,9 @@ Keep docs concise and high-value:
 ## Beads rules (repo-specific)
 
 - Beads/BV lifecycle rules are defined in `~/.codex/AGENTS.md`.
-- This repo does not add Beads-specific overrides.
+- Use Beads 1.3.1 with the canonical repo-root `.beads/` embedded Dolt backend. Read `.beads/migration-20261001.md`, run the shared read-only activation audit, and confirm `bd where` before lifecycle writes; preserve unsupported work in the shared durable fallback.
+- Export explicitly with `bd export --all -o .beads/issues.jsonl`, review the semantic delta and staged paths, and run `bd backup sync` for a local full-Dolt backup. JSONL is interchange; the full backup preserves native history and migration archives.
+- `bd sync` synchronizes a configured Dolt remote. No Dolt remote is configured here; use the explicit export and local backup commands for local persistence, and Git for authorized repository publication.
 
 ## Release automation
 
@@ -186,12 +188,12 @@ When ending a work session, complete the full landing flow. Work is not complete
 3. Update issue status only when the tracker is compatible and the current owner has verified its route.
 4. Push to remote:
    Inspect Git state before any authorized pull/rebase; never rewrite unrelated local work.
-   Run `bd sync` only after a compatible tracker audit and owner-reviewed DB/JSONL reconciliation. It is stopped for the current 0.47.1 recovery checkpoint.
+   Run the explicit Beads export and local backup above, then review the tracker delta and all intended staged paths before committing. Audit the current branch, upstream, remote, and unrelated local changes before publication; preserve ambiguous failures and inspect them before a bounded retry.
    `git push`
    `git status` must show up to date with origin.
 5. Clean up temporary state you created.
 6. Verify intended changes are committed and pushed.
-7. Hand off context for the next session.
+7. Hand off verifiable status, evidence, and remaining work for the next session; then release only your own exact structured claim through `<CODEX_HOME>/tools/working_sentinel.py`.
 
 Critical rules:
 - Do not stop at "ready to push".

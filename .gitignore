@@ -500,3 +500,8 @@ $RECYCLE.BIN/
 .working.registry.lock
 
 # NBN demo artifacts
+
+# Host-local Beads gate and coordination claims.
+.beads.gate.lock
+.working
+.working.*
