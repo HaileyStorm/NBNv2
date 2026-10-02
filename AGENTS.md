@@ -50,10 +50,9 @@
 
 ## Model policy
 
-- Use `gpt-6.1-sol` at `high` as the controller and default for project work, including implementation, integration, ordinary planning, and consequential review. Never select a lower or higher effort for this route.
-- Use `gpt-6-astra` only at `high` or `xhigh` for detailed planning, very complex or intricate code, stubborn problems, and exceptional synthesis. Never use another Astra effort.
-- For monitor/classify-only child tasks, prefer native Direct `nous/deepseek/deepseek-v4.1-flash` at `max`; otherwise use `gpt-6-luna` at `max`. DeepSeek has the same necessary task-scoped data, history, files and permissions as GPT, without extra privacy/disclosure/root-approval or per-run gates. Normal ownership, secrets handling, zero-spend and no ambiguous resends apply to every model. The MCP bridge remains a distinct read-only tool surface. Do not route implementation or consequential review to Luna/DeepSeek solely to save tokens. Treat all model and agent output as evidence and independently verify consequential claims.
-- Set every GPT child profile, including Sol, Astra, and Luna, to `model_context_window = 291000` and `model_auto_compact_token_limit = 208000`. Keep those root-level keys unset in `.codex/config.toml`; the explicit `native-profile/gpt-6-astra-1m` picker choice alone retains its separately validated limits. Do not expose an unverified raw/custom-provider Responses role. Preserve NBN canonical documentation, IO, tick, runtime, release, and artifact-store rules.
+- Inherit the global model routing, adaptive-effort, cache-aware switching, context defaults, and multi-agent workflow. Scalar role efforts are strong startup preferences; preserve explicit user/task choices and frozen experiment requirements.
+- Keep root model, effort, context, and auto-compaction unset in `.codex/config.toml` so global defaults and the explicitly selected Astra 1M picker profile retain their intended values. Preserve the registered project guard roles and their access modes.
+- Preserve NBN canonical documentation, IO, tick, runtime, release, and artifact-store rules.
 
 ## Token budget, checkpoints, and task rollover
 
