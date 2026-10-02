@@ -1,7 +1,7 @@
 name = "NBN specification guard"
 description = "Maps changes against canonical NBNv2 specifications and decisions."
-model = "gpt-6-luna"
-model_reasoning_effort = "max"
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
 model_context_window = 291000
 model_auto_compact_token_limit = 208000
 sandbox_mode = "read-only"

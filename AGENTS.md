@@ -7,9 +7,9 @@
 - If rules conflict, this file wins for this repo.
 - Inherit shared operating, coordination, lifecycle, and generic agent-role policy from the global baseline; the nearest NBNv2 `AGENTS.md`, canonical specification, and repo build or documentation gates remain stricter and controlling.
 
-## DeepSeek / Nous privacy
+## Native model access and provider handling
 
-- Do not send private NBN source, documentation, artifacts, logs, prompts, credentials, personal data, or other non-public data without explicit owner approval naming the exact scope and destination.
+- Native DeepSeek Direct has the same necessary task-scoped source, documentation, artifacts, history, data, and tool permissions as GPT. Do not add DeepSeek-specific privacy/disclosure/root-approval or per-run gates. Keep unrelated data and credentials out of prompts/logs; other external services still need task authority for their destination and data scope.
 - If the DeepSeek route is stopped or fails, preserve its state/evidence and do not retry ambiguously or substitute another provider.
 
 ## NBN in one minute
